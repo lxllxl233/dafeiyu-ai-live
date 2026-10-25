@@ -1,0 +1,34 @@
+你现在接手一个《杀戮尖塔 2》实况项目：工作目录就是本仓库根目录（`sts2-ironclad-ironclad`）。
+
+先用 skill 工具加载两个技能：
+- `sts2-ironclad-ironclad`：怎么打（决策 OS v10，含三条铁律 / 药水四问 / 工具坑）
+- `sts2-caster`：怎么说（憨鱼说话系统 v2，三拍 / 五档梗库 / 禁语 / 台词 lint）
+
+## 环境
+- 游戏侧 mod API：`http://127.0.0.1:8080`（`python sts2.py state` 验证）
+- OBS：`ws://127.0.0.1:4455`，场景 `StS2`，浏览器源 `AI Commentary`（`python obsctl.py health` 自检）
+- 弹幕 overlay：`http://127.0.0.1:8730`（`--thought` / `--meme` 自动推送）
+
+## 每局固定流程
+1. `python sts2.py state` 确认 MAIN_MENU；`python obsctl.py status` 确认没在录
+2. `POST http://127.0.0.1:8730/reset`，再 `python tools/reload_overlay.py` 刷新 OBS 浏览器源
+3. `python obsctl.py start`
+4. `python sts2.py do open_character_select` → 确认 IRONCLAD / ascension=10 / can_embark → `do embark`
+5. Neow：按 skill §1 四问选「上限最高」的选项（永恒诅咒金币不拿）
+6. `python sts2.py route` → `route --commit <opt> --note "…"`
+7. 逐层打，每场战斗按 skill §2 的 8 步；**每张牌后重读 state**
+
+## 战斗硬规则（详见 skill）
+- 入伤 ≤10% 最大生命**一律挡满**，宁可少打一张刀；要吃伤必须写清算式
+- 入伤 ≥ HP → 全挡 / 斩杀 / 喝药，禁止半挡半打
+- 药水四问：解什么｜槽满留不留｜这回合会不会被打穿｜留给下场值不值
+- 有药水就规划；`pending` 先重读 `is_queued`，最多重试 1 次
+- 奖励只用 `choose_reward_card --option i`；`skip`/`resolve` 也会加卡，奖励后核对 `deck N`
+- 牌组 Act1 ≤15 张、1–2 张 AOE；进 Boss 前 HP ≥70%、2 张 8+ 防御
+
+## 收尾（每局）
+1. `python obsctl.py stop` → 录像改名 `recordings/sts2_ironclad_a10_run<N>_<win|lose|abandoned>_floor<M>.mp4`
+2. `python sts2.py report`
+3. 写 `logs/run<N>_review.md`（资源曲线 / 死因链 / 可复现错误）
+4. `docs/LESSONS.md` 追加本局，并把可复用教训压成 1–3 行写回 skill
+5. `python tools/check_skill.py` 通过

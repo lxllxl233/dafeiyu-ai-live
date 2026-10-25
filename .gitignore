@@ -1,0 +1,25 @@
+# 录像与本地产物
+recordings/
+logs/*.jsonl
+logs/run_*.md
+logs/*_review.md
+!logs/README.md
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# 抓取中间产物（重建 db 时再生成，见 tools/scrape_site.py）
+tools/pages/
+
+# 本机私有
+backups/
+dist/
+obs_config.json
+*.save
+*.save.bak
+preview*.png
+tmp_*
+__pycache__/

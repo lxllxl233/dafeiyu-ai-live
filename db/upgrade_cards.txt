@@ -1,0 +1,26 @@
+BASH | Bash / 痛击 | 2.0 Attack | BASE: 造成8点伤害。 给予2层易伤。 | UP: 造成10点伤害。 给予2层易伤。
+CINDER | Cinder / 余烬 | 2.0 Attack | BASE: 造成18点伤害。 随机消耗1张牌。 | UP: 造成24点伤害。 随机消耗1张牌。
+BLOOD_WALL | Blood Wall / 血墙 | 2.0 Skill | BASE: 失去2点生命。 获得16点格挡。 | UP: 失去2点生命。 获得20点格挡。
+FLAME_BARRIER | Flame Barrier / 火焰屏障 | 2.0 Skill | BASE: 获得12点格挡。 你在这个回合每受到一次攻击，都会对攻击者造成点伤害。 | UP: 获得16点格挡。 你在这个回合每受到一次攻击，都会对攻击者造成2点伤害。
+TRUE_GRIT | True Grit / 坚毅 | 1.0 Skill | BASE: 获得7点格挡。 随机消耗1张牌。 | UP: 获得9点格挡。 消耗1张牌。
+SHRUG_IT_OFF | Shrug It Off / 耸肩无视 | 1.0 Skill | BASE: 获得8点格挡。 抽1张牌。 | UP: 获得11点格挡。 抽1张牌。
+BODY_SLAM | Body Slam / 全身撞击 | 1.0 Attack | BASE: 造成你当前格挡值的伤害。{InCombat: （造成点伤害）|} | UP: 造成你当前格挡值的伤害。{InCombat: （造成点伤害）|}
+CORRUPTION | Corruption / 腐化 | 3.0 Power | BASE: 技能牌消耗变为0。 每当你打出一张技能牌时，将其消耗。 | UP: 技能牌消耗变为0。 每当你打出一张技能牌时，将其消耗。
+DARK_EMBRACE | Dark Embrace / 黑暗之拥 | 2.0 Power | BASE: 每当有一张牌被消耗时， 抽1张牌。 | UP: 每当有一张牌被消耗时， 抽1张牌。
+FEEL_NO_PAIN | Feel No Pain / 无惧疼痛 | 1.0 Power | BASE: 每当有一张牌被消耗时，获得点格挡。 | UP: 每当有一张牌被消耗时，获得1点格挡。
+BURNING_PACT | Burning Pact / 燃烧契约 | 1.0 Skill | BASE: 消耗1张牌。 抽2张牌。 | UP: 消耗1张牌。 抽3张牌。
+POMMEL_STRIKE | Pommel Strike / 剑柄打击 | 1.0 Attack | BASE: 造成9点伤害。 抽1张牌。 | UP: 造成10点伤害。 抽2张牌。
+BATTLE_TRANCE | Battle Trance / 战斗专注 | 0.0 Skill | BASE: 抽3张牌。 你在本回合内不能再抽任何牌。 | UP: 抽4张牌。 你在本回合内不能再抽任何牌。
+BLOODLETTING | Bloodletting / 放血 | 0.0 Skill | BASE: 失去3点生命。 获得。 | UP: 失去3点生命。 获得。
+DEMON_FORM | Demon Form / 恶魔形态 | 3.0 Power | BASE: 在你的回合开始时，获得3点力量。 | UP: 在你的回合开始时，获得4点力量。
+BARRICADE | Barricade / 壁垒 | 3.0 Power | BASE: 格挡不再在你的回合开始时消失。 | UP: 格挡不再在你的回合开始时消失。
+ASHEN_STRIKE | Ashen Strike /  | 1.0 Attack | BASE: Deal 9 damage. Deals 3 additional damage for each card in your Exhaust Pile. | UP: (no zh)
+PACTS_END | Pact's End / 契约终结 | 0.0 Attack | BASE: 如果你的消耗牌堆拥有大于等于3张牌， 则对所有敌人造成18点伤害。 | UP: 如果你的消耗牌堆拥有大于等于3张牌， 则对所有敌人造成24点伤害。
+FIEND_FIRE | Fiend Fire / 恶魔之焰 | 2.0 Attack | BASE: 消耗所有手牌。 每张被消耗的牌造成7点伤害。 | UP: 消耗所有手牌。 每张被消耗的牌造成10点伤害。
+STONE_ARMOR | Stone Armor / 岩石铠甲 | 1.0 Power | BASE: 获得4层覆甲。 | UP: 获得6层覆甲。
+ARMAMENTS | Armaments /  | 1.0 Skill | BASE: Gain 5 Block. Upgrade a card in your Hand. | UP: (no zh)
+UPPERCUT | Uppercut / 上勾拳 | 2.0 Attack | BASE: 造成13点伤害。 给予层虚弱。 给予层易伤。 | UP: 造成13点伤害。 给予1层虚弱。 给予1层易伤。
+STRIKE_IRONCLAD | Strike / 打击 | 1.0 Attack | BASE: 造成6点伤害。 | UP: 造成9点伤害。
+DEFEND_IRONCLAD | Defend / 防御 | 1.0 Skill | BASE: 获得5点格挡。 | UP: 获得8点格挡。
+EVIL_EYE | Evil Eye / 邪眼 | 1.0 Skill | BASE: 获得8点格挡。 如果你在本回合消耗过卡牌，则额外获得8点格挡。 | UP: 获得11点格挡。 如果你在本回合消耗过卡牌，则额外获得11点格挡。
+SECOND_WIND | Second Wind / 重振精神 | 1.0 Skill | BASE: 消耗手牌中所有非攻击牌，每张获得5点格挡。 | UP: 消耗手牌中所有非攻击牌，每张获得7点格挡。

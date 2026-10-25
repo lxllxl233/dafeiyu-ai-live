@@ -1,0 +1,587 @@
+[
+ {
+  "slug": "ambergris",
+  "name": "Ambergris",
+  "badges": [
+   "事件",
+   "任意时机"
+  ],
+  "desc": "Heal for 50% of your Max HP. If used in combat, take an extra turn."
+ },
+ {
+  "slug": "ashwater",
+  "name": "灰水",
+  "badges": [
+   "罕见",
+   "仅战斗"
+  ],
+  "desc": "消耗 你 手牌 中的任意张牌。"
+ },
+ {
+  "slug": "attack-potion",
+  "name": "攻击药水",
+  "badges": [
+   "普通",
+   "仅战斗"
+  ],
+  "desc": "从 3 张随机攻击牌中选择 1 张加入你的 手牌 。这张牌在本回合可以免费打出。"
+ },
+ {
+  "slug": "beetle-juice",
+  "name": "甲虫汁",
+  "badges": [
+   "稀有",
+   "仅战斗"
+  ],
+  "desc": "敌人的攻击在下 4 个回合中造成的伤害减少 30% 。"
+ },
+ {
+  "slug": "blessing-of-the-forge",
+  "name": "熔炉的祝福",
+  "badges": [
+   "罕见",
+   "仅战斗"
+  ],
+  "desc": "在本场战斗中 升级 你 手牌 中的所有牌。"
+ },
+ {
+  "slug": "block-potion",
+  "name": "格挡药水",
+  "badges": [
+   "普通",
+   "仅战斗"
+  ],
+  "desc": "获得 12 点 格挡 。"
+ },
+ {
+  "slug": "blood-potion",
+  "name": "鲜血药水",
+  "badges": [
+   "普通",
+   "任意时机"
+  ],
+  "desc": "回复你最大生命值的 20% 。"
+ },
+ {
+  "slug": "bone-brew",
+  "name": "骨头酿",
+  "badges": [
+   "罕见",
+   "仅战斗"
+  ],
+  "desc": "召唤 15 。"
+ },
+ {
+  "slug": "bottled-potential",
+  "name": "瓶装潜能",
+  "badges": [
+   "稀有",
+   "仅战斗"
+  ],
+  "desc": "将你的所有牌洗入你的 抽牌堆 。抽 5 张牌。"
+ },
+ {
+  "slug": "clarity",
+  "name": "明晰提取物",
+  "badges": [
+   "罕见",
+   "仅战斗"
+  ],
+  "desc": "抽 1 张牌。在你的下 3 个回合开始时，额外抽 1 张牌。"
+ },
+ {
+  "slug": "colorless-potion",
+  "name": "无色药水",
+  "badges": [
+   "普通",
+   "仅战斗"
+  ],
+  "desc": "从 3 张随机无色牌中选择 1 张加入你的 手牌 。这张牌在本回合可以免费打出。"
+ },
+ {
+  "slug": "cosmic-concoction",
+  "name": "宇宙药剂",
+  "badges": [
+   "稀有",
+   "仅战斗"
+  ],
+  "desc": "将 3 张 升级 的无色牌加入你的 手牌 。"
+ },
+ {
+  "slug": "cunning-potion",
+  "name": "狡诈药水",
+  "badges": [
+   "罕见",
+   "仅战斗"
+  ],
+  "desc": "将 3 张 小刀+ 加入你的 手牌 。"
+ },
+ {
+  "slug": "cure-all",
+  "name": "痊愈药水",
+  "badges": [
+   "罕见",
+   "仅战斗"
+  ],
+  "desc": "获得 。抽 2 张牌。"
+ },
+ {
+  "slug": "deprecated-potion",
+  "name": "废弃药水",
+  "badges": [
+   "None",
+   "仅战斗"
+  ],
+  "desc": "这瓶药水已经从游戏中移除。"
+ },
+ {
+  "slug": "dexterity-potion",
+  "name": "敏捷药水",
+  "badges": [
+   "普通",
+   "仅战斗"
+  ],
+  "desc": "获得 2 点 敏捷 。"
+ },
+ {
+  "slug": "distilled-chaos",
+  "name": "精炼混沌",
+  "badges": [
+   "稀有",
+   "仅战斗"
+  ],
+  "desc": "打出你 抽牌堆 顶部的 3 张牌。"
+ },
+ {
+  "slug": "droplet-of-precognition",
+  "name": "预知之滴",
+  "badges": [
+   "稀有",
+   "仅战斗"
+  ],
+  "desc": "选择你 抽牌堆 中的一张牌加入你的 手牌 。"
+ },
+ {
+  "slug": "duplicator",
+  "name": "复制药水",
+  "badges": [
+   "罕见",
+   "仅战斗"
+  ],
+  "desc": "本回合，你打出的下一张牌会额外打出一次。"
+ },
+ {
+  "slug": "energy-potion",
+  "name": "能量药水",
+  "badges": [
+   "普通",
+   "仅战斗"
+  ],
+  "desc": "获得 。"
+ },
+ {
+  "slug": "entropic-brew",
+  "name": "混沌药水",
+  "badges": [
+   "稀有",
+   "任意时机"
+  ],
+  "desc": "在所有空药水栏位中获得随机药水。"
+ },
+ {
+  "slug": "essence-of-darkness",
+  "name": "黑暗精华",
+  "badges": [
+   "稀有",
+   "仅战斗"
+  ],
+  "desc": "生成 你 充能球栏位 数量个 黑暗 充能球。"
+ },
+ {
+  "slug": "explosive-ampoule",
+  "name": "爆炸安瓿",
+  "badges": [
+   "普通",
+   "仅战斗"
+  ],
+  "desc": "对所有敌人造成 10 点伤害。"
+ },
+ {
+  "slug": "fairy-in-a-bottle",
+  "name": "瓶中精灵",
+  "badges": [
+   "稀有",
+   "自动"
+  ],
+  "desc": "当你的生命值将被减少至 0 或以下时，改为丢弃这瓶药水，然后将你回复到你最大生命值的 30% 。"
+ },
+ {
+  "slug": "fire-potion",
+  "name": "火焰药水",
+  "badges": [
+   "普通",
+   "仅战斗"
+  ],
+  "desc": "造成 20 点伤害。"
+ },
+ {
+  "slug": "flex-potion",
+  "name": "肌肉药水",
+  "badges": [
+   "普通",
+   "仅战斗"
+  ],
+  "desc": "获得 5 点 力量 。在你的这个回合结束时，失去 5 点 力量 。"
+ },
+ {
+  "slug": "focus-potion",
+  "name": "集中药水",
+  "badges": [
+   "普通",
+   "仅战斗"
+  ],
+  "desc": "获得 2 点 集中 。"
+ },
+ {
+  "slug": "fortifier",
+  "name": "固化药水",
+  "badges": [
+   "罕见",
+   "仅战斗"
+  ],
+  "desc": "将你的 格挡 变为三倍。"
+ },
+ {
+  "slug": "foul-potion",
+  "name": "污浊药水",
+  "badges": [
+   "事件",
+   "任意时机"
+  ],
+  "desc": "对所有玩家和敌人造成 12 点伤害。 也可以投掷给 商人 换取 100 金币 。"
+ },
+ {
+  "slug": "fruit-juice",
+  "name": "果汁",
+  "badges": [
+   "稀有",
+   "任意时机"
+  ],
+  "desc": "获得 5 点最大生命值。"
+ },
+ {
+  "slug": "fysh-oil",
+  "name": "异鱼之油",
+  "badges": [
+   "罕见",
+   "仅战斗"
+  ],
+  "desc": "获得 1 点 力量 和 1 点 敏捷 。"
+ },
+ {
+  "slug": "gamblers-brew",
+  "name": "赌徒特酿",
+  "badges": [
+   "罕见",
+   "仅战斗"
+  ],
+  "desc": "丢弃任意张牌，然后抽相同数量的牌。"
+ },
+ {
+  "slug": "ghost-in-a-jar",
+  "name": "罐装幽灵",
+  "badges": [
+   "稀有",
+   "仅战斗"
+  ],
+  "desc": "获得 1 层 无实体 。"
+ },
+ {
+  "slug": "gigantification-potion",
+  "name": "超巨化药水",
+  "badges": [
+   "稀有",
+   "仅战斗"
+  ],
+  "desc": "你打出的下一张攻击牌将会造成三倍伤害。"
+ },
+ {
+  "slug": "glowwater-potion",
+  "name": "发光水",
+  "badges": [
+   "事件",
+   "仅战斗"
+  ],
+  "desc": "消耗 你的 手牌 。抽 10 张牌。"
+ },
+ {
+  "slug": "heart-of-iron",
+  "name": "铁心药水",
+  "badges": [
+   "罕见",
+   "仅战斗"
+  ],
+  "desc": "获得 7 层 覆甲 。"
+ },
+ {
+  "slug": "kings-courage",
+  "name": "王之勇气",
+  "badges": [
+   "罕见",
+   "仅战斗"
+  ],
+  "desc": "铸造 15 。"
+ },
+ {
+  "slug": "liquid-bronze",
+  "name": "流动铜液",
+  "badges": [
+   "罕见",
+   "仅战斗"
+  ],
+  "desc": "获得 3 点 荆棘 。"
+ },
+ {
+  "slug": "liquid-memories",
+  "name": "液态记忆",
+  "badges": [
+   "稀有",
+   "仅战斗"
+  ],
+  "desc": "将你 弃牌堆 中的一张牌放入你的 手牌 。这张牌在本回合可以免费打出。"
+ },
+ {
+  "slug": "lucky-tonic",
+  "name": "幸运补剂",
+  "badges": [
+   "稀有",
+   "仅战斗"
+  ],
+  "desc": "获得 1 层 缓冲 。"
+ },
+ {
+  "slug": "mazaleths-gift",
+  "name": "马萨雷斯的赠礼",
+  "badges": [
+   "稀有",
+   "仅战斗"
+  ],
+  "desc": "获得 1 层 仪式 。"
+ },
+ {
+  "slug": "orobic-acid",
+  "name": "欧洛巴斯之酸",
+  "badges": [
+   "稀有",
+   "仅战斗"
+  ],
+  "desc": "往你的 手牌 中加入一张随机攻击牌、一张随机技能牌和一张随机能力牌。这些牌在本回合免费。"
+ },
+ {
+  "slug": "poison-potion",
+  "name": "毒药水",
+  "badges": [
+   "普通",
+   "仅战斗"
+  ],
+  "desc": "给予 6 层 中毒 。"
+ },
+ {
+  "slug": "pot-of-ghouls",
+  "name": "尸鬼瓮",
+  "badges": [
+   "稀有",
+   "仅战斗"
+  ],
+  "desc": "将 2 张 灵魂 加入你的 手牌 。"
+ },
+ {
+  "slug": "potion-of-binding",
+  "name": "缚魂药水",
+  "badges": [
+   "罕见",
+   "仅战斗"
+  ],
+  "desc": "给予所有敌人 1 层 虚弱 和 1 层 易伤 。"
+ },
+ {
+  "slug": "potion-of-capacity",
+  "name": "扩容药水",
+  "badges": [
+   "罕见",
+   "仅战斗"
+  ],
+  "desc": "获得 2 个 充能球栏位 。"
+ },
+ {
+  "slug": "potion-of-doom",
+  "name": "灾厄药水",
+  "badges": [
+   "普通",
+   "仅战斗"
+  ],
+  "desc": "给予 33 层 灾厄 。"
+ },
+ {
+  "slug": "potion-shaped-rock",
+  "name": "药水形状的石头",
+  "badges": [
+   "衍生",
+   "仅战斗"
+  ],
+  "desc": "造成 15 点伤害。"
+ },
+ {
+  "slug": "powdered-demise",
+  "name": "消亡粉末",
+  "badges": [
+   "罕见",
+   "仅战斗"
+  ],
+  "desc": "敌人在自身的每个回合结束时，失去 9 点生命。"
+ },
+ {
+  "slug": "power-potion",
+  "name": "能力药水",
+  "badges": [
+   "普通",
+   "仅战斗"
+  ],
+  "desc": "从 3 张随机能力牌中选择 1 张加入你的 手牌 。这张牌在本回合可以免费打出。"
+ },
+ {
+  "slug": "radiant-tincture",
+  "name": "明耀酊剂",
+  "badges": [
+   "罕见",
+   "仅战斗"
+  ],
+  "desc": "获得 。在你的下 3 个回合开始时，额外获得 。"
+ },
+ {
+  "slug": "regen-potion",
+  "name": "再生药水",
+  "badges": [
+   "罕见",
+   "仅战斗"
+  ],
+  "desc": "获得 5 层 再生 。"
+ },
+ {
+  "slug": "shackling-potion",
+  "name": "镣铐药水",
+  "badges": [
+   "稀有",
+   "仅战斗"
+  ],
+  "desc": "所有敌人在这个回合失去 7 点 力量 。"
+ },
+ {
+  "slug": "ship-in-a-bottle",
+  "name": "瓶中船",
+  "badges": [
+   "稀有",
+   "仅战斗"
+  ],
+  "desc": "获得 10 点 格挡 。在下个回合开始时获得 10 点 格挡 。"
+ },
+ {
+  "slug": "skill-potion",
+  "name": "技能药水",
+  "badges": [
+   "普通",
+   "仅战斗"
+  ],
+  "desc": "从 3 张随机技能牌中选择 1 张加入你的 手牌 。这张牌在本回合可以免费打出。"
+ },
+ {
+  "slug": "snecko-oil",
+  "name": "异蛇之油",
+  "badges": [
+   "稀有",
+   "仅战斗"
+  ],
+  "desc": "抽 7 张牌。在本回合随机化你 手牌 中所有牌的耗能。"
+ },
+ {
+  "slug": "soldiers-stew",
+  "name": "士兵炖汤",
+  "badges": [
+   "稀有",
+   "仅战斗"
+  ],
+  "desc": "在本场战斗中，所有名字中有“ 打击 ”的牌获得 重放 ： 1 。"
+ },
+ {
+  "slug": "speed-potion",
+  "name": "速度药水",
+  "badges": [
+   "普通",
+   "仅战斗"
+  ],
+  "desc": "获得 5 点 敏捷 。在你的这个回合结束时，失去 5 点 敏捷 。"
+ },
+ {
+  "slug": "stable-serum",
+  "name": "稳定血清",
+  "badges": [
+   "罕见",
+   "仅战斗"
+  ],
+  "desc": "保留 你的 手牌 2 回合。"
+ },
+ {
+  "slug": "star-potion",
+  "name": "星星药水",
+  "badges": [
+   "普通",
+   "仅战斗"
+  ],
+  "desc": "获得 。"
+ },
+ {
+  "slug": "strength-potion",
+  "name": "力量药水",
+  "badges": [
+   "普通",
+   "仅战斗"
+  ],
+  "desc": "获得 2 点 力量 。"
+ },
+ {
+  "slug": "swift-potion",
+  "name": "迅捷药水",
+  "badges": [
+   "普通",
+   "仅战斗"
+  ],
+  "desc": "抽 3 张牌。"
+ },
+ {
+  "slug": "touch-of-insanity",
+  "name": "癫狂之触",
+  "badges": [
+   "罕见",
+   "仅战斗"
+  ],
+  "desc": "选择你 手牌 中的一张牌，使其在本场战斗可以免费打出。"
+ },
+ {
+  "slug": "vulnerable-potion",
+  "name": "易伤药水",
+  "badges": [
+   "普通",
+   "仅战斗"
+  ],
+  "desc": "给予 3 层 易伤 。"
+ },
+ {
+  "slug": "weak-potion",
+  "name": "虚弱药水",
+  "badges": [
+   "普通",
+   "仅战斗"
+  ],
+  "desc": "给予 3 层 虚弱 。"
+ }
+]

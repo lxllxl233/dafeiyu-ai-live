@@ -19,7 +19,7 @@ description: 《杀戮尖塔 2》铁甲战士 A10 实况（sts2.py + OBS）决�
 
 1. `state` 确认 MAIN_MENU；`obsctl.py status` 确认 `outputActive=false`。
 2. 开录：`/reset` overlay → `tools/reload_overlay.py` → `obsctl.py free` → `start` → `health` 看出帧/静音；窗口化，别最小化。
-3. `open_character_select` → IRONCLAD/A10 → `embark`；`route` → `route --commit <opt> --note "…"`（叠加层自动画 ROUTE，读 `logs/route_plan.json` + 实时层数）。
+3. `open_character_select` → IRONCLAD/A10 → `embark`；`route` → `route --commit <opt> --note "…"`（叠加层自动画 ROUTE，读路线快照 + 实时层数）。
 4. Neow 四问：商店能补吗｜改善牌组还是临时资源｜HP 成本营火能兜住吗｜最坏能否接受。默认：**变 2 基础牌 > 删 1 > 金币 > 药水槽 > 升级**；永恒诅咒金币不拿。
 5. 开场白只谈这一局，**禁止**「上局/上次/第几局」。
 

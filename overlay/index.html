@@ -1,0 +1,442 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>大肥鱼 · 边打边想</title>
+<style>
+  html, body { margin: 0; padding: 0; background: transparent; overflow: hidden; }
+  * { box-sizing: border-box; }
+  #panel {
+    position: absolute;
+    top: 14px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 1180px;
+    min-height: 150px;
+    display: flex;
+    align-items: flex-start;
+    gap: 18px;
+    padding: 12px 26px 16px 16px;
+    border-radius: 24px;
+    border: 1.5px solid rgba(216, 168, 74, .62);
+    background: linear-gradient(180deg, rgba(30, 27, 35, .95), rgba(12, 13, 20, .88));
+    box-shadow: 0 14px 38px rgba(0,0,0,.55), inset 0 0 0 1px rgba(255,255,255,.05);
+    color: #f6f0e2;
+    font-family: "Microsoft YaHei", "Noto Sans SC", "PingFang SC", sans-serif;
+    text-shadow: 0 2px 2px rgba(0,0,0,.85);
+    transition: opacity .3s ease;
+  }
+  /* 没有对话时整块隐藏，避免开局顶着一块空面板 */
+  #panel.empty { opacity: 0; }
+  #panel::after {
+
+    content: "";
+    position: absolute;
+    left: 78px;
+    bottom: -9px;
+    width: 18px;
+    height: 18px;
+    background: rgba(12, 13, 20, .9);
+    border-right: 1.5px solid rgba(216, 168, 74, .62);
+    border-bottom: 1.5px solid rgba(216, 168, 74, .62);
+    transform: rotate(45deg);
+    border-radius: 0 0 5px 0;
+  }
+
+  #avatar {
+    flex: 0 0 150px;
+    width: 150px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    position: relative;
+  }
+  #portraitWrap {
+    position: relative;
+    width: 144px;
+    height: 144px;
+  }
+  #portrait {
+    width: 144px;
+    height: 144px;
+    border-radius: 50%;
+    overflow: hidden;
+    border: 3px solid #f4c968;
+    background: radial-gradient(circle at 50% 35%, #325a86, #14213a 70%);
+    box-shadow: 0 0 0 3px rgba(20,33,58,.85), 0 6px 18px rgba(0,0,0,.55),
+                0 0 22px rgba(127,214,208,.18);
+  }
+  #portrait img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    object-position: center 26%;
+    display: block;
+    transform: scale(1.06);
+  }
+  #avatar.talking #portraitWrap { animation: bounce .34s ease-in-out infinite; }
+  @keyframes bounce { 50% { transform: translateY(-6px) rotate(1.2deg); } }
+  #voice {
+    position: absolute;
+    right: -10px;
+    bottom: 16px;
+    display: flex;
+    gap: 3px;
+    align-items: flex-end;
+    height: 26px;
+    opacity: 0;
+    transition: opacity .2s ease;
+  }
+  #avatar.talking #voice { opacity: 1; }
+  #voice span {
+    width: 4px;
+    height: 8px;
+    border-radius: 3px;
+    background: #7fd6d0;
+    box-shadow: 0 0 8px rgba(127,214,208,.8);
+    animation: wave .5s ease-in-out infinite alternate;
+  }
+  #voice span:nth-child(2) { animation-delay: .1s; height: 14px; }
+  #voice span:nth-child(3) { animation-delay: .2s; height: 10px; }
+  #voice span:nth-child(4) { animation-delay: .3s; height: 18px; }
+  @keyframes wave { from { transform: scaleY(.45); } to { transform: scaleY(1.15); } }
+  #avatar .name {
+    margin-top: 6px;
+    font-size: 13px;
+    letter-spacing: 1px;
+    color: #f4c968;
+    background: none;
+    border: 0;
+    padding: 0;
+    white-space: nowrap;
+  }
+  #avatar .tagline {
+    margin-top: 1px;
+    font-size: 10px;
+    color: rgba(255,255,255,.42);
+    white-space: nowrap;
+  }
+
+  #main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
+  #head { display: flex; align-items: center; justify-content: flex-end; height: 20px; flex: 0 0 auto; }
+  #status { font-size: 13px; color: rgba(207, 214, 230, .82); white-space: nowrap; letter-spacing: .2px; }
+  #status b { color: #fff; font-weight: 600; }
+
+  /* 只保留一条对话：没有历史堆叠、没有折叠裁切。 */
+  #feed { margin-top: 6px; flex: 1 1 auto; min-width: 0; display: flex; align-items: center; }
+  .comment { display: flex; flex-direction: column; gap: 4px; width: 100%; }
+  .comment.enter { animation: slidein .32s ease both; }
+  @keyframes slidein {
+    from { opacity: 0; transform: translateY(-6px); }
+    to   { opacity: 1; transform: none; }
+  }
+  .row { display: flex; align-items: flex-start; gap: 10px; }
+  .text {
+    flex: 1 1 auto;
+    min-width: 0;
+    font-size: 20px;
+    line-height: 1.5;
+    letter-spacing: .2px;
+    color: #fbf6ea;
+    overflow-wrap: anywhere;
+  }
+  /* 一句话就是一个语气：整句同色，不拆标签、不换色 */
+  .text {
+    flex: 1 1 auto;
+    min-width: 0;
+    font-size: 20px;
+    line-height: 1.5;
+    letter-spacing: .2px;
+    color: #fbf6ea;
+    overflow-wrap: anywhere;
+  }
+  #feed[data-len="long"] .text { font-size: 18.5px; line-height: 1.48; }
+  #feed[data-len="xlong"] .text { font-size: 16.5px; line-height: 1.44; }
+
+  #routePanel {
+    position: absolute; top: 14px; left: 16px; width: 190px;
+    padding: 10px 10px 8px; border-radius: 16px;
+    border: 1.5px solid rgba(216, 168, 74, .55);
+    background: linear-gradient(180deg, rgba(20, 22, 30, .9), rgba(10, 11, 18, .82));
+    box-shadow: 0 10px 26px rgba(0,0,0,.5);
+    color: #f6f0e2; font-family: "Microsoft YaHei", "Noto Sans SC", sans-serif;
+    text-shadow: 0 2px 2px rgba(0,0,0,.85); opacity: 1; transition: opacity .25s ease;
+  }
+  #routePanel.hidden { opacity: 0; pointer-events: none; }
+  #routeHead { font-size: 12px; letter-spacing: 1px; color: #d8a84a; margin-bottom: 4px; }
+  #routeNote { font-size: 10.5px; line-height: 1.35; color: #cfc7b6; margin-top: 6px; }
+</style>
+</head>
+<body>
+<div id="panel" class="empty">
+  <div id="avatar">
+    <div id="portraitWrap">
+      <div id="portrait">
+        <img src="/assets/deepseek_fish.jpg" alt="大肥鱼">
+      </div>
+      <div id="voice"><span></span><span></span><span></span><span></span></div>
+    </div>
+    <div class="name">大肥鱼 · DeepSeek</div>
+    <div class="tagline">正在替你爬塔</div>
+  </div>
+  <div id="main">
+    <div id="head">
+      <span id="status"></span>
+    </div>
+    <div id="feed"></div>
+  </div>
+</div>
+
+<div id="routePanel" class="hidden">
+  <div id="routeHead">ROUTE</div>
+  <canvas id="routeCanvas" width="170" height="470"></canvas>
+  <div id="routeNote"></div>
+</div>
+<script>
+  // ---- 动森式「动物语」音效（Animalese）--------------------------------
+  // 每个字一个短促的音节，五声音阶随机上下行；不加载任何音频文件，全用 Web Audio 合成。
+  // 关掉：页面地址加 ?sfx=0；音量：?vol=0.8（0~1.5）。
+  const Animalese = (() => {
+    const qs = new URLSearchParams(location.search);
+    const enabled = qs.get('sfx') !== '0';
+    const volume = Math.max(0, Math.min(1.5, parseFloat(qs.get('vol') || '0.55')));
+    const SCALE = [0, 2, 4, 7, 9, 12]; // 宫商角徵羽
+    let ctx = null, master = null, voices = [];
+
+    function ensure() {
+      if (!enabled) return null;
+      if (!ctx) {
+        const AC = window.AudioContext || window.webkitAudioContext;
+        if (!AC) return null;
+        ctx = new AC();
+        master = ctx.createGain();
+        master.gain.value = volume;
+        master.connect(ctx.destination);
+      }
+      if (ctx.state === 'suspended') ctx.resume().catch(() => {});
+      return ctx;
+    }
+
+    function stop() {
+      for (const v of voices) { try { v.stop(); } catch (e) {} }
+      voices = [];
+    }
+
+    function blip(t, freq, dur) {
+      const osc = ctx.createOscillator();
+      const sub = ctx.createOscillator();
+      const subGain = ctx.createGain();
+      const gain = ctx.createGain();
+      const lp = ctx.createBiquadFilter();
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(freq, t);
+      osc.frequency.exponentialRampToValueAtTime(freq * 0.94, t + dur);
+      sub.type = 'square';
+      sub.frequency.value = freq * 0.5;
+      subGain.gain.value = 0.35;
+      lp.type = 'lowpass';
+      lp.frequency.value = Math.min(3200, freq * 3.2);
+      lp.Q.value = 1.0;
+      gain.gain.setValueAtTime(0.0001, t);
+      gain.gain.exponentialRampToValueAtTime(0.2, t + 0.006);
+      gain.gain.exponentialRampToValueAtTime(0.05, t + dur * 0.55);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+      osc.connect(lp);
+      sub.connect(subGain); subGain.connect(lp);
+      lp.connect(gain); gain.connect(master);
+      osc.start(t); sub.start(t);
+      osc.stop(t + dur + 0.02); sub.stop(t + dur + 0.02);
+      voices.push(osc, sub);
+    }
+
+    function speak(text) {
+      if (!ensure()) return;
+      stop();
+      const chars = Array.from(String(text || ''));
+      const total = chars.filter(ch => /[\u4e00-\u9fffA-Za-z0-9]/.test(ch)).length;
+      if (!total) return;
+      const spokenMax = Math.min(70, total);
+      const step = Math.max(0.03, Math.min(0.06, 2.3 / Math.max(6, spokenMax)));
+      const dur = Math.min(0.06, step * 0.92);
+      let t = ctx.currentTime + 0.03;
+      let degree = 2 + Math.floor(Math.random() * 2);
+      let spoken = 0;
+      for (const ch of chars) {
+        if (/\s/.test(ch)) { t += step * 0.55; continue; }
+        if (/[，,、。；;：:！!？?…—]/.test(ch)) { t += step * 1.5; continue; }
+        if (!/[\u4e00-\u9fffA-Za-z0-9]/.test(ch)) continue;
+        if (spoken >= spokenMax) break;
+        spoken += 1;
+        degree = Math.max(0, Math.min(SCALE.length - 1, degree + (Math.random() < 0.5 ? -1 : 1)));
+        const semis = SCALE[degree] + (Math.random() < 0.12 ? 12 : 0);
+        const freq = 520 * Math.pow(2, semis / 12) * (0.985 + Math.random() * 0.03);
+        blip(t, freq, dur);
+        t += step;
+      }
+      if (voices.length > 80) voices = voices.slice(-40);
+    }
+
+    return { speak, stop, ensure, enabled, volume };
+  })();
+  window.animalese = Animalese;
+
+  let lastId = 0;
+  let talkTimer = null;
+  const panel = document.getElementById('panel');
+  const feed = document.getElementById('feed');
+  const statusEl = document.getElementById('status');
+  const avatar = document.getElementById('avatar');
+
+  // 单行截断：超长内容宁可省略，也不让气泡铺满屏幕（全文仍在战报里）。
+  const MAX_THOUGHT = 120;
+  const MAX_MEME = 70;
+
+  function fmtStatus(s) {
+    if (!s) return '';
+    const parts = [];
+    if (s.character) parts.push(`<b>${esc(s.character)}</b>`);
+    if (s.ascension !== undefined) parts.push(`A${esc(s.ascension)}`);
+    if (s.floor) parts.push(`第 ${esc(s.floor)} 层`);
+    if (s.hp !== undefined) parts.push(`HP <b>${esc(s.hp)}</b>/${esc(s.max_hp)}`);
+    if (s.gold !== undefined) parts.push(`金币 <b>${esc(s.gold)}</b>`);
+    return parts.join(' · ');
+  }
+
+  function esc(v) {
+    return String(v === undefined || v === null ? '' : v)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  function cleanSpeech(s) {
+    return String(s || '').replace(/(?:大肥鱼|DeepSeek|AI)\s*[:：]\s*/g, '').trim();
+  }
+
+  function clip(s, n) {
+    const t = String(s || '').trim();
+    if (t.length <= n) return t;
+    return t.slice(0, n - 1).replace(/[\s，,、]+$/, '') + '…';
+  }
+
+  function startTalking(ms) {
+    avatar.classList.add('talking');
+    if (talkTimer) clearTimeout(talkTimer);
+    talkTimer = setTimeout(() => avatar.classList.remove('talking'), ms);
+  }
+
+  // 正常说话：各句自己收尾，中间只补标点，不加破折号/标签之类的固定句式。
+  function composeSentence(thought, memeText) {
+    const t = String(thought || '').trim().replace(/[。\s]+$/, '');
+    const m = String(memeText || '').trim().replace(/^[，,、。；;\s—–-]+/, '');
+    if (!t) return m ? ensureStop(m) : '';
+    if (!m) return ensureStop(t);
+    // 思路正常收句号，吐槽接着往下说；吐槽自带结尾标点就原样保留
+    return ensureStop(t) + ensureStop(m);
+  }
+
+  function ensureStop(s) {
+    return /[。！？!?…”）)]$/.test(s) ? s : s + '。';
+  }
+
+  function showComment(c) {
+    const thought = clip(cleanSpeech(c.thought), MAX_THOUGHT);
+    const memeText = clip(cleanSpeech(c.meme), MAX_MEME);
+    if (!thought && !memeText) return;
+
+    const sentence = composeSentence(thought, memeText);
+    if (!sentence) return;
+
+    const total = sentence.length;
+    feed.dataset.len = total > 170 ? 'xlong' : total > 110 ? 'long' : 'short';
+
+    const div = document.createElement('div');
+    div.className = 'comment enter';
+    // 整句同色同字重：一句话就是一个语气，不做「正文 + 注释」的分裂
+    div.innerHTML = `<span class="text">${esc(sentence)}</span>`;
+    // 关键：整块替换，永远只有一条对话。
+    feed.replaceChildren(div);
+    panel.classList.remove('empty');
+    // 动森式动物语：说的就是气泡里这一句
+    Animalese.speak(sentence);
+    startTalking(Math.max(2400, Math.min(8500, 1500 + total * 70)));
+  }
+
+  async function poll() {
+    try {
+      const r = await fetch('/state?after=' + lastId, { cache: 'no-store' });
+      const d = await r.json();
+      if (typeof d.seq === 'number' && d.seq < lastId) lastId = 0;
+      statusEl.innerHTML = fmtStatus(d.status);
+      const list = d.comments || [];
+      if (list.length) {
+        // 断线重连时可能一次拿到多条：只显示最后一条。
+        const latest = list[list.length - 1];
+        lastId = Math.max(lastId, latest.id);
+        showComment(latest);
+      }
+    } catch (e) {
+      // keep the last frame; don't blank the overlay
+    } finally {
+      setTimeout(poll, 350);
+    }
+  }
+  poll();
+</script>
+
+<script>
+(function () {
+  const panel = document.getElementById('routePanel');
+  const head = document.getElementById('routeHead');
+  const note = document.getElementById('routeNote');
+  const cv = document.getElementById('routeCanvas');
+  const ctx = cv.getContext('2d');
+  const COLOR = { M:'#9aa3b2', E:'#e05a4f', R:'#4fae6a', '$':'#d8a84a', T:'#9b6bd6', '?':'#4fb6c9', B:'#e0507a' };
+  const SYM = { Monster:'M', Elite:'E', RestSite:'R', Shop:'$', Treasure:'T', Unknown:'?', Boss:'B', Ancient:'B' };
+  function draw(data) {
+    const plan = data && data.plan;
+    if (!plan || !plan.seq || !data.floor) { panel.classList.add('hidden'); return; }
+    panel.classList.remove('hidden');
+    const planned = plan.seq.trim().split(/\s+/);
+    const actual = (plan.actual || []).slice();
+    const steps = actual.map(a => SYM[a.type] || '?');
+    const curIdx = steps.length - 1;
+    const rest = planned.slice(steps.length);
+    const all = steps.concat(rest);
+    const deviated = steps.length > 0 && planned[curIdx] && planned[curIdx] !== steps[curIdx];
+    head.textContent = 'ROUTE  F' + data.floor + (deviated ? '  ⚠偏离' : '');
+    const W = cv.width, H = cv.height;
+    ctx.clearRect(0, 0, W, H);
+    const step = Math.min(28, (H - 24) / Math.max(all.length - 1, 1));
+    const x = W / 2, y0 = 14;
+    ctx.strokeStyle = 'rgba(216,168,74,.45)'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(x, y0); ctx.lineTo(x, y0 + step * (all.length - 1)); ctx.stroke();
+    all.forEach((ch, i) => {
+      const y = y0 + step * i;
+      const isActual = i <= curIdx;
+      const col = COLOR[ch] || '#9aa3b2';
+      const isCur = i === curIdx;
+      ctx.beginPath(); ctx.arc(x, y, isCur ? 8.5 : 6.5, 0, Math.PI * 2);
+      ctx.fillStyle = isCur ? col : (isActual ? 'rgba(40,44,56,.95)' : 'rgba(18,20,28,.85)');
+      ctx.fill();
+      ctx.lineWidth = isCur ? 2.5 : 1.6;
+      ctx.strokeStyle = isActual ? col : 'rgba(140,140,150,.45)';
+      ctx.stroke();
+      ctx.fillStyle = isCur ? '#11131b' : (isActual ? col : 'rgba(150,150,160,.75)');
+      ctx.font = 'bold 10px Consolas, monospace';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(ch, x, y + 0.5);
+    });
+    note.textContent = (plan.note || '') + (deviated ? ' · 已偏离计划，重新 route --commit' : '');
+  }
+  async function tick() {
+    try { const r = await fetch('/route', {cache: 'no-store'}); draw(await r.json()); }
+    catch (e) { panel.classList.add('hidden'); }
+  }
+  tick();
+  setInterval(tick, 1500);
+})();
+</script>
+</body>
+</html>

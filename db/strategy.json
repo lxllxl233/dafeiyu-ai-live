@@ -1,0 +1,1253 @@
+[
+ {
+  "id": "act1_blueprint",
+  "phase": "act1",
+  "priority": 1,
+  "title": "Act1 牌组蓝图 12–15",
+  "rule": "进Boss前：2 AOE + 1–2易伤 + 2–3优质防御 + 1–2运转/回费 + 1收尾；基础牌≤4，牌组>16跳过非关键牌。",
+  "why": "前7局多数败在Act1：要么没AOE/防御，要么牌组16–17稀释关键牌；3费引擎无防御裸抓也会崩。",
+  "cards": "Whirlwind / Thunderclap / Breakthrough / Bash / Uppercut / Blood Wall / Flame Barrier / Shrug / Burning Pact / Body Slam"
+ },
+ {
+  "id": "act1_early_no_campfire_budget",
+  "phase": "act1",
+  "priority": 1,
+  "title": "Act1 前 6 层没有营火：普通怪血预算 ≤5/场",
+  "rule": "开场到第一个营火之间通常有 4-6 场战斗，且没有回血手段。这段路的普通怪每场目标 ≤5 血，整段 ≤20 血；拿不准就每一回合都挡满。血在这里花掉，后面就要绕精英、放弃商店、甚至弃局。",
+  "why": "第 22 局第 2-6 层连续四场普通怪掉了 40 血（64→24），第一个营火在第 7 层还没走到，24 血时整局已经不可打。",
+  "cards": "Act1 开局"
+ },
+ {
+  "id": "act1_encounter",
+  "phase": "act1",
+  "priority": 1,
+  "title": "Act1 目标优先级",
+  "rule": "先杀攻击/叠力量/召唤单位；Toadpole有Thorns用大单发；Living Fog杀本体；Wriggler多只用AOE；Slime的Infection别留手里。",
+  "why": "目标错/多段撞Thorns/先清召唤物会多打好几回合，A10战损复利。",
+  "cards": "Nibbit / Toadpole / Wriggler / Living Fog / Leaf Slime / Twig Slime"
+ },
+ {
+  "id": "act1_strike_removal",
+  "phase": "shop",
+  "priority": 1,
+  "title": "第一幕至少删 1 张打击",
+  "rule": "第一幕商店有删牌就删打击（100 金），不要把删牌钱全换成牌；进第二幕前打击 ≤3 张。",
+  "why": "第 16 局 0 次删牌，5 张打击 + 进阶之灾让 16 张牌里只有 10 张有效牌；牌组质量比多一张 7 甲技能更重要。",
+  "cards": "Strike / Ascender's Bane（永恒，删不掉）"
+ },
+ {
+  "id": "act2_block_density",
+  "phase": "act2",
+  "priority": 1,
+  "title": "Act 2 门槛：每回合稳定 26+ 甲",
+  "rule": "进 Act 2 前算一遍防御供给：4 张防御（5 甲）+ 耸肩（8）+ 邪眼（8）大约只有 20-30，而 Act 2 普通怪单回合 26 点是常态。达不到就优先补防御牌（第二张耸肩、血墙最多 1 张、邪眼、岩石铠甲），或者先打低威胁路线。",
+  "why": "第 13 局 Tunneler 每回合 26 点、92 血，我们每回合只有约 20-30 甲，从 41 血被磨到 0；防御密度不够时，血就是唯一的缓冲。",
+  "cards": "Shrug It Off / Evil Eye / Blood Wall / Stone Armor / Impervious"
+ },
+ {
+  "id": "act2_engine",
+  "phase": "act2",
+  "priority": 1,
+  "title": "Act2/3 牌组定稿 15–20",
+  "rule": "4运转 + 2回费 + 2–3优质防御 + 1–2收尾；基础牌≤3；停止抓过渡攻击；Boss前花光金币/留药水。",
+  "why": "A10双Boss+Queen锁3张，需要可循环、两套独立启动；30张“什么都有”的牌组过不了。",
+  "cards": "Burning Pact / Pommel / Battle Trance / Bloodletting / Blood Wall / Body Slam / Ashen Strike / Pact's End / Fiend Fire"
+ },
+ {
+  "id": "anchor_intent",
+  "phase": "combat",
+  "priority": 1,
+  "title": "第0层：先看敌人意图",
+  "rule": "先读敌人 intent、战斗类型、引擎状态、斩杀线，再决定 Stabilize 还是 Spike。",
+  "why": "出牌链路的第一推动力是敌人节奏，不是手牌。",
+  "cards": "全部敌人"
+ },
+ {
+  "id": "aoe_before_energy",
+  "phase": "act1",
+  "priority": 1,
+  "title": "AOE=0 时优先拿 AOE",
+  "rule": "牌组 AOE 为 0 时，AOE 抓位高于回费/单卡/药水；哪怕要自伤（突破 -1 血）也要先补一张。Act1 的多怪战（史莱姆群/蟾蜍/墨滴群）是 A10 的主要死因，没有 AOE 就只能被数量磨死。",
+  "why": "第 11 局第 3 层奖励同时有突破（9 AOE）和放血（0 费 +2 能量），我选了放血；结果第 6 层四史莱姆 9 回合掉 19 血、第 7 层三墨滴直接战死。",
+  "cards": "Breakthrough / Whirlwind / Thunderclap / Stomp / Conflagration / Pact's End"
+ },
+ {
+  "id": "aoe_finisher_pref",
+  "phase": "combat",
+  "priority": 1,
+  "title": "收尾优先用能顺带打多目标的 AOE",
+  "rule": "有两个以上敌人时，如果 AOE（雷霆 4 伤 / 突破 13 伤）能收掉残血目标，优先用 AOE 而不是单体打击：既完成斩杀，又给另一个敌人掉血，不浪费溢出的伤害。只有单体伤害刚好跨过斩杀线且 AOE 差一点时才用单体。",
+  "why": "第 12 局多次用打击/剑柄收残血敌人，另一只完全没掉血；用雷霆收尾可以同时削另一个目标 4-6 点。",
+  "cards": "Thunderclap / Breakthrough / Whirlwind / Stomp"
+ },
+ {
+  "id": "aoe_for_multi_elite",
+  "phase": "combat",
+  "priority": 1,
+  "title": "4 怪精英是 DPS 检定：没 AOE 不要进",
+  "rule": "园丁/袭击者/史莱姆群这类 4 怪精英，合计血量 100+、每回合入伤 15-30；进之前确认至少有 2 张 AOE 或 25+ 单体 DPS + 7 张防御，否则绕路。胆小/格挡类被动会进一步吃掉单体伤害。",
+  "why": "第 21 局四园丁合计 120 血，我们只有单体输出（痛击/上勾拳/愤怒），每回合只能打 1-2 只，被 4 条线磨到 3 血。",
+  "cards": "Phantasmal Gardener / Ruby Raiders / 多怪精英"
+ },
+ {
+  "id": "axis_choice",
+  "phase": "act2",
+  "priority": 1,
+  "title": "只追一条主轴",
+  "rule": "按最早拿到的“定义收尾”的牌选力量/防御/消耗；其余轴只拿直接增强收尾的牌。",
+  "why": "A10 牌库规模不允许样样通；三轴混抓是最常见失败模式。",
+  "cards": "Demon Form / Barricade+Body Slam / Corruption+Dark Embrace"
+ },
+ {
+  "id": "big_hit_all_or_nothing",
+  "phase": "combat",
+  "priority": 1,
+  "title": "大入伤：要么挡满，要么全打伤害",
+  "rule": "面对 20 点以上的入伤，不要做「半挡半打」：要么把格挡堆到接近满值（漏 0-2 点），要么放弃防御、把最大的那张（灰烬打击/恶魔之焰）打出去换血。最差的选择是挡了 40-60% 又只打了小伤害，等于两头都亏。",
+  "why": "第 13 局 Boss 战有一回合 23 点入伤，我只叠了 18 甲又打了一刀 10 伤，结果还是掉 5 血，而那张灰烬打击当时就能打 40。",
+  "cards": "Ashen Strike / Fiend Fire / Whirlwind"
+ },
+ {
+  "id": "block_to_five",
+  "phase": "combat",
+  "priority": 1,
+  "title": "非斩杀回合先把入伤压到 ≤5，再输输出",
+  "rule": "每回合先算斩杀线；不能斩杀时，先用防御牌把 incoming 压到 ≤5（拿不准就压到 ≤10% 最大生命），剩下的费用才打输出。3 费默认分配是 2 费防御 + 1 费输出。只有三种情况可以全攻：本回合能斩杀、挡也挡不住一半、这回合不压血下回合必死。",
+  "why": "第 22 局四场普通怪合计掉 40 血（50% 最大生命），逐回合复盘发现 ~47 点伤害是可避免的：多次手里有防御牌却 3 费全用来输出，例如 f4 用彼岸咆哮硬吃 16、f5 两回合各硬吃 12。",
+  "cards": "所有战斗"
+ },
+ {
+  "id": "blood_wall_low_hp",
+  "phase": "combat",
+  "priority": 1,
+  "title": "血墙在 HP≤2 时不可用",
+  "rule": "Blood Wall/其他自伤牌在 HP ≤2 时不要打（-2 HP 会直接致死）；低血优先 Shrug/True Grit/Flame Barrier/Defend。",
+  "why": "第 10 局 Boss 战 2 血时手里两张血墙全是废牌，等于手牌上限 -2。",
+  "cards": "Blood Wall / Offering / Breakthrough / Brand"
+ },
+ {
+  "id": "boss_block_density",
+  "phase": "act1",
+  "priority": 1,
+  "title": "进 Boss 前防御牌 ≥6 张或每回合稳定 20+ 甲",
+  "rule": "Act1 Boss 单回合 20-30 伤，4 张防御（5 甲）挡不住。进 Boss 前保证：血墙/邪眼/坚毅这类 8+ 格挡牌至少 2 张，防御类总数 ≥6，且血墙优先升级。",
+  "why": "第 17 局 18 张牌只有 5 张防御（4 防御 + 1 血墙），每回合抽到 1.4 张，28 伤回合只能挡 21，直接掉到 1 血。",
+  "cards": "Blood Wall / Evil Eye / True Grit / Defend / Flame Barrier / Impervious"
+ },
+ {
+  "id": "boss_dps_check",
+  "phase": "routing",
+  "priority": 1,
+  "title": "进 Boss 前算 DPS × 可活回合 ≥ Boss 血量",
+  "rule": "最后一个营火前算：当前每回合平均输出 × 预计能活的回合数，是否 ≥ Boss 血量（+ 死亡后爆炸/亡语伤害）。不够就用金币补输出/买药，而不是继续删牌；还是不够就要承认打不过，重新评估路线和构筑。",
+  "why": "第 17 局瀑布巨兽 240 血 + 47 点蒸汽爆炸，我们约 22/回合、65 血只能撑 6 回合，数学上就打不完；到死都没算过这笔账。",
+  "cards": "所有 Boss"
+ },
+ {
+  "id": "boss_explosion_plan",
+  "phase": "combat",
+  "priority": 1,
+  "title": "对带亡语/爆炸的 Boss，先算死后的那一击",
+  "rule": "打有亡语/蒸汽喷发/死亡爆炸的 Boss 前，先算：爆炸伤害（虚弱后 ×0.75）vs（击杀后下回合可稳定获得的格挡 + 剩余 HP）。算不过就不要急着杀，先攒甲/回血/喝药，并把最后一击安排在能扛住爆炸、且本体带着虚弱的那一回合。",
+  "why": "run17 瀑布巨兽蒸汽喷发涨到 47，就算第 11 回合打死，下回合末 47 点也会收掉 1 血玩家；而虚弱能把 47 压到 35，是生与死的差别。",
+  "cards": "Waterfall Giant / 所有 DEATH_BLOW 敌人"
+ },
+ {
+  "id": "boss_prep",
+  "phase": "act1",
+  "priority": 1,
+  "title": "Boss 前硬检查",
+  "rule": "HP≥70%、2张优质防御、1张易伤、药水可用、金币花掉、牌组≤15；Ringing回合只打1张；Plow到150/160会眩晕。",
+  "why": "第4局87HP进Boss仍被磨死，说明防御密度比进Boss血量更重要；金币233没花=资源浪费。",
+  "cards": "Ceremonial Beast / Blood Wall / Flame Barrier / Shrug / Body Slam / 药水"
+ },
+ {
+  "id": "boss_trade_ratio",
+  "phase": "combat",
+  "priority": 1,
+  "title": "换血比：Boss 血多时不拿自己的血换小伤害",
+  "rule": "Boss 剩余血量 >40% 时，不要用超过自身 15% 的血量去换不到 8% 的 Boss 血量；换血只发生在斩杀窗口（Boss <25% 或这回合能打死/打晕）。Boss 血是固定值，你的血是百分比资源。",
+  "why": "run17 第 2 回合用 16 血（25%）换 15 伤（6%），第 8 回合用 8 血换 29 伤（12%），两笔都是亏的；240 血 Boss 需要 ~13 回合，换血换不过。",
+  "cards": "所有 Boss"
+ },
+ {
+  "id": "burning_blood",
+  "phase": "invariant",
+  "priority": 1,
+  "title": "燃烧之血=6 点战略资源",
+  "rule": "把每场战斗后的 +6 HP 算进路线；能多打一场普通怪时先看剩余血量。",
+  "why": "A10 下 6 点回复决定你能不能连续作战。",
+  "cards": "Burning Blood"
+ },
+ {
+  "id": "buy_cheap_relics",
+  "phase": "shop",
+  "priority": 1,
+  "title": "便宜遗物优先于买牌",
+  "rule": "商店/事件里如果遗物价格明显低于常态（≤150 金）、且对当前体系有增益（格挡、能量、抽牌、消耗协同），优先买遗物而不是买牌。遗物是永久收益，牌组加了牌反而更厚。",
+  "why": "第 13 局 Act 2 商店有 156/181/201 的遗物，我全部跳过只买了张牌和删牌；后来复盘发现便宜的遗物（如餐券、熔岩灯）性价比明显更高。",
+  "cards": ""
+ },
+ {
+  "id": "campfire_choice",
+  "phase": "invariant",
+  "priority": 1,
+  "title": "篝火：不要默认睡觉",
+  "rule": "HP<50% 睡觉；50–70% 看下一场；≥70% 且有关键升级目标就锻造；满血优先锻造。",
+  "why": "A10 需要升级对冲数值膨胀；满血睡觉=浪费一次发育，但低血/精英前睡觉保命优先。",
+  "cards": "休息 / 锻造"
+ },
+ {
+  "id": "campfire_smith_choice",
+  "phase": "rest",
+  "priority": 1,
+  "title": "营火：血够就敲牌，别只会睡觉",
+  "rule": "营火不是只有睡觉。血量 ≥50% 且牌组里有值得升级的关键牌（核心攻击、邪眼、恶魔之焰、痛击等）时，敲牌（升级）的长期收益通常大于那点回血。血量 <50% 或马上要打精英/Boss 才优先睡觉。",
+  "why": "最近几局营火几乎全在睡觉，牌组里一堆 6 伤打击从来没升级过；升级一张关键牌等于每场战斗都多几点伤害/格挡，而睡觉只回一次血。",
+  "cards": ""
+ },
+ {
+  "id": "campfire_upgrade_value",
+  "phase": "rest",
+  "priority": 1,
+  "title": "营火只升「每回合都在生效」的牌",
+  "rule": "锻造优先级：力量/引擎（燃烧、黑拥、无惧疼痛）> AOE（突破、焚烧、旋风斩）> 关键技能（邪眼、坚毅、头槌）；痛击这类低成长攻击排后。打击/防御默认不升（是删牌对象），但若牌组已无更好目标、且该牌这局确定不删（如防御密度不足），升一张防御（5→8）也比赛后空手强。血 <50% 才睡觉。",
+  "why": "痛击+ 只多 2 伤，占掉全幕唯一锻造；升级燃烧+ 是每回合 +力量、邪眼+ 是 8→12 甲、突破+ 是 9→10 群伤，都是复利。钓鱼竿/事件升级可能随机落到基础牌，所以营火那一次更不能浪费。",
+  "cards": "Inflame+ / Evil Eye+ / Breakthrough+ / Dark Embrace / Feel No Pain / Corruption"
+ },
+ {
+  "id": "conflagration_strength_aoe",
+  "phase": "draft",
+  "priority": 1,
+  "title": "焚烧/旋风斩 = 段数 × 力量",
+  "rule": "有力量来源（燃烧/恶魔形态/欺凌类）时，焚烧（4 段 × (2+力量)）、旋风斩这类多段 AOE 的抓位高于普通单卡和防御牌；伤害按「段数 × (基础 + 力量)」算，不要只看面板基础值。",
+  "why": "焚烧基础只有 8，但有燃烧后同回合就是 4×4=16，力量叠到 6 是 32；它是力量流的核心群伤，容易在商店被当成“8 点群伤”跳过。",
+  "cards": "Conflagration / Whirlwind / Breakthrough / Thunderclap"
+ },
+ {
+  "id": "crisis_potion",
+  "phase": "combat",
+  "priority": 1,
+  "title": "危机先清点药水",
+  "rule": "不喝药必死/会掉到下一击必死区间时，先清点药水；确定性格挡/斩杀优先，没有就赌技能/速度药水。",
+  "why": "第 5 局 27 HP/32 攻时没先喝技能药水，9 HP 才喝，7 HP 已无药；药水是买一回合，不是留给未来的收藏。",
+  "cards": "格挡药水 / 虚弱药水 / 技能药水 / 速度药水 / 复制药水"
+ },
+ {
+  "id": "damage_vs_hp_tradeoff",
+  "phase": "combat",
+  "priority": 1,
+  "title": "不是每回合都要打输出",
+  "rule": "每回合先问「这回合挨的打能不能挡住」。能全挡且不需要抢伤害时，优先全挡——血量是 A10 最稀缺的资源，少掉 10 点血比多打 10 点伤害值钱。只有三种情况才该用血换伤害：① 斩杀线内；② 敌人有成长/仪式必须抢；③ 挡满也活不下来，只能赌。",
+  "why": "最近几局多次在有防御牌的情况下仍然先打攻击，掉血累积到 30% 以下，进精英/Boss 时已经没有容错。",
+  "cards": ""
+ },
+ {
+  "id": "deck_15_20",
+  "phase": "invariant",
+  "priority": 1,
+  "title": "牌组 15–20 张",
+  "rule": "第一幕结束 12–15，最终 15–20；不服务循环的牌跳过。",
+  "why": "A10 双 Boss + Queen 锁牌要求薄而可循环，而不是 30+ 张“什么都有”。",
+  "cards": "全部"
+ },
+ {
+  "id": "deck_cap_16",
+  "phase": "reward",
+  "priority": 1,
+  "title": "牌组 16 张是硬上限",
+  "rule": "牌组到 16 张后，只收引擎/收尾/优质防御这类质变牌；Boss 前 3 层默认跳过普通奖励。宁可跳过，也不要为了'顺手'加牌。",
+  "why": "第 10 局从 16 加到 18（头锤/坚毅+/全身撞击），Boss 关键回合手牌 0 张格挡牌，直接被打穿。",
+  "cards": ""
+ },
+ {
+  "id": "deck_cap_boss",
+  "phase": "build",
+  "priority": 1,
+  "title": "进 Boss/精英前牌组 >18 就跳过奖励",
+  "rule": "牌组超过 18 张后，关键防御（血墙/耸肩）与本局爆发牌的抽齐率明显下降；Boss/精英前的奖励牌默认跳过，除非它直接补短板（收尾/AOE/大甲）。",
+  "why": "第 27 局进精英时牌组 19 张，第 3-6 回合多次没抽到血墙，每回合硬吃 9-13。",
+  "cards": "所有构筑"
+ },
+ {
+  "id": "defense_damage_ratio",
+  "phase": "act1",
+  "priority": 1,
+  "title": "防御占比 ≤1/3，必须有收尾",
+  "rule": "防御牌不超过牌组 1/3；2 费纯格挡大牌（Blood Wall 等）最多 2 张；超过就先补输出而不是再买防御。牌组里必须至少有 1 张把格挡转成伤害/成长的收尾（Body Slam/Barricade/Feel No Pain/Juggernaut）或足够力量，否则防御只是拖延。",
+  "why": "第 10 局防御 7 张（2 血墙+3 防御+耸肩+坚毅+），输出只有 3 打击+Bash+头锤+践踏，Boss 战约 20 伤/回合，199 血要打 10 回合，被爪牙和本体磨死。",
+  "cards": "Blood Wall / Defend / Shrug It Off / True Grit / Body Slam / Barricade / Feel No Pain"
+ },
+ {
+  "id": "defense_density_act1",
+  "phase": "act1",
+  "priority": 1,
+  "title": "Act1 进 Boss 前：防御牌 ≥6 张，含 2 张 8+ 大甲",
+  "rule": "4 张 5 甲防御 + 1 张耸肩（11）在 20-24 入伤的 Boss 面前不够，很多回合只能挡 5-11。进 Act1 Boss 前确保 6 张以上防御，其中至少 2 张 8+（血墙/耸肩+/邪眼/坚毅）。",
+  "why": "第 19 局 15 张牌只有 5 张防御，Boss 战多个回合净掉 10+，最后被 21 点收掉。",
+  "cards": "Defend / Shrug It Off+ / Blood Wall / Evil Eye / True Grit"
+ },
+ {
+  "id": "defense_with_draw",
+  "phase": "combat",
+  "priority": 1,
+  "title": "附带收益的防御优先",
+  "rule": "Shrug/Evil Eye/True Grit 这类“格挡+抽牌/烧牌”优先于纯 Defend；用最少资源覆盖生存下限。",
+  "why": "一张牌同时完成生存和信息扩展，减少未来消耗。",
+  "cards": "Shrug It Off / Evil Eye / True Grit / Armaments"
+ },
+ {
+  "id": "early_floor_hp_budget",
+  "phase": "act1",
+  "priority": 1,
+  "title": "前 3 层每场 ≤5 血：一次失误就整局崩",
+  "rule": "Act1 前 3 层没有营火，一场 15-20 点的失误会让你带着残血去打后面的 scaler。第 2 层开始就按“每场 ≤5 血”执行：能杀就杀、杀不了挡满。",
+  "why": "第 24 局第 2 层尼比特一场掉 21 血（其中 16 来自一次没杀掉的失误），第 3 层 42 血被绒毛虫一击带走。",
+  "cards": "Act1 前三层"
+ },
+ {
+  "id": "elite_bypass_check",
+  "phase": "routing",
+  "priority": 1,
+  "title": "A10 进精英前先评估「能不能绕」",
+  "rule": "A10 的精英平均战损 30-40 血，等于一整幕的血量预算。进之前四项检查：(1) HP ≥70%；(2) 每回合能稳定挡 15+；(3) 单体 DPS ≥20；(4) 至少 1 瓶能救命的药。任一项不满足就绕路（走营火/商店/事件），哪怕多打 1-2 场普通怪。已知是 20 伤害上限/召唤/仪式这类长战精英时，标准再抬高一档。",
+  "why": "第 18 局 60/80（75%）进骷髅集群，打了 5 回合掉 37 血，直接导致后面两格没有回血点、第 11 层被普通怪磨死。",
+  "cards": "所有精英 / 地图岔路"
+ },
+ {
+  "id": "elite_limit",
+  "phase": "act1",
+  "priority": 1,
+  "title": "第一幕最多 1 只精英",
+  "rule": "第一只精英可以打；第二只必须极慎重，HP<70% 直接绕。",
+  "why": "A10 精英战损极高；第一只轻松不代表第二只安全。",
+  "cards": "精英路线"
+ },
+ {
+  "id": "elite_low_hp_forced",
+  "phase": "act1",
+  "priority": 1,
+  "title": "强制精英 + 血 <55% + 无爆发 = 必输局，先准备再打",
+  "rule": "Act1 两条路都通向精英时（地图只能进精英），必须在上一格营火/商店把血线拉到 55% 以上或买到 20+/回合的爆发；否则视为必输局，进战回合 1 就交药水。",
+  "why": "第 27 局第 12 层强制精英旧日雕像 132 血，进战 40/80，6 回合只打掉 78 点，被每回合 25 磨死。",
+  "cards": "Bygone Effigy / 所有 100+ 血 Act1 精英"
+ },
+ {
+  "id": "elite_needs_potion",
+  "phase": "route",
+  "priority": 1,
+  "title": "Act1 精英前必须带药",
+  "rule": "进 Act 1 精英前至少要有 1 瓶药（格挡/虚弱优先）；没有药就不打精英，改走营火或绕路。",
+  "why": "第 10 局 61/65 进精英、17/65 出来（11 回合掉 44 血），全程无药水；血量债直接导致 Boss 前只能睡觉不能锻造。",
+  "cards": ""
+ },
+ {
+  "id": "enemy_reanchor",
+  "phase": "combat",
+  "priority": 1,
+  "title": "击杀后重读敌人",
+  "rule": "每张牌后重读敌人数量/意图；任何死亡、召唤、意图变化都丢弃旧计划，重新算 incoming 和目标索引。",
+  "why": "第 6 局打死攻击怪后，剩下两只只上状态，却按旧意图打了 Defend；旧状态会让防御/目标全错。",
+  "cards": "全部敌人"
+ },
+ {
+  "id": "eternal_curse_check",
+  "phase": "event",
+  "priority": 1,
+  "title": "接诅咒前先看它是不是「永恒」",
+  "rule": "事件给诅咒换资源（金币/遗物/删牌）时，先看诅咒牌面关键词：带「永恒 / Eternal」的诅咒永远无法移除（商店删不掉、事件也删不掉）。贪婪（Greed）、进阶之灾（Ascender's Bane）都是永恒。永恒诅咒不要接，除非收益大到能抵消整局的抽牌污染。",
+  "why": "第 15 局为了 354 金接了贪婪，以为下个商店能删；到商店才发现它不在移除列表里（牌面写着「永恒」），等于永久少一张手牌。",
+  "cards": ""
+ },
+ {
+  "id": "exhaust_engine_core",
+  "phase": "draft",
+  "priority": 1,
+  "title": "消耗三件套是核心引擎",
+  "rule": "恶魔之焰 + 无惧疼痛 + 黑暗之拥同时在场时，一张恶魔之焰 = 35 伤 + 30 甲 + 抽 5 张。看到这三张优先拿；只有一张时先拿恶魔之焰（收尾+引擎二合一），无惧疼痛第二，黑暗之拥第三。",
+  "why": "第 13 局靠这套第一次推倒 Act 1 Boss（Lagavulin 233 血）；恶魔之焰单独只是 35 伤，配上无惧疼痛和黑暗之拥就变成攻防抽三合一的爆发回合。",
+  "cards": "Fiend Fire / Feel No Pain / Dark Embrace / Burning Pact / True Grit"
+ },
+ {
+  "id": "exhaust_first",
+  "phase": "invariant",
+  "priority": 1,
+  "title": "烧牌最高抓位",
+  "rule": "奖励同时有优质力量牌和普通但可用的烧牌时，默认选烧牌，除非缺输出快死。",
+  "why": "消耗压缩牌库，让回费/运转/收尾的抽取概率上升；启动速度优先于成长上限。",
+  "cards": "Corruption / Dark Embrace / Feel No Pain / Burning Pact / Second Wind / Fiend Fire / Ashen Strike / Pact's End / Havoc / True Grit / Cinder"
+ },
+ {
+  "id": "forced_elite_hp_gate",
+  "phase": "routing",
+  "priority": 1,
+  "title": "强制精英前的血量门槛",
+  "rule": "地图只有一条路且下一格是精英时，先看血量：≥50% 正常打；<50% 就要提前把药水喝掉、或者在前面的普通怪选择跳过（能跳的话）、把这次精英当赌局，进战前把「这回合打多少、能活几回合」算清楚。",
+  "why": "第 14 局第 15 层是无法绕开的精英（骇鳗 150 血 24 攻），进战时 32/87，等于把胜负交给运气。",
+  "cards": ""
+ },
+ {
+  "id": "fury_recycle_block",
+  "phase": "combat",
+  "priority": 1,
+  "title": "涅奥之怒优先回收大甲，不是打击",
+  "rule": "涅奥之怒（1 费 10 伤 + 从弃牌堆拿 2 张）回收顺序：血墙/坚毅/大甲 > 痛击/上勾拳 > 打击。回收防御牌 = 下回合「挡满 + 输出」，比多打 6 点伤害值钱。",
+  "why": "第 22 局拿到涅奥之怒后大多回收打击补输出，没有用它保证每回合有甲可打。",
+  "cards": "Neow's Fury"
+ },
+ {
+  "id": "hp_50_rest",
+  "phase": "invariant",
+  "priority": 1,
+  "title": "HP<50%：下一格必须营火",
+  "rule": "血量低于 50% 时，下一格优先营火；没有营火就改道/用 Winged Boots，不再接双怪或精英。",
+  "why": "第 5 局 28/34 HP 继续打双 Nibbit，7 HP 进战斗直接崩；商店不能回血，低血时战斗是最贵的选项。",
+  "cards": "火堆 / Winged Boots / 格挡药水"
+ },
+ {
+  "id": "hp_70",
+  "phase": "invariant",
+  "priority": 1,
+  "title": "血量 ≥70%",
+  "rule": "道中尽量维持 70% 以上；低于 70% 时火堆优先睡觉，不贪敲。",
+  "why": "A10 战损放大；Burning Blood 每场只回 6，半血进精英/Boss 最容易崩。",
+  "cards": "Burning Blood / 火堆"
+ },
+ {
+  "id": "hp_budget_route",
+  "phase": "routing",
+  "priority": 1,
+  "title": "看营火位置，不是营火数量",
+  "rule": "路线规划时要看营火在第几层，而不是总数。如果前 8 层只有 1 个营火、后面连续 3 场战斗，血量会在中途见底。优先选「前段有营火」的路线，而不是「总数多但都在后半段」。",
+  "why": "第 14 局路线写着 5 个营火，但分布在后半段，前半段连续精英→构造体→邪教徒，血量从 57 掉到 30，进强制精英时只有 37%。",
+  "cards": ""
+ },
+ {
+  "id": "hp_carry_act2",
+  "phase": "act1",
+  "priority": 1,
+  "title": "进 Act 2 至少留 50% HP",
+  "rule": "Act 1 Boss 战结束时的血量要 ≥50%。如果打完 Boss 只剩 25% 左右，说明 Boss 战里硬吃了太多伤害，下局要提前补防御或换更稳的路线。",
+  "why": "第 13 局 64/80 进 Boss、25/80 出来，靠 Ancient 事件回血才续上；如果没那个事件，Act 2 第一个怪就会死。",
+  "cards": ""
+ },
+ {
+  "id": "incoming_total_damage",
+  "phase": "combat",
+  "priority": 1,
+  "title": "入伤口径：total_damage 是总数",
+  "rule": "读意图时：mod 给出 total_damage 就直接用它作为该敌人本回合总伤害（如 5x4 -> 20），不要再乘 hits；只有 total_damage 为空时才用 damage × hits。",
+  "why": "第 10 局 ANCHOR 把 5x4 的 20 点算成 80，导致对入伤的判断完全错位；sts2.py 已修复。",
+  "cards": ""
+ },
+ {
+  "id": "infection_hand_pressure",
+  "phase": "combat",
+  "priority": 1,
+  "title": "噬魂寄生虫：手牌被感染占满，必须速杀",
+  "rule": "Phrog Parasite 每回合塞感染（回合末每张 3 伤），会让手里能打的牌越来越少。打它要么 2-3 回合内打死，要么保证每回合 20+ 净输出；不要拖长战。",
+  "why": "第 23 局第 15 层手牌被 3 张感染占住，最后几回合只打出 1-2 张有效牌，被磨死。",
+  "cards": "Phrog Parasite / 塞状态牌的敌人"
+ },
+ {
+  "id": "kill_summoner_first",
+  "phase": "combat",
+  "priority": 1,
+  "title": "召唤类敌人优先集火，绝不分散",
+  "rule": "看到 summon intent（双尾鼠 / 格雷姆林佣兵 / 任何召唤者），第一回合起所有伤害都压它：先易伤再全力输出。放任它召唤一次 = 场上多一个攻击者，入伤会线性上涨。",
+  "why": "第 25 局第 9 层三只双尾鼠，我没杀召唤者，场面 3→4 只，入伤 16→23→25，血量 62→21。",
+  "cards": "Two-Tailed Rat / Gremlin Merc / 所有召唤者"
+ },
+ {
+  "id": "low_hp_block",
+  "phase": "combat",
+  "priority": 1,
+  "title": "低血防御：Flame Barrier > Blood Wall",
+  "rule": "HP≤15 或自伤可能致死时，优先 Flame Barrier / Shrug It Off / Evil Eye / Defend；Blood Wall 只在 HP 安全且确实需要 16 甲时用。",
+  "why": "Blood Wall 的 -2 HP 是真实生命成本；第 5 局 9 HP/13 攻时，Flame Barrier+ 是 12 甲+反伤4（9→8 HP，反伤4），Blood Wall 是 16 甲-2 HP（9→7 HP，无返伤），Flame 严格更优。",
+  "cards": "Flame Barrier / Blood Wall / Shrug It Off / Evil Eye / Defend"
+ },
+ {
+  "id": "low_hp_no_fight",
+  "phase": "route",
+  "priority": 1,
+  "title": "HP<25% 不进没把握的战斗",
+  "rule": "HP<25% 且下一格只有战斗（没有营火分支）时，先算最坏情况：敌人最大入伤 vs 手上的格挡+药水。算不过来就不要进——宁可绕路/放弃该层奖励，也不要赌'先打打看'。",
+  "why": "第 11 局 19/80（24%）时只有怪物可选，进三墨滴战被 24 点入伤打到 1 血，下一回合死亡。",
+  "cards": ""
+ },
+ {
+  "id": "map_edge_lookahead",
+  "phase": "routing",
+  "priority": 1,
+  "title": "选节点前先看它的出边",
+  "rule": "每选一个节点前，看它连出去的下一格是什么：低血时不要选“唯一出口是精英”的营火/事件/商店，宁可走问号或普通怪。地图连线就是免费的侦察。",
+  "why": "第 21 局第 6 层在营火（6,2）与问号（6,3）之间选了营火，而营火的唯一出口是精英（7,2）；另一条路通普通怪。结果 49/80 被迫打四园丁，第 8 层阵亡。",
+  "cards": "所有地图岔路"
+ },
+ {
+  "id": "mechanics_line_use",
+  "phase": "combat",
+  "priority": 1,
+  "title": "MECHANICS 行是每场战斗的第一信息",
+  "rule": "state 里的 MECHANICS 行列出敌人被动（中文），每场战斗先读再决定打法。已经验证过的：硬化外壳=每回合最多掉 20 血（打满 20 就停手叠甲）、人工制品=先剥再上 debuff、尖叫=掉到 50% 眩晕、埋地=打空格挡眩晕、失衡=完全格挡眩晕。",
+  "why": "第 14 局三次靠它做出正确判断（骷髅集群、构造体、骇鳗）；第 13 局没读它，在地道虫身上白吃了 26 点。",
+  "cards": ""
+ },
+ {
+  "id": "meme_hard_cap",
+  "phase": "invariant",
+  "priority": 1,
+  "title": "梗硬上限：每局 20 条",
+  "rule": "每局梗 ≤20 条（约 ≤1 条/分钟）。超过 20 条后只写分析，不再配梗。宁可少，不要每张牌都玩梗。",
+  "why": "第 12 局 269 个动作 131 条梗（49%），22 分钟约 6 条/分钟，严重超标，冲淡了解说。",
+  "cards": ""
+ },
+ {
+  "id": "micro_lethal",
+  "phase": "combat",
+  "priority": 1,
+  "title": "先算斩杀",
+  "rule": "能斩杀时先算 lethal，不要多打无意义防御。",
+  "why": "减少回合数=减少战损。",
+  "cards": "全部攻击"
+ },
+ {
+  "id": "micro_survival",
+  "phase": "combat",
+  "priority": 1,
+  "title": "不能斩杀先满足生存",
+  "rule": "格挡 ≥ 本回合总伤害，再考虑成长/过牌。",
+  "why": "A10 敌人伤害高；贪一张过牌可能直接死。",
+  "cards": "全部防御"
+ },
+ {
+  "id": "minion_decision",
+  "phase": "combat",
+  "priority": 1,
+  "title": "爪牙：看本体血量和爪牙贡献决定打不打",
+  "rule": "三分支：① 本体 2 回合内可杀，或本体血量低且爪牙随本体死亡消失 → 无视爪牙直杀本体；② 本体 HP ÷ 每回合输出 > 4 回合，且爪牙贡献 ≥40% 入伤 → 先清威胁最大的爪牙；③ 爪牙会叠力量/给本体增益/持续召唤 → 优先清。每次召唤/增益后重算。",
+  "why": "第 10 局 Kin Priest 199 血，两只爪牙合计 21 点/回合（本体才 12），按'只打本体'拖了 6 回合仍没杀掉，反被爪牙磨死；爪牙不补召唤时清掉一只能直接砍掉 40% 入伤。",
+  "cards": ""
+ },
+ {
+  "id": "minion_first_when_leader_tanky",
+  "phase": "combat",
+  "priority": 1,
+  "title": "坦克型 Boss：第一回合开始点杀爪牙",
+  "rule": "本体血量远超你 4 回合的输出（如 199 血）时，不要先磨本体；第一回合就开始点杀爪牙，每回合少挨 10-20 点。爪牙清完再转本体。",
+  "why": "第 12 局第一只爪牙拖到第 5 回合才杀，期间和本体合计 20-33 点/回合，直接把我打到 2 血。",
+  "cards": ""
+ },
+ {
+  "id": "multi_enemy_incoming_sum",
+  "phase": "combat",
+  "priority": 1,
+  "title": "多怪战按总入伤算甲，AOE 不能替代格挡",
+  "rule": "3 个以上敌人时先把每只的 intent 加起来：总入伤 >= 25 就必须先叠甲（血墙/防御），或者点杀最大的那只，而不是用 AOE 换血。AOE 只在‘打完这回合它们就残了’时优先。",
+  "why": "第 20 局第 6 层三只红宝石袭击者（8+6+16=30），我先打 16 群伤换血，掉 44 血（57→13），直接导致第 13 层强制精英只有 44/90 进战。",
+  "cards": "所有多怪战斗"
+ },
+ {
+  "id": "multihit_intent_verify",
+  "phase": "invariant",
+  "priority": 1,
+  "title": "多段意图 NxM：看 ANCHOR 明细，按较大值挡",
+  "rule": "敌人意图带 NxM（如 8x4）时，先看 ANCHOR 行尾的明细（dmg=8x4=32 td=8 并排）：挡牌按两者中较大的算；两个数字矛盾或存疑就多挡。绝不按印象/旧经验里的数字出牌。",
+  "why": "第 26 局第 2 层蟾蜍（带荆棘的鱼）战：对着荆棘硬砍、没算反伤也没留格挡，白白多挨 8 点，用户叫停弃局。",
+  "cards": "所有多段攻击敌人（Seapunk 8x4 / 3x3 / 12x3 等）"
+ },
+ {
+  "id": "neow_eval",
+  "phase": "invariant",
+  "priority": 1,
+  "title": "Neow：比较稀缺性，不默认安全",
+  "rule": "先列所有选项的成本/收益；商店能补的降权，Neow 独有的变化/遗物/金币升权；再算 HP 成本和最坏结果。",
+  "why": "第 7 局有 3 商店还选删 1 张，忽略了“变 2 牌”是商店补不到的稀缺资源；默认安全=低上限。",
+  "cards": "精准剪刀 / 药瓶皮套 / 树叶药膏"
+ },
+ {
+  "id": "neow_transform2",
+  "phase": "invariant",
+  "priority": 1,
+  "title": "变 2 牌 > 删 1 牌（有商店时）",
+  "rule": "路线有商店且血线能兜住时，变化 1 打击+1 防御通常优于删 1 张；-12 最大生命用营火/Burning Blood 兜。",
+  "why": "删牌商店能补，变 2 牌不能；2 张基础牌换 2 张随机牌，可能直接出引擎/防御/AOE，上限远高于删 1。",
+  "cards": "树叶药膏 / 精准剪刀"
+ },
+ {
+  "id": "no_basic_upgrade",
+  "phase": "invariant",
+  "priority": 1,
+  "title": "不要连敲两张打击",
+  "rule": "Strike+/Defend+ 默认不敲；只有无更好目标且正好跨斩杀/格挡阈值时才敲，绝不连续投资基础牌。",
+  "why": "基础牌是优先删除对象；升级它们与压缩牌库方向相反，且挤掉引擎/防御/收尾的关键升级。",
+  "cards": "Strike / Defend"
+ },
+ {
+  "id": "no_collect_on_card_selection",
+  "phase": "invariant",
+  "priority": 1,
+  "title": "CARD_SELECTION 界面禁止用 collect_rewards_and_proceed",
+  "rule": "在 CARD_SELECTION 里调用 collect_rewards_and_proceed 会默认拿走第一张牌。必须先 choose_reward_card（想拿）或 skip_reward_cards（不要），确认回到 REWARD 或 MAP 再 proceed。",
+  "why": "第 25 局第 7 层想拿「怨恨」，但命令因引号解析失败，同一条命令里的 collect_rewards_and_proceed 执行了，默认拿了第一张 Tremble。",
+  "cards": "所有奖励/选牌界面"
+ },
+ {
+  "id": "no_half_block",
+  "phase": "combat",
+  "priority": 1,
+  "title": "大入伤不半挡：要么挡满要么全打",
+  "rule": "入伤 ≥15 或 ≥当前血量 40% 时，格挡牌只有两种用法：堆到 ≥ 入伤（宁多不少），或者一张不打、把能量全换成伤害/药水。只挡 5-10 点的半挡半打是最差解。",
+  "why": "run17 第 5 回合 23 入伤只打了 1 张防御（5 甲），照样吃 18 血，等于白送 1 费；skill 里已有这条，但实战仍犯。",
+  "cards": "Defend / Blood Wall / Evil Eye / True Grit"
+ },
+ {
+  "id": "no_idle_energy",
+  "phase": "combat",
+  "priority": 1,
+  "title": "回合结束前必须花光能量（空过=白送血）",
+  "rule": "每回合结束前确认 energy 0/N：0 费牌先打，剩余能量全部转成格挡或伤害。工具会打印 WASTE_ENERGY，出现就必须处理。唯一合法空过：手上没有可打的牌，或打了会亏（送 Buff/吃荆棘/留关键牌给下回合），后者要在 thought 里写明原因。",
+  "why": "第 28 局多次 3 费只用 2 费就 end_turn，白白少吃一次格挡、多挨伤害，被用户当场指出并弃局。",
+  "cards": "所有战斗"
+ },
+ {
+  "id": "no_incoming_no_block",
+  "phase": "combat",
+  "priority": 1,
+  "title": "incoming=0 不纯防御",
+  "rule": "当前没有攻击意图时，默认攻击/引擎/过牌；纯防御只用于 Body Slam/Barricade/Feel No Pain/保留格挡的铺垫。",
+  "why": "没有伤害要挡时，Defend/Blood Wall 的 1–2 费是白扔；应该把能量转成伤害或引擎。",
+  "cards": "Defend / Blood Wall / Flame Barrier / Shrug It Off / 攻击牌"
+ },
+ {
+  "id": "plan_next_turn",
+  "phase": "combat",
+  "priority": 1,
+  "title": "出牌要连带想下下回合",
+  "rule": "每回合除了解决眼前，还要给下回合铺路：这一回合可以先挂易伤、先叠力量、先铺覆甲/岩石铠甲，让下一回合的爆发或防御更顺。但铺路不能以「这回合会死」为代价。",
+  "why": "第 12 局 Boss 战多次只打眼前：易伤没提前挂、覆甲没提前铺，导致下一回合的 AOE 打不满；反过来第 1 回合铺岩石铠甲、第 4 回合雷霆+突破打 67 群伤，就是正确示范。",
+  "cards": ""
+ },
+ {
+  "id": "play_card_explicit_index",
+  "phase": "invariant",
+  "priority": 1,
+  "title": "同名多张牌（任何牌，含升级副本）要明确指定",
+  "rule": "只要手里有两张同名牌（打击/打击+、防御/防御+、血墙/血墙+……），play <CARD_ID> 默认取第一张，可能是未升级或数值更低的。工具现在会自动选「升级优先、数值最高」并打印 MULTI_COPY 警告；需要精确指定时用 play <CARD_ID> --card <index>。斩杀回合必须先看 MULTI_COPY 行确认。",
+  "why": "第 24 局第 2 层尼比特 7 血，手里同时有打击+(9) 和打击(6)，play STRIKE_IRONCLAD 命中了 6 伤那张，敌人活到 1 血反手 16 点，最终第 3 层带 42 血阵亡。",
+  "cards": "所有同名多副本的牌"
+ },
+ {
+  "id": "potion_before_death",
+  "phase": "invariant",
+  "priority": 1,
+  "title": "药水不要留到死：低血/大入伤回合必须清掉",
+  "rule": "HP <30%，或预计单回合入伤超过当前血量 50% 时，把能用的药水全部用掉：格挡/回血/虚弱直接喝；抽牌类（赌徒特酿、发光水、技能药水）就是“找格挡/找解牌”的工具，不要因为“想留到后面”而带着两瓶药死。",
+  "why": "第 17 局死时槽里还有赌徒特酿和发光水：10 血面对 28 入伤、1 血面对 14 入伤都没用，本可以多撑 1-2 回合甚至摸到血墙。",
+  "cards": "Gambler's Brew / Glowwater Potion / Skill Potion / Blood Potion / Block Potion"
+ },
+ {
+  "id": "potion_gamble",
+  "phase": "combat",
+  "priority": 1,
+  "title": "没格挡时：把药水当赌注评估，而不是留到以后",
+  "rule": "手里没有格挡牌、或入伤 ≥ 当前 HP 时，逐瓶问：这瓶药能不能改变这一回合的生死（格挡/回血/抽牌找解）？能 → 立刻用；不能 → 明确承认这是一次赌博，按「最坏结果是否比必死好」决定。禁止默认「留到以后」。",
+  "why": "第 18 局第 9 层用能力药水换出主宰救场是对的；但第 11 层多回合只有 5-12 格挡却一直换血，没有把「药水能不能换来格挡」算清楚。",
+  "cards": "Block Potion / Blood Potion / Gambler's Brew / Glowwater / Skill Potion / Power Potion"
+ },
+ {
+  "id": "potion_no_trade_boss",
+  "phase": "shop",
+  "priority": 1,
+  "title": "Boss 前不拿药水换牌",
+  "rule": "Boss 前的事件/商店里，不要把格挡/虚弱/抽牌药水换成卡牌；药水是买一回合的确定性资源，Boss 战的价值高于一张普通牌。",
+  "why": "第 10 局第 14 层用格挡药水换坚毅+，Boss 第 5 回合 33 点入伤时无药可救，32 血被打到 2 血后阵亡。留着格挡药水本可剩 14 血继续。",
+  "cards": ""
+ },
+ {
+  "id": "potion_slot_swap",
+  "phase": "invariant",
+  "priority": 1,
+  "title": "药水槽可以换：丢掉弱的、喝掉有用的",
+  "rule": "药水槽满了不是「不能拿」，而是要取舍：① 丢掉对当前战略意义不大的（如单卡检索类），换更强的；② 鲜血药水/回血类可以直接喝掉腾位置；③ 也可以丢一瓶再拿新的，甚至换到鲜血药水后立刻喝掉。奖励里出现强力药水时，先问「槽里哪瓶最没用」。",
+  "why": "第 12 局有两次药水奖励因为槽满直接放弃（瓶装潜能、幸运补剂），而槽里的预知之滴整局没用过。",
+  "cards": ""
+ },
+ {
+  "id": "potions_before_crisis",
+  "phase": "combat",
+  "priority": 1,
+  "title": "多怪战第 2 回合就评估药水，不等血见底",
+  "rule": "多怪战第 2 回合若预计入伤 >25% 最大生命，直接用防御/敏捷/虚弱类药水；等血量掉到 30% 以下再用，往往已经损失 15+ 血。",
+  "why": "第 25 局双尾鼠战血从 62 掉到 27 才喝速度药水；第 2 回合就喝能少掉 10 点以上。",
+  "cards": "Speed Potion / Block Potion / Weak Potion"
+ },
+ {
+  "id": "power_before_block",
+  "phase": "combat",
+  "priority": 1,
+  "title": "翻倍/保留格挡的 Power 先打",
+  "rule": "不可撼动/壁垒/势不可当/无惧疼痛 这类改变格挡结算的 Power，必须在当回合的格挡牌之前打出；否则当回合的格挡不会翻倍/保留，等于白打一张 Power。",
+  "why": "第 11 局墨滴战先打耸肩(8甲)再打不可撼动，当回合本该 16 甲只有 8 甲，多掉 8 血。",
+  "cards": "Unmovable / Barricade / Juggernaut / Feel No Pain"
+ },
+ {
+  "id": "powers_before_attacks",
+  "phase": "combat",
+  "priority": 1,
+  "title": "能力牌先下，再打攻击",
+  "rule": "无惧疼痛、黑暗之拥、燃烧这类能力（Power）要在本回合的攻击/消耗之前打。它们的收益从打出那一刻开始计算，晚一回合就少一整轮的加成。",
+  "why": "第 13 局 Boss 战第一回合手里有无惧疼痛，我却先打了痛击+熔火拳+打击，直到第三回合才下无惧疼痛，后面恶魔之焰的格挡少了好几轮。",
+  "cards": "Feel No Pain / Dark Embrace / Inflame / Barricade / Juggernaut"
+ },
+ {
+  "id": "queen_bound",
+  "phase": "act3",
+  "priority": 1,
+  "title": "Queen 锁牌对冲",
+  "rule": "Queen 每回合前 3 张抽牌变 Bound；至少 4 运转 + 2 回费，药水买额外启动。",
+  "why": "锁牌后仍要能启动；双 Boss 需要两套独立引擎。",
+  "cards": "Queen / Chains of Binding / 抽牌药 / 换牌药 / 烧牌药"
+ },
+ {
+  "id": "raider_focus_crossbow",
+  "phase": "combat",
+  "priority": 1,
+  "title": "红宝石袭击者：先杀弩手",
+  "rule": "三只袭击者的伤害是弩手 16 > 狂战士 8 > 大斧 6。目标是先杀弩手（血最少、伤害最高），其次是叠甲挡住总和；不要把伤害分散。",
+  "why": "第 20 局第 6 层没有先点弩手，16 点一次打满，三条线合计 30 入伤。",
+  "cards": "Ruby Raiders / 多目标高伤小怪"
+ },
+ {
+  "id": "re_read_state",
+  "phase": "combat",
+  "priority": 1,
+  "title": "每张牌后重读状态",
+  "rule": "每打一张牌重新读 /state；用 `sts2.py play <CARD_ID>` 按卡牌 ID 出牌，避免索引移位。",
+  "why": "动画/抽牌会让手牌索引变化；旧索引会打错牌。",
+  "cards": "全部"
+ },
+ {
+  "id": "read_live_card_values",
+  "phase": "invariant",
+  "priority": 1,
+  "title": "伤害/格挡按实时数值算（含升级和遗物），不看卡面文字",
+  "rule": "卡面文字不随升级变化（打击+ 仍写 6），且不含遗物加成（打击木偶 +3）。斩杀和格挡一律取 state 里卡的 current_value / 面板实时数值；工具已改为显示 `Strike+` 和 `Damage=9`。",
+  "why": "第 19 局把打击+ 当 6 算、痛击+ 当 8 算，斩杀少算 3-5 点，19 点的必杀算成 17，于是又回溯了一次。",
+  "cards": "所有卡牌 / Strike Dummy / 力量 / 易伤"
+ },
+ {
+  "id": "read_mechanics_first",
+  "phase": "combat",
+  "priority": 1,
+  "title": "打之前先读敌人机制（自动输出）",
+  "rule": "进入战斗后，state 里的 MECHANICS 行会自动列出敌人的被动。必须读，再决定打哪个目标、怎么出牌。典型：地道虫「埋地」＝格挡不随回合消失，打空全部格挡就眩晕；盛碗虫（石）「失衡」＝攻击被完全格挡就眩晕；花园幽灵鳗「胆小」＝每回合第一次被命中获得 1 格挡（多段攻击能吃掉它）。",
+  "why": "第 13 局打地道虫时，恶魔之焰已经打掉大部分格挡，剑柄打击正好能打空触发眩晕，我却去打了防御，白吃 26 点。信息在数据库里，只是没读。",
+  "cards": ""
+ },
+ {
+  "id": "relic_fx_read",
+  "phase": "invariant",
+  "priority": 1,
+  "title": "遗物/药水效果现在自动打印",
+  "rule": "sts2.py state 会输出 RELIC FX 和 POTION FX 两行（中文效果），不用再靠记忆。拿到新遗物后先读这两行，再决定路线/商店/战斗打法。",
+  "why": "第 14 局拿了五轮书（每加入 5 张牌回复 20 点生命）却从没用它来规划「该不该多拿牌」，说明遗物效果根本没进决策。",
+  "cards": ""
+ },
+ {
+  "id": "remove_curse_first",
+  "phase": "build",
+  "priority": 1,
+  "title": "有移除机会先删诅咒，别删打击/别跳过",
+  "rule": "删牌优先级：诅咒 > 状态牌 > 打击 > 防御。Doubt（回合末在手 +1 虚弱）/Guilt/Regret/Shame 这类持续掉状态的诅咒最优先；Ascender's Bane 带永恒删不掉。金币 100+ 就要规划商店删牌，遇到「移除 1 张」的事件不要为了别的奖励跳过。",
+  "why": "第 28 局拿涅奥骨骰换来 Doubt 诅咒后，羊毛剪的两次移除都给了打击、泉水事件又选了药水，导致整局反复中虚弱（打击只剩 4 伤）。",
+  "cards": "Doubt / Guilt / 所有诅咒"
+ },
+ {
+  "id": "reread_options_before_choice",
+  "phase": "routing",
+  "priority": 1,
+  "title": "选节点/选项前必须重读 AVAILABLE",
+  "rule": "每次 choose_map_node / choose_event_option / choose_rest_option 之前，重新执行 state 并读 AVAILABLE 列表。选项下标会随上一步变化，禁止凭上一屏的记忆按下标选择。",
+  "why": "第 23 局第 14 层后我凭记忆选了 --option 0，以为是普通怪，实际是精英；35/80（44%）进战，第 15 层阵亡。",
+  "cards": "所有 MAP/EVENT/REST 界面"
+ },
+ {
+  "id": "reward_default_skip",
+  "phase": "reward",
+  "priority": 1,
+  "title": "卡牌奖励默认跳过",
+  "rule": "先列当前缺口（AOE/易伤/防御/运转/收尾），只有这张牌填的是'空缺口'才拿；牌组≥14 只拿 A 级，≥16 只拿质变牌，其余一律跳过。跳过不是浪费，是保护关键牌抽取率。",
+  "why": "第 10 局 6 次卡牌奖励 0 次跳过（耸肩/燃烧/践踏/头锤/坚毅+/全身撞击），牌组 11→18；Boss 关键回合抽不到格挡牌。",
+  "cards": ""
+ },
+ {
+  "id": "run_review",
+  "phase": "invariant",
+  "priority": 1,
+  "title": "每局复盘并更新规则",
+  "rule": "每局结束记录：路线/HP曲线、商店/篝火、最终牌组、死亡回合、3个关键错误；把重复错误写成新规则。",
+  "why": "同型错误（低血连战、目标不刷新、0费牌没打、乱买牌）反复出现；不复盘就只是换种子重演。",
+  "cards": "logs / LESSONS"
+ },
+ {
+  "id": "scaler_burst_warning",
+  "phase": "combat",
+  "priority": 1,
+  "title": "对手 Buff/加力量 = 下回合爆发，按爆发算血线",
+  "rule": "看到 intent 是 Buff（尤其绒毛虫/咆哮兽/仪式类）时，不能当“这回合安全”：要按下回合可能的最大爆发估血线。当前 HP 低于对方爆发上限时，要么本回合抢杀，要么把防御留到爆发回合、提前挡满。",
+  "why": "第 24 局第 3 层绒毛虫 58 血，intent 显示 Buff，我 42 血没留防御，它加完力量一击 42+ 直接打死。",
+  "cards": "Fuzzy Wurm Crawler / Mawler / 所有加力量的敌人"
+ },
+ {
+  "id": "self_damage_only_when_needed",
+  "phase": "combat",
+  "priority": 1,
+  "title": "自伤牌只在必要时用",
+  "rule": "突破（-1 血）、血墙（-2 血）、放血（-3 血）这类自伤牌，只在它带来别的手段换不来的价值时用：收尾时如果打击/痛击/剑柄也能杀，就不要吃那 1 点；低血时任何自伤都要先算「扣完还活不活」。",
+  "why": "第 12 局多次用突破+ 收尾，明明打击也能收，白掉 1 血；整局累计掉了 6-8 点，Boss 战正好差这些。",
+  "cards": "Breakthrough / Blood Wall / Bloodletting / Offering"
+ },
+ {
+  "id": "self_damage_timing",
+  "phase": "combat",
+  "priority": 1,
+  "title": "自伤/抽牌触发牌的时机：留能量、还是留伤害",
+  "rule": "打突破/放血这类自伤触发牌前问三句：(1) 打完后还剩几费？抽到的牌这回合用得上吗——用不上则抽牌价值≈0，按伤害最大化排序；(2) 先上力量/易伤会不会让它本身更疼——会，且这回合能量本来就不够用，就先 buff 后自伤；(3) 自伤后血量会不会进斩杀线/直接死——会就别打或先挡。默认给抽牌留 1-2 费；斩杀回合只看总伤害。",
+  "why": "第 16 局把突破放最后，抽 3 时 0 费纯看；但同一回合若先突破，伤害反而少 2（9 vs 燃烧后 11）。有力量/易伤时先 buff 更赚，有 0 费/回费链时才该早打——不存在“永远第一张”。",
+  "cards": "Breakthrough / Bloodletting / Centennial Puzzle / Rupture / Inflame / Bash"
+ },
+ {
+  "id": "shop_bundle",
+  "phase": "removal",
+  "priority": 1,
+  "title": "商店先算总账，不买“两牌+药水”",
+  "rule": "买之前先算总价和牌组厚度；优先“删牌 + 一张关键牌”，不要同时买两张牌+药水却不删牌。",
+  "why": "第 5 局 139 金买雷霆+岩石铠甲+技能药水，牌组14→16/17，没删牌；低血时抽不到防御。",
+  "cards": "商店 / 删牌 / 闪电霹雳 / 岩石铠甲 / 技能药水"
+ },
+ {
+  "id": "shop_list",
+  "phase": "removal",
+  "priority": 1,
+  "title": "进店前写购物清单",
+  "rule": "进店前写清“最缺/预算/必买/不买”；第二次进店没有清单内目标就离开，不因为都进来了就消费。",
+  "why": "第 7 局连续两商店：第二次没有防御/AOE目标，却买了25金武装；便宜不等于解决主要矛盾。",
+  "cards": "商店 / 购物清单"
+ },
+ {
+  "id": "shop_removal",
+  "phase": "removal",
+  "priority": 1,
+  "title": "商店：删牌 > 买卡 > 药水 > 遗物",
+  "rule": "后置商店集中删基础牌；Boss 前必须把金币花掉。",
+  "why": "删牌直接提高关键牌抽取率；第 4 局 233 金进 Boss=资源浪费。",
+  "cards": "商店"
+ },
+ {
+  "id": "single_target_dps",
+  "phase": "draft",
+  "priority": 1,
+  "title": "AOE 构筑也要有单体收尾",
+  "rule": "牌组有 2 张以上 AOE 后，抓牌优先级转向单体高伤（双打击、暴走、拆卸、上勾拳、重锤）；否则遇到高血高甲单体（蛤蜊、Boss）净输出只有个位数。",
+  "why": "第 18 局 AOE 引擎很漂亮（地狱火 6/回合、突破 15、旋风斩），但对 58 血 + 覆甲 9 的蛤蜊单体 DPS 只有约 15，净输出 6/回合，打 7 回合被磨死。",
+  "cards": "Twin Strike / Rampage / Dismantle / Uppercut / Bludgeon"
+ },
+ {
+  "id": "sl_check_before_retry",
+  "phase": "invariant",
+  "priority": 1,
+  "title": "时间回溯前，先把三条线算完",
+  "rule": "SL 之前必须把当前回合的三种可能各算一遍：全挡（需要多少甲）、斩杀（实时伤害 ≥ 敌人剩余血）、药水（能不能改变生死）。任何一条成立就不要回档——能赢的回合去读档，说明账没算清。",
+  "why": "第 19 局第 9 回合本来可以斩杀，却因为算错伤害 + 误读 debuff 回档了，白白浪费一次额度。",
+  "cards": "save_and_quit / continue_run"
+ },
+ {
+  "id": "sl_policy",
+  "phase": "invariant",
+  "priority": 1,
+  "title": "SL（时间回溯）：只在必死时用，且要说明改什么",
+  "rule": "允许 save_and_quit → 主菜单 → continue_run 重开当前战斗（实测恢复点是战斗开局，手牌与抽牌顺序不变，等于同一道题重做）。只在「必死」时用：incoming ≥ 当前 HP，且没有格挡/斩杀/药水能救。每次 SL 在 banner 里自嘲一句，并明说这次改什么。一局最多 6 次；超过说明路线或构筑有问题，该改的是决策而不是读档。",
+  "why": "第 19 局实测：save_and_quit → continue_run 回到同一场战斗开局，手牌完全一致；所以 SL 必须换决策，不能指望换牌。",
+  "cards": "save_and_quit / continue_run"
+ },
+ {
+  "id": "slow_enemy_window",
+  "phase": "combat",
+  "priority": 1,
+  "title": "缓慢敌人：前两回合免费输出窗口必须吃满",
+  "rule": "旧日雕像等带「缓慢」的敌人：沉睡/苏醒两回合不还手，要把「廉价牌垫底（每张 +10% 受伤）+ 大牌收尾」用满；苏醒后每回合 25，血 <50% 不要进。",
+  "why": "第 27 局对旧日雕像前两回合只打出 28+21=49 点，随后 4 回合被 25/回合磨死。",
+  "cards": "Bygone Effigy"
+ },
+ {
+  "id": "state_stability",
+  "phase": "combat",
+  "priority": 1,
+  "title": "过渡态不要结束回合",
+  "rule": "出牌后等稳定玩家回合：play_card/end_turn 合法、连续两次状态一致；手牌突然清空但能量未扣=过渡快照，不据此结束。",
+  "why": "第8局一回合3张打击只打了1张就结束，因mod返回过渡态手牌0/能量未扣；随后误发end_turn，游戏异常结束。",
+  "cards": "sts2.py / 状态同步"
+ },
+ {
+  "id": "stun_threshold_push",
+  "phase": "combat",
+  "priority": 1,
+  "title": "有眩晕阈值的敌人，低血时全压阈值",
+  "rule": "敌人有「血量掉到 X% 会被眩晕」的机制（骇鳗 50%、旧日雕像等）时，如果这回合的入伤会致命，就把全部输出压到阈值上换眩晕，而不是分一半去叠甲。阈值差 1-2 点血也要算准（多段攻击、力量、易伤都要算）。",
+  "why": "第 14 局骇鳗 150 血，我们把它打到 77（阈值 75），差 2 点没触发眩晕，13 血吃 24 攻死亡。",
+  "cards": ""
+ },
+ {
+  "id": "thorns_block_first",
+  "phase": "combat",
+  "priority": 1,
+  "title": "荆棘：先叠格挡再攻击",
+  "rule": "面对带荆棘(Thorns/尖刺)的敌人，先用防御牌把格挡叠起来，再打攻击；荆棘反伤会被格挡吸收，不需要用血量换输出。",
+  "why": "第 10 局双蟾蜍战用血量硬吃荆棘反伤（4 点）；用户指出先防御再攻击可以零损耗。",
+  "cards": "Defend / Shrug It Off / Blood Wall / Flame Barrier / True Grit"
+ },
+ {
+  "id": "two_turn_lethal",
+  "phase": "combat",
+  "priority": 1,
+  "title": "换血前看两回合：别把自己送进下回合的必死区",
+  "rule": "这回合打完剩 H'，下回合预计 incoming 是 I'。若 H' ≤ I'，这回合必须挡满或斩杀，不能再用血换输出。致命回合不一定是当前回合。",
+  "why": "第 18 局 22 血、16 入伤，换血后剩 11，下回合 16 就致命；其实手里有坚毅+防御 12 甲，全挡只掉 4。",
+  "cards": "所有战斗"
+ },
+ {
+  "id": "upgrade_priority",
+  "phase": "invariant",
+  "priority": 1,
+  "title": "升级优先级：质变 > 数值",
+  "rule": "True Grit+（随机→选择）、Body Slam+（0费）、Burning Pact+/Pommel+（多抽）、Cinder+/Flame Barrier+/Blood Wall+/Shrug+/Evil Eye+/Stone Armor+/Feel No Pain+/Pact's End+/Fiend Fire+ 优先。",
+  "why": "这些升级改变机制/费用/关键数值；Strike+/Defend+ 只是小数值，且它们是删牌对象。",
+  "cards": "True Grit / Body Slam / Burning Pact / Pommel Strike / Cinder / Flame Barrier / Blood Wall / Shrug It Off / Evil Eye / Stone Armor / Feel No Pain / Pact's End / Fiend Fire"
+ },
+ {
+  "id": "value_per_energy_first",
+  "phase": "combat",
+  "priority": 1,
+  "title": "选牌先看每费价值排序，打击不是默认牌",
+  "rule": "每回合看 state 里的 VALUE_RANK（ATTACK/BLOCK 按每费价值排序）：同费先打高伤/高甲。飞剑回旋镖 9/费、煤渣 9/费 都严格优于打击 6/费；打击只在①斩杀差值正好 6 ②要保留煤渣/撕裂/上勾拳给关键窗口 ③手里只剩打击 时打。多段打滑溜/无实体，单段打荆棘。",
+  "why": "第 27 局多次在有飞剑回旋镖（9/费）时先打打击（6/费），等于每张牌少 3 点伤害、整体多打 1-2 回合。",
+  "cards": "Sword Boomerang / Cinder / Strike / 所有同费攻击牌"
+ },
+ {
+  "id": "verify_debuff_limits",
+  "phase": "combat",
+  "priority": 1,
+  "title": "不认识的「限制类」debuff，先试第二张，别整回合自废",
+  "rule": "遇到「本回合只能打出 1 张牌」这类描述，先用一张低风险牌试探：如果还能出第二张，说明是敌人状态/误导文本，不是你的出牌上限。禁止凭一行说明就把整个回合结束掉。",
+  "why": "第 19 局把 Boss 的「昏眩」当成“我只能出 1 张”，连续 3 个回合只打 1 张，浪费约 55 点伤害，最后差 18 点没杀掉；实际那回合痛击+10 + 打击9 = 19 ≥ 18，本来能赢。",
+  "cards": "Ceremonial Beast / 所有带状态描述的 Boss"
+ },
+ {
+  "id": "vuln_before_aoe",
+  "phase": "combat",
+  "priority": 1,
+  "title": "AOE 前先上易伤（同回合）",
+  "rule": "同回合内先上易伤再打 AOE（雷霆/突破/践踏），否则 AOE 只吃基础值。跨回合的易伤会衰减，上一回合挂的到这一回合通常已经没了，打 AOE 前要重新确认敌人身上的易伤层数。",
+  "why": "第 12 局第 14 层第 2 回合、第 11 层第 3 回合，突破+ 出手时上一回合的易伤已衰减，每只只吃到 15 而不是 22，白丢 7 伤 × 3 目标。",
+  "cards": "Thunderclap / Bash / Uppercut / Tremble / Breakthrough / Whirlwind / Stomp"
+ },
+ {
+  "id": "vuln_vs_block_tradeoff",
+  "phase": "combat",
+  "priority": 1,
+  "title": "易伤 vs 防御的取舍",
+  "rule": "先算「这回合不挡会不会死」：不会死 → 优先上易伤/引擎（雷霆、Bash、燃烧、覆甲），把伤害窗口做大；会死 → 先挡满再谈输出。中间地带看下回合能不能反打：如果能，用最少防御保命并上易伤；如果不能，全挡。",
+  "why": "第 12 局 Boss 战有时明明挡得住却继续叠防御（不挂易伤），有时又为了上易伤硬吃 20+ 伤害，两头都吃过亏。",
+  "cards": ""
+ },
+ {
+  "id": "weak_mitigates_deathblow",
+  "phase": "combat",
+  "priority": 1,
+  "title": "击杀回合先上虚弱：亡语/爆炸也是攻击，吃 25% 减伤",
+  "rule": "对瀑布巨兽（蒸汽喷发）、带 DEATH_BLOW 的 Boss：在击杀回合先给本体上虚弱（上勾拳+ 的 2 层虚弱、或虚弱药水 3 层），再补最后一刀。爆炸按攻击结算，虚弱让它 ×0.75（47→35），配合格挡常能从必死变成可活。虚弱要在它死亡前挂上，死后再上无效。",
+  "why": "run17 第 11 回合 1 血、蒸汽喷发 47：即使有 21 格挡也会吃 26。如果击杀回合先虚弱（35）+ 21 甲 = 14 伤害，15 血以上就能活。",
+  "cards": "Uppercut / Weak Potion / Bash(易伤不算虚弱) / 所有 DEATH_BLOW 敌人"
+ },
+ {
+  "id": "zero_cost_cleanup",
+  "phase": "combat",
+  "priority": 1,
+  "title": "结束前清理0费牌",
+  "rule": "结束回合前扫一遍手牌：0费、可打、能造成伤害/抽牌/格挡的牌先用；除非 Thorns/自伤致死或 Battle Trance 会关闭必要抽牌。",
+  "why": "第 7 局 Toadpole 战 Spite 0费在手里没打，免费6伤浪费，多拖一回合多吃伤害；0费牌没有能量机会成本。",
+  "cards": "Spite / Anger / Bloodletting / Battle Trance / Rage / 0费抽牌"
+ },
+ {
+  "id": "act1_targets",
+  "phase": "act1",
+  "priority": 2,
+  "title": "第一幕抓牌结构",
+  "rule": "1–2 单点 + 2 AOE + 1 易伤 + 2 防御；过渡牌优先武装/邪眼/剑柄/战斗专注。",
+  "why": "先活过第一幕强怪池；STS2 群怪密度高，AOE 抓位高于一代。",
+  "cards": "Whirlwind / Breakthrough / Conflagration / Thunderclap / Bash / Uppercut / Blood Wall / Shrug It Off / Flame Barrier / Armaments / Evil Eye / Battle Trance / Pommel Strike"
+ },
+ {
+  "id": "artifact_strip",
+  "phase": "combat",
+  "priority": 2,
+  "title": "人工制品：剥还是不打，先算成本",
+  "rule": "敌人有 人工制品（Artifact）时，关键易伤会被挡一次。判断：① 剥掉成本低（雷霆 4 伤顺带 debuff、战栗 1 费）且这回合就要爆发 → 先剥；② 剥掉要浪费一张关键牌/2 费 → 干脆不打 debuff，直接堆伤害。不要默认「先剥」。",
+  "why": "第 12 局 Cubex Construct 带 1 层人工制品，Bash 的易伤被挡；但如果为了剥它先用掉 Bash，后面的爆发反而没易伤可吃。",
+  "cards": "Thunderclap / Tremble / Bash / Uppercut"
+ },
+ {
+  "id": "body_slam_after_block",
+  "phase": "combat",
+  "priority": 2,
+  "title": "Body Slam 在格挡后",
+  "rule": "先 Defend/True Grit/Blood Wall 建立格挡，再 Body Slam；不要先撞。",
+  "why": "Body Slam 伤害=当前格挡；先撞等于 0。",
+  "cards": "Body Slam / Defend / True Grit / Blood Wall"
+ },
+ {
+  "id": "defense_axis",
+  "phase": "act2",
+  "priority": 2,
+  "title": "防御轴：Barricade + Body Slam",
+  "rule": "防御轴优先高质量格挡，Barricade 3 费需回费/0 费防御铺垫；Body Slam 是收尾。",
+  "why": "A10 容错最高；但 Barricade 卡手会拖节奏。",
+  "cards": "Barricade / Body Slam / Blood Wall / Shrug It Off / Flame Barrier / Evil Eye / Feel No Pain / Juggernaut"
+ },
+ {
+  "id": "draw_before_spend",
+  "phase": "combat",
+  "priority": 2,
+  "title": "抽牌/能量在前，高费在后",
+  "rule": "先 Shrug/Pommel/Bloodletting/Offering，再打高费攻击；Battle Trance 最后。",
+  "why": "避免高费牌打完才抽到关键牌，能量已经没了。",
+  "cards": "Shrug It Off / Pommel Strike / Bloodletting / Offering / Battle Trance"
+ },
+ {
+  "id": "enchant_priority",
+  "phase": "draft",
+  "priority": 2,
+  "title": "附魔优先给每场都打很多次的牌",
+  "rule": "事件给附魔时：防御/零费攻击/主力输出优先；保留、重放、迅速给高费终结技；本能（伤害翻倍）给最强攻击牌。没有核心牌时宁可跳过。",
+  "why": "第 14 局把灵巧 2 给了邪眼（8→10 甲，消耗后 18），方向对，但当时并没比较过其他选项。",
+  "cards": ""
+ },
+ {
+  "id": "end_turn_preload",
+  "phase": "combat",
+  "priority": 2,
+  "title": "结束前预埋下回合",
+  "rule": "检查 Barricade/Plating/Feel No Pain 是否就位；别浪费能量；高费牌是否留成死牌。",
+  "why": "A10 的下一回合生存往往由本回合最后一两张牌决定。",
+  "cards": "Barricade / Stone Armor / Feel No Pain / 保留牌"
+ },
+ {
+  "id": "enemy_state_check",
+  "phase": "combat",
+  "priority": 2,
+  "title": "检查敌人状态",
+  "rule": "敌人格挡/Artifact/Thorns/召唤物/Ringing/Smoggy 都要先看；斩杀线减格挡，易伤先破 Artifact。",
+  "why": "算漏一个 Artifact/格挡就会错斩；召唤者死后爪牙消失。",
+  "cards": "Artifact / Block / Thorns / Summon / Ringing / Smoggy"
+ },
+ {
+  "id": "engine_vs_cash",
+  "phase": "combat",
+  "priority": 2,
+  "title": "启动窗口 vs 兑现窗口",
+  "rule": "引擎未就位且活得下去→打引擎；引擎已就位/进入射程→集中兑现。打引擎前先算剩余能量能否覆盖生存。",
+  "why": "贪引擎导致血线崩溃，是 A10 常见死法；该兑现时又去成长会拖死。",
+  "cards": "Corruption / Dark Embrace / Feel No Pain / Demon Form / Barricade"
+ },
+ {
+  "id": "event_eval",
+  "phase": "act1",
+  "priority": 2,
+  "title": "事件先算成本",
+  "rule": "比较HP/最大HP/金币/诅咒/变化/删牌；永恒诅咒不拿；HP<50%不接掉血事件；有商店时变2牌>删1。",
+  "why": "事件是资源交换，不是免费奖励；低血贪资源会直接崩Act1。",
+  "cards": "事件 / 诅咒 / 金币 / 变化"
+ },
+ {
+  "id": "exhaust_axis",
+  "phase": "act2",
+  "priority": 2,
+  "title": "消耗轴：必须有收尾",
+  "rule": "Corruption+Dark Embrace/Feel No Pain 后，必须补 Ashen Strike/Pact's End/Fiend Fire 之一。",
+  "why": "纯烧牌没有收尾会“烧得很爽但打不死人”。",
+  "cards": "Corruption / Dark Embrace / Feel No Pain / Ashen Strike / Pact's End / Fiend Fire"
+ },
+ {
+  "id": "infection_blockable",
+  "phase": "combat",
+  "priority": 2,
+  "title": "感染/状态牌伤害可被格挡吸收",
+  "rule": "回合末的状态牌伤害（Infection 3 点/张）会先吃格挡；保持至少 3×状态牌数的格挡，可以零掉血过回合。",
+  "why": "第 10 局精英战 2 张感染在手、18 点格挡，回合末只掉 1 点；后来才确认这部分伤害可被格挡。",
+  "cards": ""
+ },
+ {
+  "id": "loop_engine",
+  "phase": "act2",
+  "priority": 2,
+  "title": "3–4 张单烧 + 2 回费 + 4 运转",
+  "rule": "Burning Pact/Havoc/True Grit/Cinder 等单烧 3–4 张；Bloodletting/仪式 2 张；Pommel/Battle Trance/Stoke 4 张。",
+  "why": "压缩后每回合稳定做同一件事；A10 锁牌需要冗余启动。",
+  "cards": "Burning Pact / Havoc / True Grit / Cinder / Bloodletting / Forgotten Ritual / Pommel Strike / Battle Trance / Stoke"
+ },
+ {
+  "id": "meme_cadence",
+  "phase": "invariant",
+  "priority": 2,
+  "title": "梗密度：≤1 条/分钟",
+  "rule": "每条录像的梗不超过 1 条/分钟：13 分钟约 8–15 条、20 分钟约 15–25 条。优先放在选牌/商店/斩杀/精英/Boss/死亡六个节点，普通回合用纯分析。",
+  "why": "第 11 局 133 个动作用了 48 条梗（36%），明显过量，冲淡了解说信息。",
+  "cards": ""
+ },
+ {
+  "id": "micro_aoe",
+  "phase": "combat",
+  "priority": 2,
+  "title": "多敌人优先 AOE",
+  "rule": "Whirlwind/Breakthrough/Conflagration/Thunderclap 优先于单点。",
+  "why": "STS2 群怪密度高；AOE 同时处理多个意图。",
+  "cards": "Whirlwind / Breakthrough / Conflagration / Thunderclap / Pact's End"
+ },
+ {
+  "id": "micro_vulnerable",
+  "phase": "combat",
+  "priority": 2,
+  "title": "易伤在爆发前",
+  "rule": "先上易伤，再打爆发；不要“有了就打”。",
+  "why": "易伤 +50% 攻击伤害，配合多段/重击收益最大。",
+  "cards": "Bash / Uppercut / Taunt / Shockwave"
+ },
+ {
+  "id": "multi_select_distinct",
+  "phase": "invariant",
+  "priority": 2,
+  "title": "多选界面每次选不同下标",
+  "rule": "遇到「选择 N 张牌」的多选界面（佩尔之牙、芝士房等），每次 select_deck_card 必须选不同下标。重复点同一个下标会被当成取消选择，界面会卡住不动。",
+  "why": "第 13 局佩尔之牙删 5 张，连续点 5 次下标 0，界面卡了 6 分钟；改成分别选 0-4 后立刻生效。",
+  "cards": ""
+ },
+ {
+  "id": "opener_standalone",
+  "phase": "invariant",
+  "priority": 2,
+  "title": "开场白独立，不提上局",
+  "rule": "每局第一条 banner 必须是独立开场白：只说角色/难度/本局目标，不提「上局」「上次」「第 N 局」「连败」。涅奥选完再补一句本局方向即可。收尾同理，给一句独立的总结。",
+  "why": "第 11 局开场白写了「这局先记住上局的三个坑」，视频单独发布时观众没有上下文，开头就像缺了一段。",
+  "cards": ""
+ },
+ {
+  "id": "potion_finish",
+  "phase": "act3",
+  "priority": 2,
+  "title": "Boss 前药水是启动资源",
+  "rule": "抽牌/换牌/烧牌/格挡药水留到 Boss；不要省到死。",
+  "why": "药水可以买一次额外启动，尤其面对 Queen 锁牌/双 Boss。",
+  "cards": "药水"
+ },
+ {
+  "id": "potion_pending",
+  "phase": "invariant",
+  "priority": 2,
+  "title": "use_potion 返回 pending 时不要连点",
+  "rule": "use_potion 返回 status=pending 时，说明动作被排队但没结算；不要连续重试（会重复入队），先做其他动作，事后再排查。药水没放出来要在复盘里记，不当作自己没用。",
+  "why": "第 12 局 Boss 战最需要爆炸安瓿（10 点群伤），连续三次调用都 pending，整局没放出来。",
+  "cards": ""
+ },
+ {
+  "id": "potion_sequence",
+  "phase": "combat",
+  "priority": 2,
+  "title": "药水顺序",
+  "rule": "先速度/技能找防御或信息，再虚弱/格挡，最后攻击/复制；技能药水是盲盒，不能当稳定格挡。",
+  "why": "先喝再打防御，敏捷加成才吃到；先打高费/自伤再喝，往往已经来不及。",
+  "cards": "速度药水 / 技能药水 / 虚弱药水 / 格挡药水 / 复制药水"
+ },
+ {
+  "id": "potion_thorns_multihit",
+  "phase": "combat",
+  "priority": 2,
+  "title": "多段攻击的敌人喝液态铜（荆棘）",
+  "rule": "敌人是多段攻击（园丁 3x3、海朋克 8x4、蟾蜍 12x3、三强盗）时，液态铜（3 荆棘）的收益是「段数 × 3」，非常划算；配合格挡可以把反伤吃满。",
+  "why": "第 13 局有液铜却一直没用，打四只花园幽灵鳗（每只 3 段）时它的期望收益是每回合 12-36 点反伤。",
+  "cards": "Liquid Bronze"
+ },
+ {
+  "id": "relic_plan_use",
+  "phase": "routing",
+  "priority": 2,
+  "title": "遗物要改变路线和拿牌决策",
+  "rule": "每个遗物都要问一句「它让什么变便宜了」：马文银行→商店尽量少花；五轮书→加牌能回血，可以更积极拿牌；草莓/燃烧之血→血量预算放宽；海螺→精英更敢打。把遗物效果映射成具体的路线/拿牌/商店动作。",
+  "why": "第 14 局遗物全是持续收益型（银行、五轮书、草莓、海螺），但我仍按无遗物的思路打，没有利用它们调整节奏。",
+  "cards": ""
+ },
+ {
+  "id": "removal_curve",
+  "phase": "removal",
+  "priority": 2,
+  "title": "删牌按牌库最弱环节",
+  "rule": "第一幕先删 Strike；第二幕转删 Defend；防御轴保留优质防御。",
+  "why": "1 费打 6 在 A10 前期不如 1 费防 5；压缩后基础防御是废牌。",
+  "cards": "Strike / Defend / 优质防御"
+ },
+ {
+  "id": "reward_check",
+  "phase": "act1",
+  "priority": 2,
+  "title": "卡牌奖励五问",
+  "rule": "解决当前幕主要矛盾？比将删基础牌强？牌组≤15？符合主轴？两幕内还在循环？答不上就跳过。",
+  "why": "奖励不是“有就拿”；Act1需要AOE/防御/易伤，过度抓过渡攻击会让关键牌抽不到。",
+  "cards": "全部卡牌"
+ },
+ {
+  "id": "shop_card_bar",
+  "phase": "removal",
+  "priority": 2,
+  "title": "买牌五问",
+  "rule": "解决当前主要矛盾？比将删的基础牌强？不拖厚牌组？符合主轴？两幕内还在循环？答不上就跳过。",
+  "why": "商店不是“有钱就花”；每多一张非关键牌，关键防御/收尾的抽取率就低一分。",
+  "cards": "全部卡牌"
+ },
+ {
+  "id": "shop_no_browse",
+  "phase": "removal",
+  "priority": 2,
+  "title": "不买“便宜但不明所以”的牌",
+  "rule": "便宜不是购买理由；过买牌五问和牌组厚度，不解决当前主要矛盾就跳过，钱留给后面的商店/药水。",
+  "why": "Armaments 25金 5甲+升级不是A10优质防御，牌组13还加牌=稀释关键抽取；这是典型的浏览式消费。",
+  "cards": "Armaments / 商店"
+ },
+ {
+  "id": "true_grit_caution",
+  "phase": "combat",
+  "priority": 2,
+  "title": "True Grit 随机消耗慎用",
+  "rule": "手里有关键防御/收尾时不要先打 True Grit；随机消耗可能扔掉 Defend/Body Slam。",
+  "why": "第 4 局 True Grit 扔掉 Defend/Body Slam，直接导致少挡少打。",
+  "cards": "True Grit"
+ },
+ {
+  "id": "zero_cost_leverage",
+  "phase": "combat",
+  "priority": 2,
+  "title": "先打0/低费杠杆",
+  "rule": "Bloodletting/Offering/Rage/0费抽牌在生存覆盖后优先；Battle Trance 放在其他抽牌之后。",
+  "why": "最低机会成本扩大本回合可选空间；Battle Trance 会关闭后续抽牌。",
+  "cards": "Bloodletting / Offering / Rage / Battle Trance"
+ },
+ {
+  "id": "strength_axis",
+  "phase": "act2",
+  "priority": 3,
+  "title": "力量轴：先防御再引擎",
+  "rule": "Demon Form 3 费当回合无效果；没有防御兜底不裸抓。多段攻击做收尾。",
+  "why": "力量轴启动慢，A10 前期容易在引擎落地前被打死。",
+  "cards": "Demon Form / Inflame / Rupture / Whirlwind / Sword Boomerang"
+ }
+]

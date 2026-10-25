@@ -1,0 +1,101 @@
+=== NIBBIT Nibbit/小啃兽 HP 42-46 Normal
+ POWER Strength: Strength adds additional damage to Attacks.
+ MOVE Butt/顶撞 [ATTACK]
+ MOVE Butt/顶撞 [ATTACK,DEFEND]
+ MOVE Hiss/哈气 [BUFF]
+=== TOADPOLE Toadpole/蟾蜍蝌蚪 HP 21-25 Normal
+ POWER Thorns: When hit by an attack, deal damage back.
+ MOVE Spike Spit/吐刺 [ATTACK]
+ MOVE Whirl/旋转 [ATTACK]
+ MOVE Spiken/带刺 [BUFF]
+=== WRIGGLER Wriggler/扭动虫 HP 17-21 Elite
+ POWER Strength: Strength adds additional damage to Attacks.
+ MOVE Nasty Bite/污秽啃咬 [ATTACK]
+ MOVE Wriggle/扭动 [BUFF,STATUS]
+ MOVE Spawned/生成 [STUN]
+=== LEAF_SLIME_S Leaf Slime (S)/树叶史莱姆（小） HP 11-15 Normal
+ MOVE Tackle/冲撞 [ATTACK]
+ MOVE Goop/黏液 [STATUS]
+=== LEAF_SLIME_M Leaf Slime (M)/树叶史莱姆（中） HP 32-35 Normal
+ MOVE Clump Shot/团块射击 [ATTACK]
+ MOVE Sticky Shot/黏糊射击 [STATUS]
+=== TWIG_SLIME_S Twig Slime (S)/树枝史莱姆（小） HP 7-11 Normal
+ MOVE Tackle/冲撞 [ATTACK]
+=== FUZZY_WURM_CRAWLER Fuzzy Wurm Crawler/毛绒伏地虫 HP 55-57 Normal
+ POWER Strength: Strength adds additional damage to Attacks.
+ MOVE Acid Goop/酸液黏球 [ATTACK]
+ MOVE Acid Goop/酸液黏球 [ATTACK]
+ MOVE Inhale/吸入 [BUFF]
+=== MAWLER Mawler/蛮兽 HP 72-72 Normal
+ POWER Vulnerable: Vulnerable creatures take 50% more damage from Attacks.
+ MOVE Rip and Tear/狂乱撕扯 [ATTACK]
+ MOVE Roar/怒吼 [DEBUFF]
+ MOVE Claw/爪击 [ATTACK]
+ NOTE 72 HP，10x2 后接 Buff；会滚雪球，尽快击杀。
+=== VINE_SHAMBLER Vine Shambler/藤蔓蹒跚者 HP 61-61 Normal
+ POWER Tangled: Attacks cost 1 additional Energy this turn.
+ MOVE Grasping Vines/紧绕藤蔓 [ATTACK,CARD_DEBUFF]
+ MOVE Swipe/挥击 [ATTACK]
+ MOVE Chomp/大啃 [ATTACK]
+ NOTE 61 HP，A10 可打 14x2；第一局第15层就死在这里。低血不要进。
+=== SLUDGE_SPINNER Sludge Spinner/淤泥旋螺 HP 37-39 Normal
+ POWER Strength: Strength adds additional damage to Attacks.
+ POWER Weak: Weakened creatures deal 25% less damage with Attacks.
+ MOVE Oil Spray/喷油 [ATTACK,DEBUFF]
+ MOVE Slam/砸击 [ATTACK]
+ MOVE Rage/狂怒 [ATTACK,BUFF]
+ NOTE 37-39 HP，会施加虚弱/脆弱；拖久了伤害不够，优先击杀。
+=== CORPSE_SLUG Corpse Slug/噬尸蛞蝓 HP 25-27 Normal
+ POWER Ravenous: When an enemy dies, Corpse Slug immediately eats it, becoming Stunned and gaining 1 Strength.
+ POWER Frail: While Frail, gain 25% less Block from cards.
+ MOVE Whip Slap/鞭打 [ATTACK]
+ MOVE Glomp/扑上 [ATTACK]
+ MOVE Goop/黏液 [DEBUFF]
+ NOTE 25-27 HP，饥饿；双只一起出现时总输出很高，低血不要进双怪。
+=== LIVING_FOG Living Fog/活雾 HP 80-80 Normal
+ POWER Smoggy: You can only play 1 Skill per turn.
+ MOVE Advanced Gas/先进毒气 [ATTACK,CARD_DEBUFF]
+ MOVE Bloat/膨胀 [ATTACK,SUMMON]
+ MOVE Super Gas Blast/超级毒气爆炸 [ATTACK]
+ NOTE 召唤者：80 HP，Smoggy（每回合只能打1张技能牌），Bloat 召唤 Gas Bomb。正确打法是集火活雾本体；活雾死后 Gas Bomb 自动消失。不要先清小怪。
+=== BYGONE_EFFIGY Bygone Effigy/旧日雕像 HP 127-127 Elite
+ POWER Strength: Strength adds additional damage to Attacks.
+ POWER Slow: Whenever you play a card, this enemy receives 10% more damage from Attacks this turn.
+ MOVE Sleep/沉睡 [SLEEP]
+ MOVE Wake/苏醒 [BUFF]
+ MOVE Slashes/斩击 [SLEEP]
+ MOVE Slashes/斩击 [ATTACK]
+ NOTE 第一章精英，127 HP；低血量不要碰。
+=== BYRDONIS Byrdonis/多尼斯异鸟 HP 81-84 Elite
+ POWER Territorial: At the end of its turn, gains 1 Strength.
+ MOVE Peck/啄击 [ATTACK]
+ MOVE Swoop/飞扑 [ATTACK]
+ NOTE 第一章精英，81-84 HP；多段攻击，需要格挡。
+=== PHROG_PARASITE Phrog Parasite/异蛙寄生虫 HP 61-64 Elite
+ POWER Infested: Upon dying, summons... something.
+ MOVE Infect/感染 [STATUS]
+ MOVE Lash/甩动 [ATTACK]
+ NOTE 第一章精英，61-64 HP；会寄生/召唤，优先本体。
+=== CEREMONIAL_BEAST Ceremonial Beast/仪式兽 HP 252-252 Boss
+ POWER Plow: The first time this creature's HP reaches 150 or below, it becomes Stunned.
+ POWER Strength: Strength adds additional damage to Attacks.
+ POWER Ringing: You can only play 1 card this turn.
+ MOVE Stamp/跺地 [BUFF]
+ MOVE Plow/横冲直撞 [ATTACK,BUFF]
+ MOVE Beast Cry/野兽咆哮 [STUN]
+ MOVE Beast Cry/野兽咆哮 [DEBUFF]
+ MOVE Stomp/踩踏 [ATTACK]
+ MOVE Crush/碾碎 [ATTACK,BUFF]
+ NOTE 第一章 Boss，252 HP；需要至少 50+ HP 和稳定格挡进 Boss。
+=== QUEEN Queen/女王 HP 400-400 Boss
+ POWER Frail: While Frail, gain 25% less Block from cards.
+ POWER Vulnerable: Vulnerable creatures take 50% more damage from Attacks.
+ POWER Weak: Weakened creatures deal 25% less damage with Attacks.
+ POWER Strength: Strength adds additional damage to Attacks.
+ POWER Chains of Binding: The first 3 cards drawn each turn are Afflicted with Bound.
+ MOVE Barrier/屏障 [CARD_DEBUFF]
+ MOVE You Are Mine/你是我的了 [DEBUFF]
+ MOVE Burn Bright for Me/为我尽力燃烧吧 [DEFEND,BUFF]
+ MOVE Off with Your Head/将头砍下 [ATTACK]
+ MOVE Execution/处决 [ATTACK]
+ MOVE Barrier/屏障 [BUFF]

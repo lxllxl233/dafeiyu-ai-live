@@ -1,0 +1,45 @@
+{
+ "events": {
+  "count": 56,
+  "bytes": 72044,
+  "fields": [
+   "description",
+   "descriptionPlain",
+   "id",
+   "image",
+   "key",
+   "options",
+   "title"
+  ]
+ },
+ "enchantments": {
+  "count": 22,
+  "bytes": 4083,
+  "fields": [
+   "description",
+   "extraCardText",
+   "id",
+   "title"
+  ]
+ },
+ "enemies": {
+  "count": 127,
+  "bytes": 433959,
+  "fields": [
+   "hasImage",
+   "hpMax",
+   "hpMin",
+   "id",
+   "moves",
+   "nameDe",
+   "nameEn",
+   "nameEs",
+   "nameFr",
+   "nameJa",
+   "nameKo",
+   "namePt",
+   "nameZh",
+   "powers"
+  ]
+ }
+}

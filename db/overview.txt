@@ -1,0 +1,61 @@
+### SELECT id,name_en,name_zh,type,hp_min,hp_max FROM enemies WHERE type IN ('Boss','Elite') ORDER BY type,id
+{"id": "CEREMONIAL_BEAST", "name_en": "Ceremonial Beast", "name_zh": "仪式兽", "type": "Boss", "hp_min": 252, "hp_max": 252}
+{"id": "CRUSHER", "name_en": "Crusher", "name_zh": "碾碎爪", "type": "Boss", "hp_min": 209, "hp_max": 209}
+{"id": "DOORMAKER", "name_en": "Doormaker", "name_zh": "门扉缔造者", "type": "Boss", "hp_min": null, "hp_max": null}
+{"id": "KIN_FOLLOWER", "name_en": "Kin Follower", "name_zh": "同族信徒", "type": "Boss", "hp_min": 58, "hp_max": 59}
+{"id": "KIN_PRIEST", "name_en": "Kin Priest", "name_zh": "同族神官", "type": "Boss", "hp_min": 190, "hp_max": 190}
+{"id": "KNOWLEDGE_DEMON", "name_en": "Knowledge Demon", "name_zh": "知识恶魔", "type": "Boss", "hp_min": 379, "hp_max": 379}
+{"id": "LAGAVULIN_MATRIARCH", "name_en": "Lagavulin Matriarch", "name_zh": "乐加维林族母", "type": "Boss", "hp_min": 222, "hp_max": 222}
+{"id": "QUEEN", "name_en": "Queen", "name_zh": "女王", "type": "Boss", "hp_min": 400, "hp_max": 400}
+{"id": "ROCKET", "name_en": "Rocket", "name_zh": "火箭", "type": "Boss", "hp_min": 199, "hp_max": 199}
+{"id": "SOUL_FYSH", "name_en": "Soul Fysh", "name_zh": "灵魂异鱼", "type": "Boss", "hp_min": 211, "hp_max": 211}
+{"id": "TEST_SUBJECT", "name_en": "Test Subject #C{Count}", "name_zh": "实验体 #C{Count}", "type": "Boss", "hp_min": null, "hp_max": null}
+{"id": "THE_INSATIABLE", "name_en": "The Insatiable", "name_zh": "无厌沙虫", "type": "Boss", "hp_min": 321, "hp_max": 321}
+{"id": "TORCH_HEAD_AMALGAM", "name_en": "Torch Head Amalgam", "name_zh": "火炬头聚合体", "type": "Boss", "hp_min": 199, "hp_max": 199}
+{"id": "VANTOM", "name_en": "Vantom", "name_zh": "墨影幻灵", "type": "Boss", "hp_min": 173, "hp_max": 173}
+{"id": "WATERFALL_GIANT", "name_en": "Waterfall Giant", "name_zh": "瀑布巨兽", "type": "Boss", "hp_min": 240, "hp_max": 240}
+{"id": "BYGONE_EFFIGY", "name_en": "Bygone Effigy", "name_zh": "旧日雕像", "type": "Elite", "hp_min": 127, "hp_max": 127}
+{"id": "BYRDONIS", "name_en": "Byrdonis", "name_zh": "多尼斯异鸟", "type": "Elite", "hp_min": 81, "hp_max": 84}
+{"id": "ENTOMANCER", "name_en": "Entomancer", "name_zh": "蜂群术士", "type": "Elite", "hp_min": 145, "hp_max": 145}
+{"id": "FLAIL_KNIGHT", "name_en": "Flail Knight", "name_zh": "连枷骑士", "type": "Elite", "hp_min": 101, "hp_max": 101}
+{"id": "INFESTED_PRISM", "name_en": "Infested Prism", "name_zh": "感染棱柱", "type": "Elite", "hp_min": 200, "hp_max": 200}
+{"id": "MAGI_KNIGHT", "name_en": "Magi Knight", "name_zh": "魔法骑士", "type": "Elite", "hp_min": 82, "hp_max": 82}
+{"id": "MECHA_KNIGHT", "name_en": "Mecha Knight", "name_zh": "机甲骑士", "type": "Elite", "hp_min": 300, "hp_max": 300}
+{"id": "PHANTASMAL_GARDENER", "name_en": "Phantasmal Gardener", "name_zh": "花园幽灵鳗", "type": "Elite", "hp_min": 26, "hp_max": 31}
+{"id": "PHROG_PARASITE", "name_en": "Phrog Parasite", "name_zh": "异蛙寄生虫", "type": "Elite", "hp_min": 61, "hp_max": 64}
+{"id": "SKULKING_COLONY", "name_en": "Skulking Colony", "name_zh": "鬼祟珊瑚群", "type": "Elite", "hp_min": 75, "hp_max": 75}
+{"id": "SOUL_NEXUS", "name_en": "Soul Nexus", "name_zh": "灵魂枢纽", "type": "Elite", "hp_min": 234, "hp_max": 234}
+{"id": "SPECTRAL_KNIGHT", "name_en": "Spectral Knight", "name_zh": "幽灵骑士", "type": "Elite", "hp_min": 93, "hp_max": 93}
+{"id": "TERROR_EEL", "name_en": "Terror Eel", "name_zh": "骇鳗", "type": "Elite", "hp_min": 140, "hp_max": 140}
+{"id": "WRIGGLER", "name_en": "Wriggler", "name_zh": "扭动虫", "type": "Elite", "hp_min": 17, "hp_max": 21}
+### SELECT id,name_en,name_zh,hp_min,hp_max FROM enemies WHERE powers_json LIKE '%RITUAL_POWER%'
+{"id": "CALCIFIED_CULTIST", "name_en": "Calcified Cultist", "name_zh": "钙化邪教徒", "hp_min": 38, "hp_max": 41}
+{"id": "DAMP_CULTIST", "name_en": "Damp Cultist", "name_zh": "潮湿邪教徒", "hp_min": 51, "hp_max": 53}
+{"id": "DEVOTED_SCULPTOR", "name_en": "Devoted Sculptor", "name_zh": "虔诚雕刻师", "hp_min": 162, "hp_max": 162}
+### SELECT id,name_en,name_zh,hp_min,hp_max FROM enemies WHERE powers_json LIKE '%MINION_POWER%'
+{"id": "GAS_BOMB", "name_en": "Gas Bomb", "name_zh": "气态炸弹", "hp_min": 7, "hp_max": 7}
+{"id": "KIN_FOLLOWER", "name_en": "Kin Follower", "name_zh": "同族信徒", "hp_min": 58, "hp_max": 59}
+{"id": "OVICOPTER", "name_en": "Ovicopter", "name_zh": "直飞产卵虫", "hp_min": 124, "hp_max": 130}
+{"id": "TORCH_HEAD_AMALGAM", "name_en": "Torch Head Amalgam", "name_zh": "火炬头聚合体", "hp_min": 199, "hp_max": 199}
+### SELECT id,name_en,name_zh,hp_min,hp_max FROM enemies WHERE id IN ('CEREMONIAL_BEAST','BYGONE_EFFIGY','BYRDONIS','PHROG_PARASITE','MAWLER','VINE_SHAMBLER','SLUDGE_SPINNER','CORPSE_SLUG','FOGMOG','OVICOPTER','THE_OBSCURA','FABRICATOR')
+{"id": "BYGONE_EFFIGY", "name_en": "Bygone Effigy", "name_zh": "旧日雕像", "hp_min": 127, "hp_max": 127}
+{"id": "BYRDONIS", "name_en": "Byrdonis", "name_zh": "多尼斯异鸟", "hp_min": 81, "hp_max": 84}
+{"id": "CEREMONIAL_BEAST", "name_en": "Ceremonial Beast", "name_zh": "仪式兽", "hp_min": 252, "hp_max": 252}
+{"id": "CORPSE_SLUG", "name_en": "Corpse Slug", "name_zh": "噬尸蛞蝓", "hp_min": 25, "hp_max": 27}
+{"id": "FABRICATOR", "name_en": "Fabricator", "name_zh": "组装师", "hp_min": 150, "hp_max": 150}
+{"id": "FOGMOG", "name_en": "Fogmog", "name_zh": "雾菇", "hp_min": 74, "hp_max": 74}
+{"id": "MAWLER", "name_en": "Mawler", "name_zh": "蛮兽", "hp_min": 72, "hp_max": 72}
+{"id": "OVICOPTER", "name_en": "Ovicopter", "name_zh": "直飞产卵虫", "hp_min": 124, "hp_max": 130}
+{"id": "PHROG_PARASITE", "name_en": "Phrog Parasite", "name_zh": "异蛙寄生虫", "hp_min": 61, "hp_max": 64}
+{"id": "SLUDGE_SPINNER", "name_en": "Sludge Spinner", "name_zh": "淤泥旋螺", "hp_min": 37, "hp_max": 39}
+{"id": "THE_OBSCURA", "name_en": "The Obscura", "name_zh": "胧光怪", "hp_min": 123, "hp_max": 123}
+{"id": "VINE_SHAMBLER", "name_en": "Vine Shambler", "name_zh": "藤蔓蹒跚者", "hp_min": 61, "hp_max": 61}
+### SELECT id,name_en,name_zh,cost,type,rarity,desc_en FROM cards WHERE name_en IN ('Limit Break','Armaments','Offering','Flame Barrier','Taunt','Shrug It Off','Battle Trance','Spot Weakness','Uppercut','Impervious')
+{"id": "BATTLE_TRANCE", "name_en": "Battle Trance", "name_zh": "战斗专注", "cost": 0.0, "type": "Skill", "rarity": "Uncommon", "desc_en": "Draw 3 cards. You cannot draw additional cards this turn."}
+{"id": "FLAME_BARRIER", "name_en": "Flame Barrier", "name_zh": "火焰屏障", "cost": 2.0, "type": "Skill", "rarity": "Uncommon", "desc_en": "Gain 12 Block. Whenever you are attacked this turn, deal 4 damage back."}
+{"id": "IMPERVIOUS", "name_en": "Impervious", "name_zh": "岿然不动", "cost": 2.0, "type": "Skill", "rarity": "Rare", "desc_en": "Gain 30 Block."}
+{"id": "OFFERING", "name_en": "Offering", "name_zh": "祭品", "cost": 0.0, "type": "Skill", "rarity": "Rare", "desc_en": "Lose 6 HP. Gain . Draw 3 cards."}
+{"id": "SHRUG_IT_OFF", "name_en": "Shrug It Off", "name_zh": "耸肩无视", "cost": 1.0, "type": "Skill", "rarity": "Common", "desc_en": "Gain 8 Block. Draw 1 card."}
+{"id": "TAUNT", "name_en": "Taunt", "name_zh": "挑衅", "cost": 1.0, "type": "Skill", "rarity": "Common", "desc_en": "Gain 7 Block. Apply 1 Vulnerable."}
+{"id": "UPPERCUT", "name_en": "Uppercut", "name_zh": "上勾拳", "cost": 2.0, "type": "Attack", "rarity": "Uncommon", "desc_en": "Deal 13 damage. Apply 1 Weak. Apply 1 Vulnerable."}
+{"id": "ARMAMENTS", "name_en": "Armaments", "name_zh": "", "cost": 1.0, "type": "Skill", "rarity": "Common", "desc_en": "Gain 5 Block. Upgrade a card in your Hand."}

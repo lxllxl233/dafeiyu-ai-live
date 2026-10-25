@@ -1,92 +1,111 @@
-# sts2-ironclad-ironclad · 《杀戮尖塔 2》铁甲战士 A10 决策 OS
+# 杀戮尖塔 2 · 铁甲战士 A10 实况 AI · 开箱即用
 
-一套给 AI agent 用的《杀戮尖塔 2》（Slay the Spire 2）**铁甲战士 A10 实况决策 skill**：不是攻略文章，是一份可执行的「每回合检查清单 + 数值公式 + 反模式」。
+让 AI agent 用**本地 mod HTTP API**（不靠截图识别）自己打《杀戮尖塔 2》铁甲战士 A10，同时 **OBS 录屏 + 弹幕解说**，每局自动出复盘。
 
-- 版本：**v10**（2026-10-25）
-- 适用：v0.107.1 主线（beta v0.111.0 同为参考），A10 双 Boss
-- 配套：`sts2.py`（本地 mod HTTP API 客户端）、OBS 录屏 + 弹幕 overlay；说话系统见另一个 skill `sts2-caster`
+这个仓库把「跑起来」需要的东西都装进来了：游戏侧 mod、客户端脚本、弹幕服务、卡/敌/遗物数据库、战术文档、两个 agent 技能（决策 + 说话）。
 
-## 这是什么
+> 默认配置：Windows + 游戏 Steam 版 v0.107.1 + OBS Studio + Python 3.11+。
+> 上手步骤见 **[QUICKSTART.md](QUICKSTART.md)**（10 分钟）。
 
-SKILL.md 是常驻上下文（约 16 KB），只放**每次决策都要看**的东西：
+---
 
-| 小节 | 内容 |
-|---|---|
-| §0 三条铁律 | 先算死 / 小伤害必挡（≤10% 最大生命一律挡满）/ 结束前三查 |
-| §2 每回合 8 步 | 战前准入（血闸·多怪闸·机制闸）→ 读状态 → 量斩杀 → 定回合类型 → 排序 → 逐张重读 → 收尾 |
-| §3 数值与斩杀 | 单卡伤害修正（易伤/虚弱/脆弱/格挡/胆小/荆棘）、多段、自伤、每费价值 |
-| §4 血预算 / 药水 / SL | 血闸硬线、道中预算、**药水四问**、SL 只在必死 |
-| §5–6 路线 / 构筑 | 路线打分与 REPLAN、牌组红线（张数·打击·防御·AOE·收尾·运转）、抓牌与删牌 |
-| §7–8 敌人 / 精英与 Boss | 机制速查 + `T × N > 血量 × 0.6 不打` 的总账公式 |
-| §9–10 工具坑 / 反模式 | 25 条「见到就停」 |
-| §11 收尾 | 录像改名、report、复盘、回写 skill、加 strategy_rules |
+## 它能干什么
 
-细节放 `references/`，按需加载：
+- **结构化读状态**：`sts2.py state` 把游戏 JSON 压成决策用的行——`ANCHOR`（敌人数/入伤/能量/手牌）、`EFF`（每张牌对每个敌人的实际伤害，含易伤/格挡/胆小/荆棘/段数）、`BLOCK_POOL`（手牌能挡多少）、`INTENT_MEM`（意图循环记忆）。
+- **按技能决策**：`.dsh/skills/sts2-ironclad-ironclad/`（决策 OS v10：三条铁律、每回合 8 步、斩杀公式、血预算、药水四问、路线与构筑红线、201 条规则库）。
+- **说话**：`.dsh/skills/sts2-caster/`（憨鱼人设、三拍、三档梗库、台词 lint），通过 `--thought/--meme` 推到弹幕。
+- **录屏**：`obsctl.py` 控制 OBS（场景/源/开始/停止/自检），录游戏画面 + 游戏音频。
+- **复盘**：`sts2.py report` 把 JSONL 动作日志转 Markdown 战报；`docs/LESSONS.md` 累积每局教训。
 
-| 文件 | 用途 |
-|---|---|
-| `references/enemies.md` | 按幕排的三幕遭遇表（≥80 条），Boss 行必读 |
-| `references/cards.md` | 铁甲战士 87 张卡的中文名 + 数值 + 抓位 |
-| `references/potions.md` | 药水四问细则、何时交/何时留、`use_potion` 工具坑、实战反例 |
-| `references/archetypes.md` | 攻杀/防杀清单、循环解（剑耸） |
-| `references/builds_tier.md` | 流派强度（S 消耗 > A 力量 ≈ A 格挡 > B 易伤/自伤） |
-
-## 安装
-
-把整个目录放到项目（或任意工作区）的 skills 目录下即可：
+## 目录结构
 
 ```text
-<workspace>/.dsh/skills/sts2-ironclad-ironclad/
-├── SKILL.md
-└── references/
-    ├── archetypes.md
-    ├── builds_tier.md
-    ├── cards.md
-    ├── enemies.md
-    └── potions.md
+sts2.py                 # mod API 客户端 / 状态压缩 / 动作 / 路线规划 / 战报
+obsctl.py               # OBS WebSocket 控制（setup / start / stop / health / free）
+overlay_server.py       # 弹幕服务 :8730（/comment /reset /state /health）
+overlay/                # 弹幕页面（头像、气泡、动森式音效）
+tools/                  # DB 构建、卡表/敌人表生成、梗库、skill/台词检查
+db/sts2.db              # 626 张卡 / 127 敌人 / 311 遗物 / 65 药水 / 201 条策略规则
+docs/                   # 战术手册（Act1/Act2-3、商店、营火、Neow、复盘模板…）
+.dsh/skills/            # 两个 agent 技能
+mod/                    # 游戏侧 STS2 AI Agent mod（已打 v0.107.1 补丁）
+logs/                   # 战报与复盘（运行时生成）
+recordings/             # 录像输出（运行时生成）
 ```
 
-```bash
-git clone https://github.com/lxllxl233/sts2-ironclad-Ironclad.git /tmp/sts2-ironclad-ironclad
-mkdir -p <workspace>/.dsh/skills
-cp -r /tmp/sts2-ironclad-ironclad <workspace>/.dsh/skills/sts2-ironclad-ironclad
+## 快速开始
+
+见 **[QUICKSTART.md](QUICKSTART.md)**。最短路径：
+
+```powershell
+pip install -r requirements.txt
+Copy-Item .\mod\* "<游戏目录>\mods\" -Force     # 装 mod
+# 游戏用 --windowed 启动，进主菜单
+python overlay_server.py                         # 弹幕服务
+python obsctl.py setup                           # OBS 建场景/源
+python obsctl.py start                           # 开录
 ```
 
-SKILL.md 的 frontmatter（`name` / `description`）会被 agent 的技能目录读取；**不要改名**，否则 skill 会从目录里消失。
+然后把 [NEXT_PROMPT.txt](NEXT_PROMPT.txt) 交给 agent。
 
-## 依赖
+## 常用命令
 
-skill 里的命令默认项目目录里有一套工具（不在本仓库）：
+```powershell
+python sts2.py state                 # 压缩状态（每回合决策前必读）
+python sts2.py acts                  # 当前合法动作
+python sts2.py play BASH --target 0  # 按卡牌 ID 出牌
+python sts2.py do play_card --card 2 --target 0 --thought "…" --meme "…"
+python sts2.py do end_turn
+python sts2.py route                 # 路线打分（含 HP/防御数/AOE/药水）
+python sts2.py route --commit 2 --note "三营火线"
+python sts2.py plan                  # 对账：PLAN_OK / REPLAN
+python sts2.py report                # JSONL → Markdown 战报
 
-- `sts2.py`：读 `/state`、发 `/action`、压缩出 `ANCHOR / EFF / BLOCK_POOL / INTENT_MEM` 等便于决策的行
-- 游戏侧：`STS2AIAgent` mod 在 `127.0.0.1:8080` 提供结构化 JSON（不靠截图识别）
-- `OBS`：录游戏画面 + 浏览器源叠字（可选）
-- `db/sts2.db`：卡/敌/遗物/药水/规则库（201 条 `strategy_rules`）
+python obsctl.py status|setup|start|stop|health|free|nomute
+python tools/gamedb.py card 痛击     # 查卡/敌/遗物/药水/规则
+python tools/gamedb.py strategy
+python tools/memedb.py suggest --situation boss
+python tools/check_skill.py          # 技能自检（体积/路径/旧卡名）
+python tools/check_caster.py --say "它 21，我最多挡 15。差 6，嗨呀。"
+```
 
-没有这套工具也能读，但 `state`、`ANCHOR` 这类行需要自己实现等价物。
+环境变量：`STS2_API`（默认 `http://127.0.0.1:8080`）、`STS2_OVERLAY`（默认 `http://127.0.0.1:8730`）、`STS2_OVERLAY_PORT`（默认 8730）。
 
-## 版本记录
+## 技能（skills）
 
-### v10（2026-10-25）
+| 技能 | 管什么 |
+|---|---|
+| `sts2-ironclad-ironclad` | **怎么打**：决策操作系统 v10。开局/每回合决策前加载 |
+| `sts2-caster` | **怎么说**：实况说话系统 v2，三拍、五武器、三档梗库、禁语 |
 
-- **铁律 2 重写**：入伤 ≤10% 最大生命（80 血 = ≤8）**一律先挡满**，宁可少打一张刀；要吃伤必须写清算式「省下的回合 × 敌方单回合入伤 > 这次掉的血」。起因：第 49 局泥浆纺锤意图 7，手里 2 张防御却打 Inflame + 打击×2 硬吃 7。
-- **药水从「当前版本无效」改成必须规划**：四问（解什么 / 槽满还留不留 / 这回合会不会被打穿 / 留给下一场值不值）+ `references/potions.md`；新增反模式 ㉔㉕。
-- 新增 `references/potions.md`；`SKILL.md` 压缩到 16 KB 以内，细节外置。
+技能放在仓库的 `.dsh/skills/` 下，**克隆下来就在位**。DSH 会自动发现；其它 agent 平台把对应目录复制到它的 skills 目录即可（目录名与 frontmatter `name` 必须一致，且只能是**小写字母/数字/短横线**）。
 
-### v9（2026-10-25）
+- 决策技能：`.dsh/skills/sts2-ironclad-ironclad/SKILL.md` + `references/{enemies,cards,potions,archetypes,builds_tier}.md`
+- 说话技能：`.dsh/skills/sts2-caster/SKILL.md` + `references/{lines,quips}.md`
 
-- A1 Boss 时序（瀑布巨兽 Buff→Stun→DeathBlow 44、仪式兽 150 晕 + Ringing 等）、Buff/Stun 回合不交防御资源、自伤联动（狱火 + 放血/突破）。
+## 架构
 
-### v8 及更早
-
-- 每回合 7 步 + 战前准入三闸、斩杀公式、路线 `route/plan` 对账、构筑红线。
+```text
+游戏（窗口化）
+  └─ STS2 AI Agent mod（:8080）
+        ↑ /state /actions/available /action
+sts2.py（压缩状态 + 动作 + JSONL 战报）
+overlay_server.py :8730 + overlay/index.html
+        ↑ 浏览器源（透明弹幕；OBS 接管音频 → 动森音效进录像）
+OBS Studio（场景 StS2：game_capture + 浏览器源 + 进程音频）
+        └─ recordings/*.mp4
+```
 
 ## 已知限制
 
-- 数值以游戏内实时文本为准（卡牌改版频繁：2026-04-16 / 06-18 两次大改，2025 年及更早的 StS1 攻略不适用）。
-- A10 只到第 10 阶；A6 起删牌更贵。
-- 药水在不同版本行为不同：`use_potion` 若返回 `pending`，按「重读 state → 确认 `is_queued` → 最多重试 1 次」处理，别连点。
+- **必须窗口化**：全屏独占下 OBS 采集黑屏。
+- **mod 版本绑定游戏版本**：`mod/STS2AIAgent.dll` 只对 v0.107.1 打过补丁；游戏升到 v0.111+ 需换 mod 并重测。
+- **药水**：不同版本 `use_potion` 可能返回 `pending`；按技能里的四问与「重读 `is_queued`、最多重试 1 次」处理。
+- **难度只到 A10**；A6 起删牌更贵，A10 是双 Boss。
+- 数据库以 v0.107.1 为准，卡牌改版（2026-04-16 / 06-18）后部分数值会过期，以游戏内文本为准。
 
-## License
+## 致谢与许可
 
-自用/实况用，未指定许可证；引用请注明来源。游戏内容版权归 Mega Crit 所有。
+- mod：**STS2 AI Agent**（作者 CharTyr）——`mod/` 内为其 Windows 构建（v0.107.1 兼容补丁版），版权归原作者。
+- 游戏内容与卡牌文本版权归 **Mega Crit**；`db/` 数据来自公开 Wiki（slaythespire2.gg）与 mod 自带英文数据，仅作个人学习/实况用。
+- 本仓库其余代码与文档：自用项目，未指定开源许可证；转载请注明来源。
