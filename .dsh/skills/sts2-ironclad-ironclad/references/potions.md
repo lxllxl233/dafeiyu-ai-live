@@ -30,13 +30,14 @@
 
 ```
 python sts2.py state                     # 看 POTIONS 行（槽位号 + 药水名 + FX）
-python sts2.py do use_potion --option 0                  # 不需要目标
-python sts2.py do use_potion --option 1 --target 0       # 需要目标；不填会自动选最低血敌人
+python sts2.py do use_potion --option 0                  # 不需要目标（抽牌/回血类）
+python sts2.py do use_potion --option 1 --target 0       # 给敌人上状态的药水必须带目标
 python sts2.py do discard_potion --option 0              # 槽满要先腾
 ```
 
-- 返回 `pending`：**先重读 state**，看槽位是不是还在、`is_queued` 有没有变；**最多重试 1 次**（可带 target），还不动就换瓶或放弃，并在 thought 里说清楚——别把没生效的药水算进计划。
-- 全敌药水（火焰/毒）在旧版本常不结算：用了就当场核对敌方 HP，没掉血就按「没生效」重算。
+- **已验证（2026-10-25 第 52 局）**：虚弱药水 `--target 0` 让入伤 16→12（虚弱 3 生效）、火焰药水 20 伤直接结算、癫狂之触选中手牌后该牌 0 费。药水本身**没有坏**。
+- **唯一坑**：给敌人上状态的药水（虚弱/易伤/火焰/毒）不带 `--target` 会 `ERROR use_potion failed: invalid_target`——**报错不等于无效**。以前 50 局把它记成「版本无效」，是调用方式错了。
+- 返回 `pending`：先重读 state 看槽位/敌方状态有没有变；变了就是生效了。真不动再重试 1 次。
 - 槽满拿新药水：先 `discard_potion` 丢掉最没用的那瓶，别让奖励卡在界面。
 
 ## 5. 反例：49 局两件事

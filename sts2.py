@@ -639,7 +639,58 @@ def map_ascii(m: dict) -> str:
     return "\n".join(out)
 
 
-def compact(state: dict) -> str:
+STATE_CACHE = os.path.join(LOGS, ".state_cache.json")
+
+
+def _cache_load() -> dict:
+    try:
+        with open(STATE_CACHE, encoding="utf-8") as f:
+            d = json.load(f)
+        return d if isinstance(d, dict) else {}
+    except Exception:
+        return {}
+
+
+def _cache_save(d: dict) -> None:
+    try:
+        tmp = STATE_CACHE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(d, f, ensure_ascii=False)
+        os.replace(tmp, STATE_CACHE)
+    except Exception:
+        pass
+
+
+_TGT_SHORT = {"AnyEnemy": "敌", "AllEnemies": "全体", "RandomEnemy": "随机",
+              "Self": "己", "None": "-", "All": "全体"}
+
+
+def _short_card_line(i: int, c: dict) -> str:
+    """Second+ sighting of a card: keep only what a decision needs (省上下文)."""
+    cid = c.get("card_id") or c.get("id") or "?"
+    meta = CARD_DB.get(str(cid), {})
+    cost = c.get("energy_cost", c.get("cost", meta.get("cost", "?")))
+    if isinstance(cost, float) and cost.is_integer():
+        cost = int(cost)
+    playable = c.get("playable", c.get("can_play", c.get("is_playable")))
+    tgt = str(c.get("target_type") or meta.get("target") or "")
+    for k, v in _TGT_SHORT.items():
+        tgt = tgt.replace(k, v)
+    vals = []
+    for v in c.get("dynamic_values") or []:
+        if isinstance(v, dict) and v.get("current_value") is not None:
+            vals.append(f"{v.get('name')}={v.get('current_value')}")
+    reason = c.get("unplayable_reason")
+    if playable is False:
+        unplay = f" UNPLAYABLE({reason})" if reason else " UNPLAYABLE"
+    else:
+        unplay = ""
+    vt = (" | " + ",".join(vals)) if vals else ""
+    up = "+" if (c.get("upgraded") or c.get("is_upgraded")) else ""
+    return f"[{i}] {cid}{up} c{cost} {tgt}{vt}{unplay}"
+
+
+def compact(state: dict, full: bool = False) -> str:
     screen = state.get("screen", "?")
     run = state.get("run") or {}
     combat = state.get("combat") or {}
@@ -659,10 +710,10 @@ def compact(state: dict) -> str:
     lines.append(
         f"SCREEN {screen} | {char} A{asc} | act {act} floor {floor} | HP {hp}/{mhp} gold {gold} deck {len(deck)}"
     )
-    bad = _deck_bad_line(run)
-    if bad:
-        lines.append(bad)
+    cache = _cache_load()
+    dirty = False
 
+    # ---- 药水 / 遗物 / 诅咒：常驻只留一行 HUD，完整说明只在变化时打 ----
     potions = run.get("potions") or []
     occupied = []
     potion_ids = []
@@ -672,26 +723,50 @@ def compact(state: dict) -> str:
             potion_ids.append(pid)
             pm = POTION_DB.get(pid, {})
             occupied.append(f"{i}:{pid}" + (f"({pm.get('name')})" if pm.get("name") else ""))
+
+    relics = run.get("relics") or []
+    rnames = []
+    relic_ids = []
+    for r in relics[:12]:
+        if isinstance(r, dict):
+            rid = str(r.get("relic_id") or r.get("name") or "?")
+            relic_ids.append(rid)
+            rm = RELIC_DB.get(rid, {})
+            rnames.append(rid + (f"({rm.get('name')})" if rm.get("name") else ""))
+        else:
+            rnames.append(str(r))
+
+    curses = []
+    for c in deck:
+        if isinstance(c, dict) and _bad_card_kind(c) == "curse":
+            curses.append(str(c.get("card_id") or c.get("id") or "?"))
+
+    hud = []
     if occupied:
+        hud.append("potions " + " ".join(occupied))
+    if rnames:
+        hud.append(f"relics {len(rnames)}")
+    if curses:
+        hud.append("curses " + ",".join(curses))
+    if hud:
+        lines.append("HUD " + " | ".join(hud))
+
+    if occupied and (full or cache.get("potions") != potion_ids):
         lines.append("POTIONS " + " ".join(occupied))
         for fx in potion_fx(potion_ids):
             lines.append("  POTION FX " + fx)
-
-    relics = run.get("relics") or []
-    if relics:
-        rnames = []
-        relic_ids = []
-        for r in relics[:12]:
-            if isinstance(r, dict):
-                rid = str(r.get("relic_id") or r.get("name") or "?")
-                relic_ids.append(rid)
-                rm = RELIC_DB.get(rid, {})
-                rnames.append(rid + (f"({rm.get('name')})" if rm.get("name") else ""))
-            else:
-                rnames.append(str(r))
+        cache["potions"] = potion_ids
+        dirty = True
+    if rnames and (full or cache.get("relics") != relic_ids):
         lines.append("RELICS " + ",".join(rnames))
         for fx in relic_fx(relic_ids):
             lines.append("  RELIC FX " + fx)
+        cache["relics"] = relic_ids
+        dirty = True
+    if curses and (full or cache.get("curses") != curses):
+        lines.append("DECK_BAD 诅咒 " + ",".join(curses) + " ← 商店优先删")
+        cache["curses"] = curses
+        dirty = True
 
     if screen == "COMBAT":
         turn = combat.get("turn_number", combat.get("round", combat.get("turn", "?")))
@@ -703,9 +778,19 @@ def compact(state: dict) -> str:
         lines.append(f"TURN {turn} | energy {energy}/{maxe} stars {stars} block {block}")
         hand = combat.get("hand") or []
         lines.append(f"HAND {len(hand)}")
+        seen = cache.get("cards") or {}
         for i, c in enumerate(hand):
-            if isinstance(c, dict):
+            if not isinstance(c, dict):
+                continue
+            cid = str(c.get("card_id") or c.get("id") or "")
+            if not full and seen.get(cid, 0) >= 1:
+                lines.append(" " + _short_card_line(i, c))
+            else:
                 lines.append(" " + _card_line(i, c))
+                if cid:
+                    seen[cid] = seen.get(cid, 0) + 1
+                    cache["cards"] = seen
+                    dirty = True
         rank = _hand_value_rank(hand, combat.get("enemies") or [])
         if rank:
             lines.append(rank)
@@ -738,15 +823,17 @@ def compact(state: dict) -> str:
         if pp:
             lines.append("PLAYER POWERS " + pp)
         mech = enemy_mechanics(enemies)
-        if mech:
-            lines.append("MECHANICS 打之前先读：")
-            for m in mech:
-                lines.append("  " + m)
-        if enemies:
-            lines.append(
-                "PREFIGHT 首回合前：读上面的 MECHANICS + INTENT_MEM，再查 references/enemies.md 对应行"
-                "（Boss/精英必读），写一句「机制 + 意图循环」再出牌。"
-            )
+        en_ids = ",".join(sorted(
+            str(e.get("enemy_id") or e.get("id") or "")
+            for e in enemies if isinstance(e, dict)
+        ))
+        mech_key = f"{state.get('run_id')}|{act}|{floor}|{en_ids}"
+        if mech and (full or cache.get("mech_key") != mech_key):
+            lines.append("MECHANICS " + " ／ ".join(mech))
+            if enemies:
+                lines.append("PREFIGHT 先写一句「机制+意图循环」再出牌（Boss/精英查 references/enemies.md）")
+            cache["mech_key"] = mech_key
+            dirty = True
         if combat.get("end_turn_will_kill_player"):
             lines.append("WARNING end_turn_will_kill_player")
     elif screen == "MAP":
@@ -850,6 +937,8 @@ def compact(state: dict) -> str:
 
     legal = state.get("available_actions") or []
     lines.append("LEGAL " + ",".join(str(x) for x in legal))
+    if dirty:
+        _cache_save(cache)
     return "\n".join(lines)
 
 
@@ -954,10 +1043,7 @@ def _meme_hint():
     if actions <= 0:
         return
     pct = 100.0 * total / actions
-    print(
-        f"MEME_BAR {total}/{actions} {pct:.0f}% "
-        f"(目标 ≥{MEME_TARGET_RATIO:.0%}，每 4 个动作至少 1 条；连续 2 条没梗就补)"
-    )
+    print(f"MEME_BAR {total}/{actions} {pct:.0f}% (≥{MEME_TARGET_RATIO:.0%})")
     if gap >= 4:
         print(
             f"MUST_MEME 连着 {gap} 个动作没梗了（本局 {total} 条 / {pct:.0f}%）。"
@@ -977,12 +1063,12 @@ def _meme_hint():
         )
 
 
-def cmd_state(raw=False):
+def cmd_state(raw=False, full=False):
     s = get_state()
     if raw:
         print(json.dumps(s, ensure_ascii=False, indent=2))
     else:
-        print(compact(s))
+        print(compact(s, full=full))
 
 
 def cmd_acts():
@@ -2196,6 +2282,45 @@ def cmd_do(action, card=None, target=None, option=None, thought="", meme="", opt
     _meme_hint()
 
 
+def _player_turn_state(timeout=8.0):
+    """等到「玩家回合」快照再返回；超时返回 None（绝不盲发动作）。"""
+    end = time.time() + timeout
+    while True:
+        s = get_state()
+        acts = s.get("available_actions") or []
+        if s.get("screen") == "COMBAT" and ("play_card" in acts or "end_turn" in acts):
+            return s
+        if time.time() >= end:
+            return None
+        time.sleep(0.15)
+
+
+def _delta_line(before: dict, after: dict) -> str:
+    """一行战况增量，替代整份 state（batch 中间步只打这个）。"""
+    def _c(s):
+        return s.get("combat") or {}
+    b, a = _c(before), _c(after)
+    bp, ap = b.get("player") or {}, a.get("player") or {}
+    br, ar = before.get("run") or {}, after.get("run") or {}
+    bits = [
+        f"E{bp.get('energy', '?')}→{ap.get('energy', '?')}",
+        f"blk{ap.get('block', 0)}",
+        f"hp{ar.get('current_hp', '?')}",
+    ]
+    ben = {str(e.get("enemy_id")) + str(i): e for i, e in enumerate(b.get("enemies") or [])}
+    aen = {str(e.get("enemy_id")) + str(i): e for i, e in enumerate(a.get("enemies") or [])}
+    dead = [k for k in ben if k not in aen]
+    if dead:
+        bits.append("dead:" + ",".join(str(v.get("enemy_id")) for v in (ben[k] for k in dead)))
+    hps = " ".join(
+        f"e{i}:{e.get('hp')}" for i, e in enumerate(a.get("enemies") or [])
+    )
+    if hps:
+        bits.append(hps)
+    bits.append(f"hand{len(a.get('hand') or [])}")
+    return " · ".join(bits)
+
+
 def cmd_batch(spec: str):
     items = json.loads(spec)
     if isinstance(items, dict):
@@ -2205,8 +2330,29 @@ def cmd_batch(spec: str):
         if not a:
             print(f"batch item {i} missing action")
             sys.exit(2)
+        if i > 0:
+            st = _player_turn_state()
+            if st is None:
+                print(f"BATCH STOP at {i} {a}: 没有玩家回合快照（战斗结束/进了选牌/敌人回合）")
+                print(compact(get_state()))
+                sys.exit(3)
         before = get_state()
         params = {k: it[k] for k in ("card_index", "target_index", "option_index") if k in it}
+        # 允许按 card_id 指定，客户端每步按当前手牌重新解析下标（手牌会压缩）。
+        cid = it.get("card_id")
+        if cid and "card_index" not in params:
+            hand = (before.get("combat") or {}).get("hand") or []
+            idx = next(
+                (k for k, c in enumerate(hand)
+                 if isinstance(c, dict) and str(c.get("card_id")) == str(cid)
+                 and c.get("playable", True) is not False),
+                None,
+            )
+            if idx is None:
+                print(f"BATCH STOP at {i}: 手里没有可打的 {cid}（牌序已变）")
+                print(compact(before))
+                sys.exit(3)
+            params["card_index"] = idx
         thought = it.get("thought", "")
         meme = it.get("meme", "")
         try:
@@ -2217,7 +2363,7 @@ def cmd_batch(spec: str):
         after = resp.get("state") or get_state()
         overlay_say(tag_for(after.get("screen", "")), thought, meme, after)
         log(a, params, before, after, resp or {}, thought, meme)
-        print(f"[{i}] {a} {params} -> {resp.get('status')}")
+        print(f"[{i}] {a} {params.get('card_index', params)} -> {resp.get('status')} | {_delta_line(before, after)}")
     print(compact(get_state()))
 
 
@@ -2289,6 +2435,7 @@ def main():
     sub = ap.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("state")
     p.add_argument("--raw", action="store_true")
+    p.add_argument("--full", action="store_true", help="忽略差异缓存，打印完整药水/遗物/卡牌说明")
     sub.add_parser("acts")
     sub.add_parser("map")
     p = sub.add_parser("route")
@@ -2323,7 +2470,7 @@ def main():
     sub.add_parser("report")
     args = ap.parse_args()
     if args.cmd == "state":
-        cmd_state(args.raw)
+        cmd_state(args.raw, args.full)
     elif args.cmd == "acts":
         cmd_acts()
     elif args.cmd == "map":

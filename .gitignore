@@ -1,25 +1,29 @@
-# 录像与本地产物
+# 录像与备份：体积大，不入库
 recordings/
-logs/*.jsonl
-logs/run_*.md
-logs/*_review.md
-!logs/README.md
+backups/
 
-# Python
+# 运行期产物
 __pycache__/
 *.pyc
-.venv/
-venv/
+logs/*.jsonl
+logs/.state_cache.json
+logs/current_session.json
+logs/route_plan.json
 
-# 抓取中间产物（重建 db 时再生成，见 tools/scrape_site.py）
-tools/pages/
-
-# 本机私有
-backups/
-dist/
-obs_config.json
-*.save
-*.save.bak
+# 截图/预览（本地验收用）
 preview*.png
-tmp_*
-__pycache__/
+preview*.jpg
+*.mp4
+
+# 打包产物（由 .dsh/skills 生成，避免双份）
+dist/
+
+# 临时文件
+tmp_*.txt
+tmp_*.py
+
+# 本地调试产物（截图/JSON 转储），不入库
+logs/*.png
+logs/*.json
+logs/*.txt
+logs/*.js
