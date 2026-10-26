@@ -75,6 +75,35 @@ COPIES STRIKE_IRONCLAD: 升级版 [3] vs 未升级 [1] → 打升级版
 - **出牌后只回一行**：`play` / `do play_card` 在战斗内只打 `DELTA E2→1 blk0 hp53 · e0:32 · hand4` + 极简手牌/敌人/入伤（约 **280 B**，比热读再省 **73%**）；要看逐卡 EFF/斩杀表就 `state` 一次（每回合 1 次足够），或 `play … --full`。
 - **一回合多刀用 `batch`**：客户端每步等「玩家回合」快照、按 `card_id` 重新解析下标、任何异常（缺牌/战斗结束/进选牌）立即停并打印当前状态，中间步只打一行 `E3→2 · blk0 · e0:62 · hand2` 增量。斩杀/易伤链这种顺序敏感的仍建议单张。
 
+## 分层记忆（2026-10-26，回答「能不能用结构化摘要」）
+
+**能，而且比压输出更狠**——压输出是省每次回显，分层记忆是省「整局聊天都留在上下文里」。
+
+| 层 | 命令 | 体积 | 何时用 |
+|---|---|---|---|
+| L0 规则 | skill（`.dsh/skills/sts2-ironclad-ironclad`） | ~4k tok | 常驻 |
+| L1 结构化记忆 | `python sts2.py memory`（`--write` 落盘 `logs/run_memory.md`） | ~150 tok | 开局/换幕/新 session 恢复 |
+| L2 当前状态 | `python sts2.py state`（回合开始）/ 出牌后自动 `DELTA` | 90–350 tok | 每回合 1 次 + 每刀自动 |
+| L3 细节检索 | `python sts2.py journal --floor 12 --last 20` | 按需 | 回溯某层怎么掉的、复盘 |
+
+`memory` 从当前 `state` + 本局 JSONL + `route_plan.json` 现算，输出一屏（实测 449 B / 9 行）：
+
+```
+MEMORY run_56 | IRONCLAD A10 | act1 f12 | HP 17/85 (20%) | gold 59 | deck 20 | SL 1/3
+DECK 20: atk8 def5 skill5 pwr2 curse2 up0 | AOE 1
+KEY BASH,DISMANTLEx2,BLUDGEON,THUNDERCLAP,IMPERVIOUS,TAUNT,TORIC_TOUGHNESS
+RELICS BURNING_BLOOD,HEFTY_TABLET,CHOSEN_CHEESE,GREMLIN_HORN,MEAL_TICKET
+CURSES DEBT
+HP_CURVE f1:64 f3:53 f6:47 f9:37 f12:17 | min 17
+PLAN opt0 四营火线，末尾商店删受伤
+LAST f12 save_and_quit hp17 | f12 continue_run hp17 | f12 choose_map_node hp17
+RISK 血闸<50% | 牌组>18 | 诅咒1
+```
+
+- **新 session 恢复**：`memory` + `state` 两条就够，不用把上一局聊天带进来；建议**每局开一个新会话**（这局的 255K 里有相当一部分是上一局 + 改代码 + 复盘）。
+- **换幕/收尾**：`memory --write`，下一幕/下一局直接读它；原始 `logs/run_*.jsonl` 永远不进上下文。
+- 回归测试：`python tools/test_memory.py`。
+
 ## 常用命令
 
 ```powershell

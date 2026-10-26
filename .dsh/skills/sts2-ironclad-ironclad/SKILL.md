@@ -8,6 +8,21 @@ description: 《杀戮尖塔 2》铁甲战士 A10 决策 OS v17.1（省 token �
 > 常驻只有本文件，细节按需抓 references/（**别整份加载**）。
 > `state` 只打增量：药水/遗物/机制/卡面说明**只在变化时出现**。出牌后只回 `DELTA` + 极简手牌/敌人；要全量用 `--full`，要 EFF/斩杀表再 `state` 一次。
 
+## 0.5 记忆分层（省 token 的核心）
+
+> **别把整局聊天留在上下文里**。每局/换幕都只带这四层，细节用命令按需取。
+
+| 层 | 命令 | 体积 | 何时读 |
+|---|---|---|---|
+| L0 skill | 本文件 | ~4k tok | 常驻（每次加载一次） |
+| **L1 结构化记忆** | `sts2.py memory`（`--write` 落盘） | **~150 tok** | 开局/换幕/新 session 恢复、每 4–5 层 |
+| L2 当前状态 | `sts2.py state`（回合开始）／出牌后自动 `DELTA` | 90–350 tok | 每回合 1 次 + 每刀自动 |
+| L3 细节检索 | `sts2.py journal --floor 12 --last 20` | 按需 | 想不起某层怎么掉的、复盘时 |
+
+- **新 session 恢复**：`memory` + `state` 两条就够，不用翻旧对话；`memory` 会给你 HP 曲线、牌组构成、关键牌、遗物、诅咒、SL 次数、风险标记。
+- **换幕/每幕结束**：`memory --write`（写 logs/run_memory.md），下一幕/下一局直接读它。
+- **原始流水**（`logs/run_*.jsonl`、战报 md）**永远不进上下文**，只在写复盘时用 `journal`/`report` 查。
+
 ## 0. 三条铁律
 
 1. **先算死**：`incoming`（多怪加总，自伤也算）vs `HP + 可挡 + 药水`。`incoming ≥ HP` → 全挡 / 斩杀 / 喝药，**禁止半挡半打**。
@@ -132,7 +147,8 @@ python sts2.py batch '{"actions":[{"action":"play_card","card_id":"BASH","target
 
 1. `obsctl stop` → 改名 `recordings/sts2_ironclad_a10_run<N>_<win|lose|abandoned>_floor<M>.mp4`
 2. `sts2.py report` → 写 `logs/run<N>_review.md`（资源曲线/死因链/可复现错误）
-3. `docs/LESSONS.md` 追加 + 教训压回本文件 + `python tools/check_skill.py` + `strategy_rules` 加规则
+3. `sts2.py memory --write`（把本局终局记忆落盘，供下局/新 session 恢复）
+4. `docs/LESSONS.md` 追加 + 教训压回本文件 + `python tools/check_skill.py` + `strategy_rules` 加规则
 
 ## 12. 口头禅
 

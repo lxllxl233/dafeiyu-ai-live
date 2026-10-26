@@ -2442,6 +2442,182 @@ def cmd_say(thought, meme):
     _meme_hint()
 
 
+# ---------------------------------------------------------------- memory
+def _session_entries(limit: int | None = None) -> list[dict]:
+    """纯读本局 JSONL（不新建会话文件）。"""
+    if not os.path.exists(SESSION_PTR):
+        return []
+    try:
+        with open(SESSION_PTR, encoding="utf-8") as f:
+            path = json.load(f).get("path")
+    except Exception:
+        return []
+    if not path or not os.path.exists(path):
+        return []
+    out = []
+    try:
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    e = json.loads(line)
+                except Exception:
+                    continue
+                if isinstance(e, dict):
+                    out.append(e)
+    except Exception:
+        return []
+    return out[-limit:] if limit else out
+
+
+def _key_cards(deck: list, cap: int = 10) -> list[str]:
+    """牌组里的「非基础牌」清单（同名去重、带升级标记），用来一眼认出这套牌靠什么赢。"""
+    basic = {"STRIKE_IRONCLAD", "DEFEND_IRONCLAD", "ASCENDERS_BANE"}
+    seen = {}
+    order = []
+    for c in deck:
+        if not isinstance(c, dict):
+            continue
+        cid = str(c.get("card_id") or c.get("id") or "?")
+        if cid in basic or _bad_card_kind(c) == "curse":
+            continue
+        up = "+" if (c.get("upgraded") or c.get("is_upgraded")) else ""
+        key = cid + up
+        if key not in seen:
+            seen[key] = 0
+            order.append(key)
+        seen[key] += 1
+    out = [f"{k}x{seen[k]}" if seen[k] > 1 else k for k in order]
+    return out[:cap]
+
+
+def _hp_curve(entries: list[dict], cap: int = 8) -> list[tuple]:
+    curve = []
+    for e in entries:
+        f, hp = e.get("floor"), e.get("hp")
+        if f is None or hp is None:
+            continue
+        if curve and curve[-1][0] == f:
+            curve[-1] = (f, hp)
+        else:
+            curve.append((f, hp))
+    if len(curve) > cap:
+        step = len(curve) / float(cap - 1)
+        curve = [curve[int(round(i * step))] for i in range(cap - 1)] + [curve[-1]]
+    return curve
+
+
+def memory_digest(state: dict) -> list[str]:
+    """分层记忆的 L1：一屏结构化摘要（换幕/新 session 时读它，不读旧对话）。"""
+    run = state.get("run") or {}
+    deck = run.get("deck") or []
+    stats = _deck_stats(state)
+    entries = _session_entries()
+    hp = run.get("current_hp", run.get("hp", "?"))
+    mhp = run.get("max_hp", "?") or 1
+    try:
+        pct = 100.0 * float(hp) / float(mhp)
+    except Exception:
+        pct = 0.0
+    act = run.get("act_id", run.get("act", "?"))
+    try:
+        act = int(act) + 1
+    except Exception:
+        pass
+    floor = run.get("floor", "?")
+    sl = sum(1 for e in entries if e.get("action") == "save_and_quit")
+    lines = [
+        f"MEMORY {state.get('run_id', '?')} | {run.get('character_id', 'IRONCLAD')} "
+        f"A{run.get('ascension', '?')} | act{act} f{floor} | "
+        f"HP {hp}/{mhp} ({pct:.0f}%) | gold {run.get('gold', '?')} | deck {stats['size']} | SL {sl}/3"
+    ]
+    lines.append(
+        f"DECK {stats['size']}: atk{stats['attack']} def{stats['defense']} "
+        f"skill{stats['skill']} pwr{stats['power']} curse{stats['curses']} up{stats['upgraded']} "
+        f"| AOE {stats['aoe']}"
+    )
+    keys = _key_cards(deck)
+    if keys:
+        lines.append("KEY " + ",".join(keys))
+    relics = [str((r or {}).get("relic_id") or r) for r in (run.get("relics") or []) if isinstance(r, dict)]
+    if relics:
+        lines.append("RELICS " + ",".join(relics))
+    curses = [str(c.get("card_id")) for c in deck if isinstance(c, dict) and _bad_card_kind(c) == "curse"]
+    if curses:
+        lines.append("CURSES " + ",".join(sorted(set(curses))))
+    curve = _hp_curve(entries)
+    if curve:
+        lo = min(c[1] for c in curve)
+        lines.append("HP_CURVE " + " ".join(f"f{f}:{h}" for f, h in curve) + f" | min {lo}")
+    plan = {}
+    if os.path.exists(PLAN_PATH):
+        try:
+            with open(PLAN_PATH, encoding="utf-8") as f:
+                plan = json.load(f) or {}
+        except Exception:
+            plan = {}
+    if plan:
+        note = plan.get("note") or ""
+        unit = plan.get("opt", plan.get("unit"))
+        if note or unit is not None:
+            head = f"PLAN opt{unit}" if unit is not None else "PLAN"
+            lines.append(f"{head} {note}".strip())
+    tail = entries[-5:]
+    if tail:
+        lines.append(
+            "LAST " + " | ".join(
+                f"f{e.get('floor', '?')} {str(e.get('action', '?'))[:18]} hp{e.get('hp', '?')}" for e in tail
+            )
+        )
+    risk = []
+    if pct < 50:
+        risk.append("血闸<50%")
+    elif pct < 60:
+        risk.append("精英闸<60%")
+    elif pct < 70:
+        risk.append("Boss闸<70%")
+    if stats["size"] > 18:
+        risk.append(f"牌组{stats['size']}>18")
+    if stats["curses"]:
+        risk.append(f"诅咒{stats['curses']}")
+    if stats["aoe"] == 0:
+        risk.append("AOE=0")
+    if risk:
+        lines.append("RISK " + " | ".join(risk))
+    return lines
+
+
+def cmd_memory(write: bool = False):
+    lines = memory_digest(get_state())
+    text = "\n".join(lines)
+    print(text)
+    if write:
+        path = os.path.join(LOGS, "run_memory.md")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("# 本局结构化记忆（L1，读这个就够）\n\n")
+            f.write(f"- 更新时间：{datetime.now().isoformat(timespec='seconds')}\n")
+            for line in lines:
+                f.write(f"- {line}\n")
+            f.write("\n> L2 当前状态：`python sts2.py state`；L3 原始流水：`python sts2.py journal --floor <n>`\n")
+        print(f"MEMORY_WRITTEN {path}")
+
+
+def cmd_journal(floor: int | None = None, last: int = 20):
+    entries = _session_entries()
+    if floor is not None:
+        entries = [e for e in entries if e.get("floor") == floor]
+    entries = entries[-max(1, last):]
+    if not entries:
+        print("JOURNAL_EMPTY 没有匹配的记录")
+        return
+    for e in entries:
+        th = str(e.get("thought") or "")[:40]
+        print(f"f{e.get('floor', '?')} hp{e.get('hp', '?')} g{e.get('gold', '?')} "
+              f"{e.get('action')} {e.get('params')} {('| ' + th) if th else ''}")
+
+
 def cmd_report():
     path = _session_path()
     out = os.path.splitext(path)[0] + ".md"
@@ -2510,6 +2686,11 @@ def main():
     p = sub.add_parser("say")
     p.add_argument("--thought", default="")
     p.add_argument("--meme", default="")
+    p = sub.add_parser("memory")
+    p.add_argument("--write", action="store_true", help="同时写 logs/run_memory.md（新 session 恢复用）")
+    p = sub.add_parser("journal")
+    p.add_argument("--floor", type=int, help="只看某一层")
+    p.add_argument("--last", type=int, default=20, help="最多打印几条")
     sub.add_parser("report")
     args = ap.parse_args()
     if args.cmd == "state":
@@ -2536,6 +2717,10 @@ def main():
         cmd_wait(args.screen, args.player_turn, args.timeout)
     elif args.cmd == "say":
         cmd_say(args.thought, args.meme)
+    elif args.cmd == "memory":
+        cmd_memory(args.write)
+    elif args.cmd == "journal":
+        cmd_journal(args.floor, args.last)
     elif args.cmd == "report":
         cmd_report()
 
