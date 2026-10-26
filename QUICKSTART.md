@@ -66,11 +66,14 @@ python obsctl.py start
 - 说话：`sts2-caster`
 
 把 [NEXT_PROMPT.txt](NEXT_PROMPT.txt) 丢给 agent 就能开局。想在自己屏幕上盯着那条弹幕看，
-另开一个终端跑 **主播模式**（可拖动的透明弹幕窗，和 OBS 里同款）：
+另开一个终端跑 **主播模式**（可拖动的透明弹幕窗，和 OBS 里同款、有声音）：
 
 ```powershell
-python streamer.py --demo     # 先看效果；左键拖位置，右键菜单，Ctrl+Alt+D 点击穿透
+python streamer.py --demo     # 先看效果；左键拖位置，右键菜单，Ctrl+Alt+D 点击穿透，Ctrl+Alt+S 声音
 ```
+
+这个窗是纯本地预览：OBS 的录像仍走原来的 `StS2 Game` + `AI Commentary`，窗口默认带采集排除，
+**不会被录进视频**（要录它得加 `--capture`）。
 
 收尾：
 

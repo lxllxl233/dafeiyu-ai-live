@@ -8,6 +8,7 @@ import io
 import os
 import sys
 import time
+import wave
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
@@ -64,7 +65,33 @@ def main():
     check(per < 40, f"单帧 {per:.1f}ms，太慢（检查 layout/portrait 缓存）")
     print(f"单帧 {per:.1f}ms")
 
-    # 7) 静止帧命中缓存（第二次应明显快）
+    # 7) 声音：和页面同款动物语，合成成能播的 WAV
+    wav = S.animalese_wav("它 21，我最多挡 15。", 0.55)
+    check(wav is not None and wav[:4] == b"RIFF", "应该合成出 WAV")
+    if wav:
+        with wave.open(io.BytesIO(wav)) as wf:
+            check(wf.getnchannels() == 1 and wf.getframerate() == 44100, "单声道 44.1k")
+            sec = wf.getnframes() / wf.getframerate()
+            check(0.3 < sec < 3.5, f"时长异常：{sec:.2f}s")
+            raw = wf.readframes(wf.getnframes())
+        peak = max(abs(int.from_bytes(raw[i:i + 2], "little", signed=True))
+                   for i in range(0, len(raw) - 1, 2))
+        check(peak > 3000, f"合成出来是静音/太小（peak={peak}）")
+    check(S.animalese_wav("……，。", 0.55) is None, "只有标点不该发声")
+    t0 = time.perf_counter()
+    S.animalese_wav("字" * 120, 0.55)
+    ms = (time.perf_counter() - t0) * 1000
+    check(ms < 400, f"合成 {ms:.0f}ms 太慢（会拖住重绘）")
+    print(f"配音 {ms:.0f}ms / 120 字")
+
+    # 8) 声音开关：关掉时 speak 不发线程也不报错
+    sp = S.Speaker(0.5, enabled=False)
+    sp.speak("这就不该响")
+    check(sp.enabled is False, "初始应为静音")
+    check(sp.toggle() is True, "toggle 应打开")
+    check(sp.toggle() is False, "toggle 应关闭")
+
+    # 9) 静止帧命中缓存（第二次应明显快）
     t0 = time.perf_counter()
     S.render("缓存测试", STATUS, 1.0)
     a = time.perf_counter() - t0

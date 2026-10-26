@@ -15,25 +15,33 @@
 
 窗口里能做的事：
     左键拖动  → 挪位置（松手自动记住，下次原地开）
-    右键      → 菜单：置顶 / 点击穿透 / 重新载入示例 / 关闭
+    右键      → 菜单：置顶 / 点击穿透 / 声音 / 录屏里隐藏 / 重新载入示例 / 关闭
     Ctrl+Alt+D 点击穿透开关（穿透后鼠标点不到窗口，用它切回来）
     Ctrl+Alt+H 隐藏/显示
+    Ctrl+Alt+S 声音开关
     Ctrl+Alt+Q 退出
 
-直播时怎么用：OBS 里加「窗口采集」选这个窗口，或直接全屏/显示器采集；
-因为窗口是真透明，桌面和游戏都能透出来，不需要色键。
+直播时怎么用：OBS 的 `StS2 Game` 是 game_capture（只钩游戏进程），本来就不会录到这个窗；
+另外窗口默认带 WDA_EXCLUDEFROMCAPTURE，就算以后切成显示器采集也拍不到它（要拍就 --capture）。
+声音是页面同款动物语（同一个五声音阶合成），本地播放，不进录像。
 """
 from __future__ import annotations
 
 import argparse
 import ctypes
+import io
 import json
 import math
 import os
+import random
+import re
+import struct
 import sys
+import tempfile
 import threading
 import time
 import urllib.request
+import wave
 from ctypes import wintypes
 
 try:
@@ -197,6 +205,146 @@ def clip(s: str, n: int) -> str:
     if len(t) <= n:
         return t
     return t[: n - 1].rstrip(" ，,、") + "…"
+
+
+# ---------------------------------------------------------------- 声音
+# 和 overlay/index.html 的 Animalese 同一套规则：每个字一个短音节、五声音阶随机上下行。
+# 页面用 Web Audio 合成；窗口这边用纯 Python 合成成一小段 WAV，winsound 异步播放。
+SCALE = (0, 2, 4, 7, 9, 12)
+SPEAK_RATE = 44100
+_SPOKEN_RE = re.compile(r"[\u4e00-\u9fffA-Za-z0-9]")
+_PUNCT_RE = re.compile(r"[，,、。；;：:！!？?…—]")
+
+
+def _blip(freq: float, dur: float, rate: int) -> list[float]:
+    """一个音节：三角波 + 低八度方波，过一个低通，再套 6ms 起音 / 指数衰减。"""
+    n = max(1, int(rate * dur))
+    out = []
+    sub_gain = 0.35
+    lp = 0.0
+    alpha = 1.0 - math.exp(-2.0 * math.pi * min(3200.0, freq * 3.2) / rate)
+    phase = 0.0
+    phase_sub = 0.0
+    for i in range(n):
+        t = i / rate
+        # 频率轻微下滑（freq → freq*0.94），和页面一致
+        f = freq * (1.0 - 0.06 * (t / max(dur, 1e-6)))
+        phase = (phase + f / rate) % 1.0
+        phase_sub = (phase_sub + (f * 0.5) / rate) % 1.0
+        tri = 4.0 * abs(phase - 0.5) - 1.0
+        sq = 1.0 if phase_sub < 0.5 else -1.0
+        x = tri + sub_gain * sq
+        lp += alpha * (x - lp)
+        # 包络：6ms 起音到 0.2，55% 处 0.05，结尾归零
+        if t < 0.006:
+            env = 0.2 * (t / 0.006)
+        elif t < dur * 0.55:
+            k = (t - 0.006) / max(dur * 0.55 - 0.006, 1e-6)
+            env = 0.2 + (0.05 - 0.2) * k
+        else:
+            k = (t - dur * 0.55) / max(dur * 0.45, 1e-6)
+            env = 0.05 * math.exp(-4.0 * k)
+        out.append(lp * env)
+    return out
+
+
+def animalese_wav(text: str, volume: float = 0.55, rate: int = SPEAK_RATE) -> bytes | None:
+    """把一句话合成成 WAV（16bit 单声道）。空句/没有可读字符返回 None。"""
+    chars = list(text or "")
+    total = len(_SPOKEN_RE.findall(text or ""))
+    if not total:
+        return None
+    spoken_max = min(70, total)
+    step = max(0.03, min(0.06, 2.3 / max(6, spoken_max)))
+    dur = min(0.06, step * 0.92)
+
+    buf: list[float] = [0.0] * int(rate * 0.05)   # 一点起手留白
+    degree = 2 + int(random.random() * 2)
+    spoken = 0
+    for ch in chars:
+        if ch.isspace():
+            buf.extend([0.0] * int(rate * step * 0.55))
+            continue
+        if _PUNCT_RE.match(ch):
+            buf.extend([0.0] * int(rate * step * 1.5))
+            continue
+        if not _SPOKEN_RE.match(ch):
+            continue
+        if spoken >= spoken_max:
+            break
+        spoken += 1
+        degree = max(0, min(len(SCALE) - 1, degree + (1 if random.random() < 0.5 else -1)))
+        semis = SCALE[degree] + (12 if random.random() < 0.12 else 0)
+        freq = 520.0 * (2.0 ** (semis / 12.0)) * (0.985 + random.random() * 0.03)
+        buf.extend(_blip(freq, dur, rate))
+        buf.extend([0.0] * int(rate * max(0.0, step - dur)))
+
+    peak = max((abs(v) for v in buf), default=0.0) or 1.0
+    gain = (min(1.5, max(0.0, volume)) * 0.7) / max(peak, 0.9)
+    frames = bytearray()
+    for v in buf:
+        s = int(max(-1.0, min(1.0, v * gain)) * 32767)
+        frames += struct.pack("<h", s)
+    out = io.BytesIO()
+    with wave.open(out, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(rate)
+        w.writeframes(bytes(frames))
+    return out.getvalue()
+
+
+class Speaker:
+    """异步播放：合成放后台线程，别卡住 30fps 的重绘。
+
+    注意：Win32 的 PlaySound 不支持「内存 + 异步」这个组合（会报
+    Cannot play asynchronously from memory），所以先落一个临时 WAV 再
+    用 SND_FILENAME|SND_ASYNC 播；两个文件轮着用，避免覆盖正在播的那个。
+    """
+
+    def __init__(self, volume: float = 0.55, enabled: bool = True):
+        self.volume = volume
+        self.enabled = enabled
+        self._lock = threading.Lock()
+        self._slot = 0
+        self._paths = [os.path.join(tempfile.gettempdir(), f"sts2_voice_{i}.wav") for i in (0, 1)]
+        self._ok = True
+        try:
+            import winsound  # noqa: F401
+            self._winsound = winsound
+        except Exception:
+            self._ok = False
+
+    def speak(self, text: str):
+        if not (self.enabled and self._ok and text):
+            return
+        threading.Thread(target=self._play, args=(text,), daemon=True).start()
+
+    def _play(self, text: str):
+        try:
+            wav = animalese_wav(text, self.volume)
+            if not wav:
+                return
+            with self._lock:
+                self._slot = 1 - self._slot
+                path = self._paths[self._slot]
+                with open(path, "wb") as f:
+                    f.write(wav)
+            self._winsound.PlaySound(
+                path, self._winsound.SND_FILENAME | self._winsound.SND_ASYNC | self._winsound.SND_NODEFAULT
+            )
+        except Exception as e:
+            print("音效播放失败：", e)
+
+    def toggle(self) -> bool:
+        self.enabled = not self.enabled
+        if not self.enabled:
+            try:
+                self._winsound.PlaySound(None, 0)
+            except Exception:
+                pass
+        return self.enabled
+
 
 
 def status_segments(st: dict) -> list[tuple[str, tuple, bool]]:
@@ -414,6 +562,8 @@ WM_RBUTTONUP = 0x0205
 WM_NCLBUTTONDOWN = 0x00A1
 WM_HOTKEY = 0x0312
 WM_EXITSIZEMOVE = 0x0232
+WDA_NONE = 0x00000000
+WDA_EXCLUDEFROMCAPTURE = 0x00000011   # Win10 2004+：录屏/采集里看不到这个窗
 WM_SETCURSOR = 0x0020
 HTCAPTION = 2
 IDC_SIZEALL = 32646
@@ -511,6 +661,8 @@ def _init_winapi():
     u.DestroyMenu.argtypes = [wintypes.HMENU]
     u.GetCursorPos.argtypes = [ctypes.POINTER(wintypes.POINT)]
     u.SetForegroundWindow.argtypes = [wintypes.HWND]
+    u.SetWindowDisplayAffinity.argtypes = [wintypes.HWND, wintypes.DWORD]
+    u.GetWindowDisplayAffinity.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
     u.GetSystemMetrics.argtypes = [ctypes.c_int]
     u.GetSystemMetrics.restype = ctypes.c_int
     u.ReleaseCapture.argtypes = []
@@ -570,11 +722,14 @@ _enable_dpi_awareness()
 
 class StreamerWindow:
     def __init__(self, scale: float = 1.0, pos: tuple[int, int] | None = None,
-                 click_through: bool = False, topmost: bool = True, toolwindow: bool = True):
+                 click_through: bool = False, topmost: bool = True, toolwindow: bool = True,
+                 volume: float = 0.55, muted: bool = False, exclude_capture: bool = True):
         self.scale = scale
         self.toolwindow = toolwindow
         self.topmost = topmost
         self.click_through = click_through
+        self.exclude_capture = exclude_capture
+        self.speaker = Speaker(volume, enabled=not muted)
         self.text = ""
         self.status = {}
         self.talk_until = 0.0
@@ -621,9 +776,23 @@ class StreamerWindow:
         if not self._hwnd:
             raise OSError("CreateWindowExW failed")
         user32.ShowWindow(self._hwnd, 8)  # SW_SHOWNA
-        for hid, key in ((1, ord("D")), (2, ord("H")), (3, ord("Q"))):
+        if self.exclude_capture:
+            self.apply_capture_exclusion(True)
+        for hid, key in ((1, ord("D")), (2, ord("H")), (3, ord("Q")), (4, ord("S"))):
             user32.RegisterHotKey(self._hwnd, hid, MOD_CONTROL | MOD_ALT, key)
         self._paint(img)
+
+    def apply_capture_exclusion(self, on: bool) -> bool:
+        """WDA_EXCLUDEFROMCAPTURE：这个窗对录屏/采集 API 不可见（Win10 2004+）。
+
+        OBS 现在的 `StS2 Game` 是 game_capture（只钩游戏进程的 swapchain），本来就不会
+        录到这个窗；这句是给「以后切成显示器采集」留的保险——照样不会录进去。
+        """
+        ok = bool(user32.SetWindowDisplayAffinity(self._hwnd, WDA_EXCLUDEFROMCAPTURE if on else WDA_NONE))
+        if on and not ok:
+            print("WARN 这个系统不支持采集排除（需要 Win10 2004+）：录屏仍可能拍到这个窗")
+        self.exclude_capture = on
+        return ok
 
     def _proc(self, hwnd, msg, wparam, lparam):
         try:
@@ -645,6 +814,8 @@ class StreamerWindow:
                     self.toggle_visible()
                 elif wparam == 3:
                     self.close()
+                elif wparam == 4:
+                    self.toggle_sound()
                 return 0
             if msg == WM_SETCURSOR:
                 if self.click_through:
@@ -662,8 +833,10 @@ class StreamerWindow:
         hmenu = user32.CreatePopupMenu()
         user32.AppendMenuW(hmenu, MF_STRING | (MF_CHECKED if self.topmost else 0), 1, "置顶")
         user32.AppendMenuW(hmenu, MF_STRING | (MF_CHECKED if self.click_through else 0), 2, "点击穿透")
-        user32.AppendMenuW(hmenu, MF_STRING, 3, "重新显示示例")
-        user32.AppendMenuW(hmenu, MF_STRING, 4, "关闭")
+        user32.AppendMenuW(hmenu, MF_STRING | (MF_CHECKED if self.speaker.enabled else 0), 3, "声音")
+        user32.AppendMenuW(hmenu, MF_STRING | (MF_CHECKED if self.exclude_capture else 0), 4, "录屏里隐藏")
+        user32.AppendMenuW(hmenu, MF_STRING, 5, "重新显示示例")
+        user32.AppendMenuW(hmenu, MF_STRING, 6, "关闭")
         pt = ctypes.wintypes.POINT()
         user32.GetCursorPos(ctypes.byref(pt))
         # 不加这两句，菜单点到别处不会收起（Win32 的老毛病）
@@ -678,10 +851,20 @@ class StreamerWindow:
         elif cmd == 2:
             self.toggle_click_through()
         elif cmd == 3:
+            self.toggle_sound()
+        elif cmd == 4:
+            self.apply_capture_exclusion(not self.exclude_capture)
+        elif cmd == 5:
             self.push("这一手先算账：它 21，我最多挡 15。", "差 6，嗨呀。",
                       {"character": "铁甲战士", "ascension": 10, "floor": 8, "hp": 23, "max_hp": 80, "gold": 20})
-        elif cmd == 4:
+        elif cmd == 6:
             self.close()
+
+    def toggle_sound(self):
+        on = self.speaker.toggle()
+        print("声音：" + ("开" if on else "关（Ctrl+Alt+S 切回）"))
+        if on:
+            self.speaker.speak("声音开了。")
 
     def toggle_click_through(self):
         self.click_through = not self.click_through
@@ -751,6 +934,7 @@ class StreamerWindow:
         self.enter_at = time.perf_counter()
         self.talk_until = self.enter_at + min(8.5, max(2.4, 1.5 + len(text) * 0.07))
         self.dirty = True
+        self.speaker.speak(text)   # 和页面一样：说的就是气泡里这一句
 
     def update_status(self, status: dict):
         if status and status != self.status:
@@ -806,7 +990,9 @@ class StreamerWindow:
             pass
 
     def run(self):
-        print("主播模式已启动：左键拖动 · 右键菜单 · Ctrl+Alt+D 穿透 · Ctrl+Alt+H 隐藏 · Ctrl+Alt+Q 退出")
+        print("主播模式已启动：左键拖动 · 右键菜单 · Ctrl+Alt+D 穿透 · Ctrl+Alt+S 声音 · "
+              "Ctrl+Alt+H 隐藏 · Ctrl+Alt+Q 退出")
+        print("（默认不出现在录屏里：WDA_EXCLUDEFROMCAPTURE，要拍就加 --capture）")
         last = 0.0
         while self.running:
             msg = wintypes.MSG()
@@ -889,6 +1075,9 @@ def main() -> int:
     ap.add_argument("--click-through", action="store_true", help="启动即点击穿透")
     ap.add_argument("--demo", action="store_true", help="先放一条示例弹幕（不接游戏也能试位置）")
     ap.add_argument("--taskbar", action="store_true", help="在任务栏/Alt-Tab 里显示（OBS 窗口采集找不到时用）")
+    ap.add_argument("--mute", action="store_true", help="不出声（默认和页面同款动物语）")
+    ap.add_argument("--vol", type=float, default=0.55, help="音量 0~1.5（默认 0.55，和页面一致）")
+    ap.add_argument("--capture", action="store_true", help="允许录屏拍到它（默认对采集隐藏）")
     ap.add_argument("--preview", help="只渲染一张 PNG 就退出（验收/截图用）")
     a = ap.parse_args()
 
@@ -919,7 +1108,8 @@ def main() -> int:
             return 2
 
     win = StreamerWindow(scale=scale, pos=pos, click_through=a.click_through,
-                         toolwindow=not a.taskbar)
+                         toolwindow=not a.taskbar, volume=a.vol, muted=a.mute,
+                         exclude_capture=not a.capture)
     stop = threading.Event()
     th = threading.Thread(target=poll_loop, args=(win, a.port, stop, a.demo), daemon=True)
     th.start()

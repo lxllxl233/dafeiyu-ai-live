@@ -31,18 +31,25 @@ OBS 里的浏览器源能吃到透明通道，**普通窗口不行**（Chromium 
 python streamer.py                 # 起窗（overlay server 没跑会自动拉起）
 python streamer.py --demo          # 不接游戏，先放一条示例试位置
 python streamer.py --click-through # 开局就点击穿透（打游戏时鼠标直接穿过去）
+python streamer.py --mute          # 不出声（默认和页面同款动物语）
+python streamer.py --vol 0.8       # 音量 0~1.5
+python streamer.py --capture       # 允许录屏拍到自己（默认对采集隐藏）
 python streamer.py --preview out.png  # 只渲一张图，验收用
 ```
 
 - **左键拖动**挪位置，松手自动记到 `logs/streamer_window.json`；换显示器/拔副屏也不会跑丢（会夹回可见区）。
-- **右键菜单**：置顶 / 点击穿透 / 重新显示示例 / 关闭。
-- **热键**：`Ctrl+Alt+D` 点击穿透（穿透后点不到窗口，用它切回来）· `Ctrl+Alt+H` 隐藏 · `Ctrl+Alt+Q` 退出。
+- **右键菜单**：置顶 / 点击穿透 / 声音 / 录屏里隐藏 / 重新显示示例 / 关闭。
+- **热键**：`Ctrl+Alt+D` 点击穿透（穿透后点不到窗口，用它切回来）· `Ctrl+Alt+S` 声音 · `Ctrl+Alt+H` 隐藏 · `Ctrl+Alt+Q` 退出。
+- **有声音**：和页面同一套动物语（每字一个五声音阶短音节，纯 Python 合成 → 后台线程 → `winsound` 异步播放），
+  说的是气泡里那一句；本地播放，**不进录像**。想只听一份：要么关 OBS 的 `AI Commentary` 音轨，要么 `--mute`。
+- **录不进视频**：两层保险。
+  1. OBS 的 `StS2 Game` 是 `game_capture`（只钩游戏进程的 swapchain），本来就不含这个窗；
+  2. 窗口默认带 `WDA_EXCLUDEFROMCAPTURE`，就算以后切成显示器采集也拍不到它。
+  实测（临时启用 OBS 的 `StS2 Monitor` 显示器采集做 A/B）：默认参数下采集里**完全没有这个窗、也没有黑块**，
+  加 `--capture` 才出现。所以要录它得显式加 `--capture`。
 - 透明是真的逐像素 alpha：圆角、投影、面板 0.95/0.88 的半透明都保留，桌面和游戏都能透出来。
 - 说话时头像会轻轻跳一下（对应页面里的 bounce），新弹幕滑入 + 渐显，长句自动换行并降字号。
-- **只画不发声**：动森式音效仍在 OBS 的浏览器源里（`AI Commentary`），这个窗是纯视觉预览。
-- **直播怎么接**：显示器采集时它就在画面里（推荐，最省事）；OBS 的**窗口采集**对分层窗口可能丢掉 alpha，
-  要透明干净就继续用原来的 `AI Commentary` 浏览器源，这个窗只当自己盯着看的预览。
-- 回归：`python tools/test_streamer.py`（渲染尺寸/透明/换行/裁字/帧耗时）。
+- 回归：`python tools/test_streamer.py`（渲染尺寸/透明/换行/裁字/配音/帧耗时）。
 
 ## 技术方案
 
