@@ -267,6 +267,22 @@ def _has_playable(st: dict) -> bool:
         return False
 
 
+def _pre_draw(st: dict) -> bool:
+    """刚 end 完的过渡快照：手牌还是空的、牌堆里却有牌（新回合的 5 张还没抽上来）。
+
+    run68 f17：Boss 准备回合，ctx 读到 hand=[]，我照着手牌空发了纯 end，
+    结果把整个第 8 回合（3 费 + 5 张牌，Boss 不还手）空过。
+    """
+    c = st.get("combat") or {}
+    if [x for x in (c.get("hand") or []) if isinstance(x, dict)]:
+        return False
+    try:
+        draw, dis, _exh = ctxmod._piles_cards(st)
+    except Exception:  # noqa: BLE001
+        return False
+    return bool(draw or dis)
+
+
 def _stale_end(st: dict, seq: list) -> str | None:
     """上一次停在 mid、回合却已经换了：再发 end 会把新回合整个空过（run60 白吃 16 血）。"""
     seq = seq or []
@@ -277,6 +293,9 @@ def _stale_end(st: dict, seq: list) -> str | None:
         return f"seq 里出现 {ends} 次 end；end_turn 只能发一次且必须是最后一步，拒绝执行整手"
     if not _end_only(seq):
         return None
+    if _pre_draw(st):
+        return ("手牌是空的、抽牌堆/弃牌堆却还有牌：这是上一手 end 之后的过渡快照（新回合还没抽牌），"
+                "现在发 end 会把整回合空过；先重读 ctx 确认 turn 变了再出牌")
     cur, memo = _turn_of(st), _read_memo()
     if not isinstance(memo, dict):
         memo = {}
