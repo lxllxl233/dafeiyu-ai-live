@@ -37,11 +37,13 @@ python streamer.py --demo          # 不接游戏，先放一条示例试位置
 python streamer.py --click-through # 开局就点击穿透（打游戏时鼠标直接穿过去）
 python streamer.py --mute          # 不出声（默认和页面同款动物语）
 python streamer.py --vol 0.8       # 音量 0~1.5
+python streamer.py --scale 0.7     # 初始大小（之后拖右下角/滚轮改，会记住）
 python streamer.py --capture       # 允许录屏拍到自己（默认对采集隐藏）
 python streamer.py --preview out.png  # 只渲一张图，验收用
 ```
 
-- **左键拖动**挪位置，松手自动记到 `logs/streamer_window.json`；换显示器/拔副屏也不会跑丢（会夹回可见区）。
+- **左键拖动**挪位置；**拖右下角**缩放（等比 0.5×–1.8×），**滚轮**也能缩放。位置和大小都记在
+  `logs/streamer_window.json`，下次原地原大小打开；换显示器/拔副屏也不会跑丢（会夹回可见区）。
 - **右键菜单**：置顶 / 点击穿透 / 声音 / 录屏里隐藏 / 重新显示示例 / 关闭。
 - **热键**：`Ctrl+Alt+D` 点击穿透（穿透后点不到窗口，用它切回来）· `Ctrl+Alt+S` 声音 · `Ctrl+Alt+H` 隐藏 · `Ctrl+Alt+Q` 退出。
 - **有声音**：和页面同一套动物语（每字一个五声音阶短音节，纯 Python 合成 → 后台线程 → `winsound` 异步播放），

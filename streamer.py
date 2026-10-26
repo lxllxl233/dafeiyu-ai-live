@@ -15,6 +15,8 @@
 
 窗口里能做的事：
     左键拖动  → 挪位置（松手自动记住，下次原地开）
+    右下角拖动 → 缩放（等比，0.5×–1.8×；缩放后大小也记住）
+    滚轮      → 缩放（同一个比例，懒得找角就用它）
     右键      → 菜单：置顶 / 点击穿透 / 声音 / 录屏里隐藏 / 重新载入示例 / 关闭
     Ctrl+Alt+D 点击穿透开关（穿透后鼠标点不到窗口，用它切回来）
     Ctrl+Alt+H 隐藏/显示
@@ -59,6 +61,7 @@ PLACEHOLDER = "（还没收到弹幕 —— agent 一开口，这里就换成它
 # ---------------------------------------------------------------- 设计参数
 # 数值直接抄 overlay/index.html 的 CSS，改这里等于改「同款」的还原度。
 PANEL_W = 1180
+BASE_W = PANEL_W + 2 * 26        # 1.0 倍时的窗口宽（含两侧留白）：缩放以它为准
 PAD = (12, 26, 16, 16)          # top right bottom left
 RADIUS = 24
 BORDER = 1.5
@@ -557,7 +560,9 @@ WS_EX_TOPMOST = 0x00000008
 WS_EX_TRANSPARENT = 0x00000020
 WS_EX_NOACTIVATE = 0x08000000
 WM_DESTROY = 0x0002
+WM_MOUSEMOVE = 0x0200
 WM_LBUTTONDOWN = 0x0201
+WM_LBUTTONUP = 0x0202
 WM_RBUTTONUP = 0x0205
 WM_NCLBUTTONDOWN = 0x00A1
 WM_HOTKEY = 0x0312
@@ -565,8 +570,14 @@ WM_EXITSIZEMOVE = 0x0232
 WDA_NONE = 0x00000000
 WDA_EXCLUDEFROMCAPTURE = 0x00000011   # Win10 2004+：录屏/采集里看不到这个窗
 WM_SETCURSOR = 0x0020
+WM_MOUSEWHEEL = 0x020A
 HTCAPTION = 2
+HTBOTTOMRIGHT = 17
 IDC_SIZEALL = 32646
+IDC_SIZENWSE = 32642
+MIN_SCALE = 0.50          # 再小字就看不清了
+MAX_SCALE = 1.80
+RESIZE_GRIP = 20          # 右下角多少像素算「缩放把手」
 MOD_ALT = 0x0001
 MOD_CONTROL = 0x0002
 MF_STRING = 0x0000
@@ -600,6 +611,7 @@ class BITMAPINFOHEADER(ctypes.Structure):
 
 class BITMAPINFO(ctypes.Structure):
     _fields_ = [("bmiHeader", BITMAPINFOHEADER), ("bmiColors", wintypes.DWORD * 3)]
+
 
 
 class WNDCLASSW(ctypes.Structure):
@@ -666,6 +678,8 @@ def _init_winapi():
     u.GetSystemMetrics.argtypes = [ctypes.c_int]
     u.GetSystemMetrics.restype = ctypes.c_int
     u.ReleaseCapture.argtypes = []
+    u.SetCapture.argtypes = [wintypes.HWND]
+    u.SetCapture.restype = wintypes.HWND
     u.SendMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
     u.SendMessageW.restype = ctypes.c_ssize_t
     u.PostMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
@@ -707,6 +721,10 @@ def _sizeall_cursor():
     return user32.LoadCursorW(None, ctypes.c_void_p(IDC_SIZEALL))
 
 
+def _sizenwse_cursor():
+    return user32.LoadCursorW(None, ctypes.c_void_p(IDC_SIZENWSE))
+
+
 def premultiplied_bgra(img: Image.Image) -> bytes:
     """UpdateLayeredWindow 要预乘 alpha 的 BGRA。"""
     a = img.getchannel("A")
@@ -721,10 +739,9 @@ _enable_dpi_awareness()
 
 
 class StreamerWindow:
-    def __init__(self, scale: float = 1.0, pos: tuple[int, int] | None = None,
+    def __init__(self, scale: float = 0.0, pos: tuple[int, int] | None = None,
                  click_through: bool = False, topmost: bool = True, toolwindow: bool = True,
                  volume: float = 0.55, muted: bool = False, exclude_capture: bool = True):
-        self.scale = scale
         self.toolwindow = toolwindow
         self.topmost = topmost
         self.click_through = click_through
@@ -741,8 +758,19 @@ class StreamerWindow:
         self._dib = None
         self._dib_size = (0, 0)
         self._hwnd = None
+        self._resizing = False
+        self._resize_start = (0, 0, 0, 0)   # 按下时的 (鼠标x, 窗口left, 窗口top, 窗口宽)
         self._wndproc = WNDPROC(self._proc)  # 保引用，否则回调被回收会崩
-        self.pos = self._clamp(*pos) if pos else self._load_pos()
+        # 尺寸优先级：命令行 --scale > 上次拖出来的 > 系统 DPI
+        saved = self._load_state()
+        self.scale = self._clamp_scale(scale or float(saved.get("scale") or dpi_scale()))
+        if pos:
+            self.pos = self._clamp(*pos)
+        elif saved.get("x") is not None:
+            self.pos = self._clamp(int(saved["x"]), int(saved["y"]))
+        else:
+            sw = user32.GetSystemMetrics(0)
+            self.pos = self._clamp((sw - int(BASE_W * self.scale)) // 2, int(60 * self.scale))
         self._cls = f"StS2Streamer{os.getpid()}"
         self._register()
         self._create()
@@ -797,9 +825,41 @@ class StreamerWindow:
     def _proc(self, hwnd, msg, wparam, lparam):
         try:
             if msg == WM_LBUTTONDOWN:
-                if not self.click_through:
+                if self.click_through:
+                    return 0
+                if self._hit_test() == HTBOTTOMRIGHT:
+                    # 右下角：自己拉，别用系统的 sizing 循环（WS_POPUP 不带边框，SC_SIZE 不生效）
+                    pt = wintypes.POINT()
+                    user32.GetCursorPos(ctypes.byref(pt))
+                    rect = wintypes.RECT()
+                    user32.GetWindowRect(hwnd, ctypes.byref(rect))
+                    self._resizing = True
+                    self._resize_start = (pt.x, rect.left, rect.top, rect.right - rect.left)
+                    user32.SetCapture(hwnd)
+                    return 0
+                user32.ReleaseCapture()
+                user32.SendMessageW(hwnd, WM_NCLBUTTONDOWN, HTCAPTION, 0)
+                return 0
+            if msg == WM_MOUSEMOVE:
+                if self._resizing:
+                    pt = wintypes.POINT()
+                    user32.GetCursorPos(ctypes.byref(pt))
+                    self._resize_to_cursor(pt.x)
+                    user32.SetCursor(_sizenwse_cursor())   # 拖出把手区也保持缩放光标
+                return 0
+            if msg == WM_LBUTTONUP:
+                if self._resizing:
+                    self._resizing = False
                     user32.ReleaseCapture()
-                    user32.SendMessageW(hwnd, WM_NCLBUTTONDOWN, HTCAPTION, 0)
+                    self.apply_scale(self.scale)   # 吸附到这一档比例的精确尺寸
+                    self._save_pos()
+                    print(f"尺寸：{self.scale:.2f}×")
+                return 0
+            if msg == WM_MOUSEWHEEL:
+                if not self.click_through:
+                    delta = ctypes.c_short((wparam >> 16) & 0xFFFF).value
+                    self.zoom(1.08 if delta > 0 else 1 / 1.08)
+                    self._save_pos()
                 return 0
             if msg == WM_EXITSIZEMOVE:
                 self._save_pos()   # 拖完就记位置，别等退出
@@ -820,7 +880,10 @@ class StreamerWindow:
             if msg == WM_SETCURSOR:
                 if self.click_through:
                     return user32.DefWindowProcW(hwnd, msg, wparam, lparam)
-                user32.SetCursor(_sizeall_cursor())
+                if self._hit_test() == HTBOTTOMRIGHT:
+                    user32.SetCursor(_sizenwse_cursor())
+                else:
+                    user32.SetCursor(_sizeall_cursor())
                 return 1
             if msg == WM_DESTROY:
                 self.running = False
@@ -885,7 +948,7 @@ class StreamerWindow:
         user32.PostMessageW(self._hwnd, WM_DESTROY, 0, 0)
 
     # ---- 画面
-    def _paint(self, img: Image.Image):
+    def _paint(self, img: Image.Image, at: tuple[int, int] | None = None, resize: bool = True):
         w, h = img.size
         hdc_screen = user32.GetDC(None)
         if self._memdc is None:
@@ -910,11 +973,13 @@ class StreamerWindow:
         ctypes.memmove(self._dib, buf, len(buf))
         rect = wintypes.RECT()
         user32.GetWindowRect(self._hwnd, ctypes.byref(rect))
-        if (rect.right - rect.left, rect.bottom - rect.top) != (w, h):
-            # 文案变长把面板撑高了：窗口跟着改尺寸，别把字裁掉
+        if resize and (rect.right - rect.left, rect.bottom - rect.top) != (w, h):
+            # 文案变长 / 缩放过：窗口跟着改尺寸，别把字裁掉
             user32.SetWindowPos(self._hwnd, None, rect.left, rect.top, w, h,
                                 SWP_NOZORDER | SWP_SHOWWINDOW)
-        pt_dst = wintypes.POINT(rect.left, rect.top)
+            user32.GetWindowRect(self._hwnd, ctypes.byref(rect))
+        pos = at or (rect.left, rect.top)
+        pt_dst = wintypes.POINT(pos[0], pos[1])
         size = wintypes.SIZE(w, h)
         pt_src = wintypes.POINT(0, 0)
         blend = BLENDFUNCTION(AC_SRC_OVER, 0, 255, AC_SRC_ALPHA)
@@ -960,15 +1025,58 @@ class StreamerWindow:
             img = moved
         return img
 
-    # ---- 位置记忆
-    def _load_pos(self) -> tuple[int, int]:
+    # ---- 尺寸（右下角拖动 / 滚轮）
+    def _render_at(self, scale: float) -> Image.Image:
+        return render(self.text or PLACEHOLDER, self.status, scale)
+
+    @staticmethod
+    def _clamp_scale(scale: float) -> float:
+        screen_w = user32.GetSystemMetrics(0)
+        hi = min(MAX_SCALE, screen_w * 0.95 / BASE_W)
+        return max(MIN_SCALE, min(hi, float(scale)))
+
+    def zoom(self, factor: float):
+        self.apply_scale(self.scale * factor)
+
+    def _resize_to_cursor(self, cursor_x: int):
+        """拖动把手时的换算：宽度跟手走，高度跟宽度走（等比）。"""
+        x0, left, top, w0 = self._resize_start
+        self.apply_scale((w0 + (cursor_x - x0)) / BASE_W, anchor=(left, top))
+
+    def apply_scale(self, scale: float, anchor: tuple[int, int] | None = None):
+        """改整体大小：等比缩，宽度决定，高度按新字号重算。"""
+        self.scale = self._clamp_scale(scale)
+        img = self._render_at(self.scale)
+        if anchor is None:
+            rect = wintypes.RECT()
+            user32.GetWindowRect(self._hwnd, ctypes.byref(rect))
+            anchor = (rect.left, rect.top)
+        self._paint(img, at=anchor)
+
+    @staticmethod
+    def _hit_test_point(px: int, py: int, rect, scale: float) -> int:
+        """右下角一圈算缩放把手，其余地方整块可拖。"""
+        grip = max(10, int(RESIZE_GRIP * scale))
+        if px >= rect.right - grip and py >= rect.bottom - grip:
+            return HTBOTTOMRIGHT
+        return HTCAPTION
+
+    def _hit_test(self) -> int:
+        pt = wintypes.POINT()
+        user32.GetCursorPos(ctypes.byref(pt))
+        rect = wintypes.RECT()
+        user32.GetWindowRect(self._hwnd, ctypes.byref(rect))
+        return self._hit_test_point(pt.x, pt.y, rect, self.scale)
+
+    # ---- 位置/尺寸记忆
+    @staticmethod
+    def _load_state() -> dict:
         try:
             with open(STATE_FILE, encoding="utf-8") as f:
                 d = json.load(f)
-            return self._clamp(int(d["x"]), int(d["y"]))
+            return d if isinstance(d, dict) else {}
         except Exception:
-            sw = user32.GetSystemMetrics(0)
-            return max(0, (sw - int(PANEL_W * dpi_scale())) // 2), int(60 * dpi_scale())
+            return {}
 
     @staticmethod
     def _clamp(x: int, y: int) -> tuple[int, int]:
@@ -985,13 +1093,13 @@ class StreamerWindow:
             user32.GetWindowRect(self._hwnd, ctypes.byref(rect))
             os.makedirs(os.path.dirname(STATE_FILE), exist_ok=True)
             with open(STATE_FILE, "w", encoding="utf-8") as f:
-                json.dump({"x": rect.left, "y": rect.top}, f)
+                json.dump({"x": rect.left, "y": rect.top, "scale": round(self.scale, 3)}, f)
         except Exception:
             pass
 
     def run(self):
-        print("主播模式已启动：左键拖动 · 右键菜单 · Ctrl+Alt+D 穿透 · Ctrl+Alt+S 声音 · "
-              "Ctrl+Alt+H 隐藏 · Ctrl+Alt+Q 退出")
+        print("主播模式已启动：左键拖 · 右下角拖=缩放 · 滚轮=缩放 · 右键菜单 · "
+              "Ctrl+Alt+D 穿透 · Ctrl+Alt+S 声音 · Ctrl+Alt+H 隐藏 · Ctrl+Alt+Q 退出")
         print("（默认不出现在录屏里：WDA_EXCLUDEFROMCAPTURE，要拍就加 --capture）")
         last = 0.0
         while self.running:
@@ -1070,7 +1178,8 @@ def ensure_server(port: int) -> bool:
 def main() -> int:
     ap = argparse.ArgumentParser(description="主播模式：可拖动的透明弹幕窗")
     ap.add_argument("--port", type=int, default=PORT)
-    ap.add_argument("--scale", type=float, default=0.0, help="缩放（默认跟系统 DPI，1.0=1180px 宽）")
+    ap.add_argument("--scale", type=float, default=0.0,
+                    help="缩放 0.42~1.8（默认用上次拖出来的大小，没有就跟系统 DPI；1.0=1180px 宽）")
     ap.add_argument("--pos", help="初始位置 x,y")
     ap.add_argument("--click-through", action="store_true", help="启动即点击穿透")
     ap.add_argument("--demo", action="store_true", help="先放一条示例弹幕（不接游戏也能试位置）")
@@ -1081,12 +1190,11 @@ def main() -> int:
     ap.add_argument("--preview", help="只渲染一张 PNG 就退出（验收/截图用）")
     a = ap.parse_args()
 
+    # 预览图的缩放：命令行优先，否则跟 DPI，屏宽装不下就自动缩
     scale = a.scale or dpi_scale()
-    # 屏宽装不下就自动缩：主播常在 1920/2560 上开 150% 缩放
     screen_w = user32.GetSystemMetrics(0)
-    cap = 0.78
-    if PANEL_W * scale > screen_w * cap:
-        scale = screen_w * cap / PANEL_W
+    if PANEL_W * scale > screen_w * 0.78:
+        scale = screen_w * 0.78 / PANEL_W
         print(f"窗口比屏幕宽，缩到 {scale:.2f}×")
 
     if a.preview:
@@ -1107,7 +1215,7 @@ def main() -> int:
             print("--pos 需要 x,y")
             return 2
 
-    win = StreamerWindow(scale=scale, pos=pos, click_through=a.click_through,
+    win = StreamerWindow(scale=a.scale, pos=pos, click_through=a.click_through,
                          toolwindow=not a.taskbar, volume=a.vol, muted=a.mute,
                          exclude_capture=not a.capture)
     stop = threading.Event()

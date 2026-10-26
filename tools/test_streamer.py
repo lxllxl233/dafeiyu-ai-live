@@ -84,7 +84,26 @@ def main():
     check(ms < 400, f"合成 {ms:.0f}ms 太慢（会拖住重绘）")
     print(f"配音 {ms:.0f}ms / 120 字")
 
-    # 8) 声音开关：关掉时 speak 不发线程也不报错
+    # 8) 缩放范围与等比性（拖动/滚轮都走这几个函数）
+    check(S.StreamerWindow._clamp_scale(0.01) == S.MIN_SCALE, "缩得太小要夹到 MIN_SCALE")
+    check(S.StreamerWindow._clamp_scale(99) <= S.MAX_SCALE + 1e-6, "放得太大要夹到 MAX_SCALE")
+    half = S.render("x", STATUS, 0.5)
+    check(half.width == round(S.BASE_W * 0.5), f"0.5 倍宽应 ~{round(S.BASE_W*0.5)}，实际 {half.width}")
+    check(half.height < S.render("x", STATUS, 1.0).height, "缩小后应更矮")
+
+    # 9) 命中测试：右下角 20px = 缩放把手，其它地方 = 拖动
+    import ctypes
+    from ctypes import wintypes
+    box = wintypes.RECT()
+    box.left, box.top, box.right, box.bottom = 100, 100, 100 + S.BASE_W, 100 + 276
+    hit = S.StreamerWindow._hit_test_point
+    check(hit(box.right - 5, box.bottom - 5, box, 1.0) == S.HTBOTTOMRIGHT, "右下角应识别为缩放")
+    check(hit(box.right - 40, box.bottom - 5, box, 1.0) == S.HTCAPTION, "把手左边应是拖动")
+    check(hit(box.left + 50, box.top + 50, box, 1.0) == S.HTCAPTION, "中间应是拖动")
+    # 小窗时把手不跟着缩没（最小 10px）
+    check(hit(box.right - 8, box.bottom - 8, box, S.MIN_SCALE) == S.HTBOTTOMRIGHT, "小尺寸也要能抓到角")
+
+    # 10) 声音开关：关掉时 speak 不发线程也不报错
     sp = S.Speaker(0.5, enabled=False)
     sp.speak("这就不该响")
     check(sp.enabled is False, "初始应为静音")
