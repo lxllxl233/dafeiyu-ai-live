@@ -66,13 +66,32 @@ def is_engine(c: dict) -> bool:
     return any(k in txt for k in ENGINE_TXT)
 
 
+def card_dmg(c: dict) -> int:
+    for dv in c.get("dynamic_values") or []:
+        if str(dv.get("name")) == "Damage":
+            try:
+                return int(dv.get("current_value") or dv.get("base_value") or 0)
+            except Exception:  # noqa: BLE001
+                return 0
+    return 0
+
+
+def is_real_attack(c: dict) -> bool:
+    """非基础的高伤攻击：run74 就是「只拿甲不拿刀」被 act1 的怪磨死的。"""
+    if str(c.get("card_type")) != "Attack":
+        return False
+    if "打击" in str(c.get("name") or "") and card_dmg(c) <= 7:
+        return False
+    return card_dmg(c) >= 8 or "Strike" in str(c.get("card_id") or "")
+
+
 def analyse(deck: list) -> dict:
     playable = [c for c in deck if str(c.get("card_type")) != "Curse"]
     curses = [c for c in deck if str(c.get("card_type")) == "Curse"]
     blocks = [c for c in playable if is_block(c)]
     draws = [c for c in playable if is_draw(c)]
     engines = [c for c in playable if is_engine(c)]
-    n = len(deck) or 1
+    atks = [c for c in playable if is_real_attack(c)]
     return {
         "deck": len(deck),
         "playable": len(playable),
@@ -81,6 +100,8 @@ def analyse(deck: list) -> dict:
         "block_ratio": round(len(blocks) / len(playable), 3) if playable else 0.0,
         "draw": len(draws),
         "engines": [ENGINE_IDS.get(str(c.get("card_id")), c.get("name")) for c in engines],
+        "real_atk": len(atks),
+        "real_atk_cards": [f"{c.get('name')}({card_dmg(c)})" for c in atks],
         "block_cards": [c.get("name") for c in blocks],
         "draw_cards": [c.get("name") for c in draws],
     }
@@ -89,13 +110,15 @@ def analyse(deck: list) -> dict:
 def gate(act: int, info: dict) -> list:
     """返回 [(名字, 实际, 门槛, 是否过)]。"""
     if act <= 1:
-        rows = [("牌组张数", info["deck"], "<=17"), ("甲牌占比", info["block_ratio"], ">=0.45")]
+        rows = [("牌组张数", info["deck"], "<=17"), ("甲牌占比", info["block_ratio"], ">=0.45"),
+                ("非基础攻击", info["real_atk"], ">=2")]
     elif act == 2:
         rows = [("牌组张数", info["deck"], "<=16"), ("甲牌占比", info["block_ratio"], ">=0.45"),
-                ("抽牌张数", info["draw"], ">=3")]
+                ("抽牌张数", info["draw"], ">=3"), ("非基础攻击", info["real_atk"], ">=2")]
     else:
         rows = [("牌组张数", info["deck"], "<=16"), ("甲牌占比", info["block_ratio"], ">=0.45"),
-                ("抽牌张数", info["draw"], ">=3"), ("防御引擎", len(info["engines"]), ">=1")]
+                ("抽牌张数", info["draw"], ">=3"), ("非基础攻击", info["real_atk"], ">=2"),
+                ("防御引擎", len(info["engines"]), ">=1")]
     out = []
     for name, got, want in rows:
         if want.startswith("<="):

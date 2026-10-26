@@ -35,6 +35,10 @@ deck_ok = (
     + [c("SHRUG_IT_OFF", "耸肩无视", "获得8点格挡。 抽1张牌。")] * 2
     + [c("BLOOD_WALL", "血墙", "失去2点生命。 获得16点格挡。")]
     + [c("BATTLE_TRANCE", "战斗恍惚", "抽3张牌。")]
+    + [c("PERFECTED_STRIKE", "完美打击", "造成16点伤害。", "Attack",
+         [{"name": "Damage", "base_value": 16, "current_value": 16}])]
+    + [c("UPPERCUT", "上勾拳", "造成13点伤害。", "Attack",
+         [{"name": "Damage", "base_value": 13, "current_value": 13}])]
     + [c("BARRICADE", "壁垒", "格挡不再在你的回合开始时消失。", "Power")]
     + [c("POOR_SLEEP", "睡眠不佳", "", "Curse")]
 )

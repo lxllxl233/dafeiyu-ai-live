@@ -36,6 +36,9 @@ python tools/act.py --file tmp_plan.json  # 执行 seq，回下一回合 ctx（�
 - **SL 不改变抽牌顺序**（run72 实测：`save_and_quit` → continue 后开局手牌完全一样）。SL 只在**操作失误**时有用，别指望刷牌序；每幕预算 ≤2 次。
 - **商店每店只能删 1 张牌**（run72 实测），别把「连删 3 张」写进计划。
 - **药水栏满时 `claim_reward` 会静默成功但不给药水**：拿奖励前先看 `potions` 槽位，满了先 `discard_potion`。
+- **「从牌组移除 N 张」的多选界面点不动（已知 blocker，`docs/TODO_mod_deck_remove.md`）**：涅奥的「精准剪刀/松动羊毛剪」这类选项会打开 `CARD_SELECTION`，但 `max_select=0`、`select_deck_card` 只返回 `pending`、`confirm_selection` 不可用 → 卡死。**别选这类选项**；已卡住就 `save_and_quit` → `continue_run` 回滚。
+- **诅咒分两种**：`进阶之灾`（虚无）每回合手牌 −1；`贪婪`（永恒）**删不掉**，商店删牌列表里不出现。别把「删诅咒」写进商店计划。
+- **只堆甲会死于消耗战**（run74：13 张牌 5 张攻击 → 一回合 18 伤，被 53 血杂怪磨死）。甲牌 ≥45% 必须配「非基础高伤攻击 ≥2 张」，`python tools/gates.py` 会同时检查这两条。
 
 ## 0.5 输入：`ctx` v3 字段（每次请求都同步）
 
