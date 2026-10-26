@@ -141,6 +141,22 @@ d = ctxmod.build_with_mem(combat([card("DEFEND_IRONCLAD", 1, blk=5)] * 3), {})
 check("ctx 有 hand_n", d.get("hand_n"), 3)
 check("合并后条目只有 1 条", len(d.get("hand") or []), 1)
 
+# 9) 死亡遗言：能斩但斩杀线 0 甲，而敌人身上有「蒸汽喷发」——给告警而不是拦
+st = combat([card("STRIKE_IRONCLAD", 1, dmg=6)], energy=1, incoming=0, ehp=2)
+st["combat"]["enemies"][0]["powers"] = [{"name": "蒸汽喷发20", "amount": 20}]
+out, err = guard_err(st, [{"c": "STRIKE_IRONCLAD", "t": 0}, {"end": 1}])
+check("遗言 + 0 甲斩杀放行", out.get("ok"), True)
+check("遗言告警出现", any("遗言" in w for w in (out.get("warn") or [])), True)
+
+# 10) 同一条线换成「带甲的斩杀」就放行
+st = combat([card("STRIKE_IRONCLAD", 1, dmg=6),
+             card("DEFEND_IRONCLAD", 1, blk=5), card("DEFEND_IRONCLAD", 1, blk=5)],
+            energy=3, incoming=0, ehp=2)
+st["combat"]["enemies"][0]["powers"] = [{"name": "蒸汽喷发20", "amount": 20}]
+out, err = guard_err(st, [{"c": "DEFEND_IRONCLAD"}, {"c": "DEFEND_IRONCLAD"},
+                          {"c": "STRIKE_IRONCLAD", "t": 0}, {"end": 1}])
+check("带甲斩杀放行", out.get("ok"), True)
+
 print()
 print("ALL OK" if ok else "SOME CHECKS FAILED")
 sys.exit(0 if ok else 1)

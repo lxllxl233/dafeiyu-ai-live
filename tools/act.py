@@ -202,7 +202,8 @@ def fx_error(got: dict, want: dict) -> str | None:
     for k, label in keys:
         if k in got and k in want:
             if sts2._int(got[k], 0) != sts2._int(want[k], 0):
-                return f"fx.{k} 不对：你写 {got[k]}，实际 {want[k]}（{label}）"
+                return (f"fx.{k} 不对：你写 {got[k]}，实际 {want[k]}（{label}）"
+                        f" → 改成 \"{k}\": {want[k]} 重发，或把 fx.{k} 删掉让模型自己算")
     return None
 
 
@@ -355,6 +356,27 @@ def _guard_leftover(sm, allow: dict) -> tuple[str | None, dict]:
             f"先把费花掉再 end；确实要留费就写 {{\"allow_leftover\":1}}"), {"left_n": len(left)}
 
 
+def _death_damage_risk(st: dict) -> list:
+    """敌人身上「死亡时会结算伤害」的遗言（蒸汽喷发/爆炸/亡语…）。
+
+    斩杀不等于安全：瀑布巨兽死时会按蒸汽层数炸一发（run72 实测 44 点），
+    没甲没缓冲的斩杀回合可能直接被炸死。
+    """
+    tags = ("蒸汽喷发", "爆炸", "亡语", "自爆", "爆裂", "死亡时", "死后")
+    out = []
+    for e in ((st.get("combat") or {}).get("enemies") or []):
+        if e.get("dead"):
+            continue
+        hit = []
+        for p in e.get("powers") or []:
+            name = p.get("name") if isinstance(p, dict) else str(p)
+            if name and any(k in name for k in tags):
+                hit.append(name)
+        if hit:
+            out.append(f"{e.get('id')}({'/'.join(hit)})")
+    return out
+
+
 def _guard_missed_lethal(st: dict, sm, allow: dict) -> str | None:
     """这回合能全斩却不斩：白送一回合挨打（run69 多次「能斩不斩」）。
 
@@ -366,6 +388,7 @@ def _guard_missed_lethal(st: dict, sm, allow: dict) -> str | None:
     alive = sm.alive()
     if not alive:
         return None
+    risk = _death_damage_risk(st)
     try:
         plans = sim.search(st, max_cards=8, max_plans=3, time_limit=0.8, max_nodes=80_000)
     except Exception:  # noqa: BLE001
@@ -383,6 +406,10 @@ def _guard_missed_lethal(st: dict, sm, allow: dict) -> str | None:
         if not okv or sm2.alive():
             continue
         line = " → ".join(str(x[0]) for x in p.get("seq") or [])
+        if risk and sts2._int(getattr(sm2, "block", 0), 0) <= 0:
+            return (f"护栏·漏斩：这回合有全斩线（{p.get('dmg')} 伤害）：{line}；"
+                    f"但 {', '.join(risk)} 死后还要结算一发——这条线 0 甲，可能被遗言炸死。"
+                    f"换一条带甲的斩杀线，或确认要裸斩就写 {{\"allow_no_lethal\":1}} 并在 say 里说明")
         return (f"护栏·漏斩：这回合有全斩线（{p.get('dmg')} 伤害）：{line}。"
                 f"多拖一回合就多挨一刀；确认要拖就写 {{\"allow_no_lethal\":1}}")
     return None
@@ -445,7 +472,12 @@ def _guards(st: dict, sm, ended: bool, allow: dict) -> tuple[str | None, dict]:
     if not ended:
         return None, {}
     if not sm.alive():
-        return None, {}  # 已经清场：剩下的费/甲都没意义
+        # 已经清场：剩下的费/甲都没意义，但「死亡遗言」（蒸汽喷发之类）仍会结算
+        risk = _death_damage_risk(st)
+        if risk and sts2._int(getattr(sm, "block", 0), 0) <= 0:
+            return None, {"warn": [f"遗言警告：{', '.join(risk)} 死亡后还要结算一发，"
+                                   f"这条斩杀线 0 甲——下一回合记得留甲/缓冲药水"]}
+        return None, {}
     extra: dict = {}
     err = _guard_missed_lethal(st, sm, allow)
     if err:
