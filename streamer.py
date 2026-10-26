@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import argparse
 import ctypes
+import hashlib
 import io
 import json
 import math
@@ -55,6 +56,7 @@ except ImportError:  # pragma: no cover
 ROOT = os.path.dirname(os.path.abspath(__file__))
 ASSETS = os.path.join(ROOT, "overlay", "assets")
 STATE_FILE = os.path.join(ROOT, "logs", "streamer_window.json")
+TTS_CACHE = os.path.join(ROOT, "logs", "tts_cache")
 PORT = int(os.environ.get("STS2_OVERLAY_PORT", "8730"))
 PLACEHOLDER = "（还没收到弹幕 —— agent 一开口，这里就换成它说的话）"
 
@@ -365,6 +367,51 @@ def mambo_wav(text: str, volume: float = 0.55, timeout: float = 30.0) -> bytes |
     return _wav_gain(data, volume)
 
 
+def mambo_cached_wav(text: str, volume: float = 0.55, timeout: float = 30.0) -> bytes | None:
+    """先读 overlay 预热好的磁盘缓存，窗口不再为同一句重新合成。
+
+    `sts2.overlay_say()` 在 POST comment 之前已经把 WAV 写进
+    `logs/tts_cache/<sha1(text)[:20]>.wav`；窗口和页面共用这份缓存。
+    `--demo` / 直接调试没有预热时，才退回实时调引擎。
+    """
+    text = (text or "").strip()
+    if not text:
+        return None
+    key = hashlib.sha1(text.encode("utf-8")).hexdigest()[:20]
+    path = os.path.join(TTS_CACHE, key + ".wav")
+    raw = None
+    try:
+        with open(path, "rb") as f:
+            raw = f.read()
+    except OSError:
+        pass
+    if raw and (len(raw) < 44 or raw[:4] != b"RIFF" or raw[8:12] != b"WAVE"):
+        raw = None
+    if not raw:
+        raw = mambo_wav(text, 1.0, timeout)
+        if not raw:
+            return None
+        try:
+            os.makedirs(TTS_CACHE, exist_ok=True)
+            with open(path, "wb") as f:
+                f.write(raw)
+        except OSError:
+            pass
+    if len(raw) < 44 or raw[:4] != b"RIFF" or raw[8:12] != b"WAVE":
+        return None
+    return _wav_gain(raw, volume)
+
+
+def _wav_seconds(data: bytes) -> float:
+    """WAV 的真实时长；窗口动画按它抖，不再按字数猜。"""
+    try:
+        with wave.open(io.BytesIO(data), "rb") as w:
+            rate = w.getframerate()
+            return w.getnframes() / float(rate) if rate > 0 else 0.0
+    except Exception:
+        return 0.0
+
+
 def mambo_online(timeout: float = 1.5) -> bool:
     """引擎是否在线（GET /control 返回 JSON 即视为在线）。"""
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
@@ -384,10 +431,14 @@ class Speaker:
     用 SND_FILENAME|SND_ASYNC 播；两个文件轮着用，避免覆盖正在播的那个。
     """
 
-    def __init__(self, volume: float = 0.55, enabled: bool = True, voice: str = "mambo"):
+    def __init__(self, volume: float = 0.55, enabled: bool = True, voice: str = "mambo",
+                 on_start=None):
         self.volume = volume
         self.enabled = enabled
         self.voice = (voice or "mambo").lower()
+        # on_start(duration, text)：真正调用 PlaySound 之后才回调，窗口拿它开始抖。
+        # 合成/预热期间绝不提前动画。
+        self.on_start = on_start
         self._offline_warned = False
         self._lock = threading.Lock()
         self._slot = 0
@@ -434,10 +485,10 @@ class Speaker:
         threading.Thread(target=self._play_delegated, args=(text,), daemon=True).start()
 
     def _play_delegated(self, text: str):
-        # 给页面 0.9 秒先起音：它真响了就不重复播；它哑着（页面暂停/游标卡住）才由窗口补位。
+        # 只在「live 页面真的在出声」时让位。以前这里先睡 0.9s，窗口没页面时
+        # 白等 0.9s，再叠加合成，观感就是头像先抖、声音晚两秒。
         if self.delegate:
-            time.sleep(0.9)
-            self._live_ts = 0.0
+            # speak() 刚查过；这里不再睡 0.9s 重查，避免白等。
             if self._live_page_present():
                 return
         self._play(text)
@@ -446,7 +497,7 @@ class Speaker:
         try:
             wav = None
             if self.voice == "mambo":
-                wav = mambo_wav(text, self.volume)
+                wav = mambo_cached_wav(text, self.volume)
                 if wav is None and not self._offline_warned:
                     self._offline_warned = True
                     print("曼波配音：本地引擎没响应（127.0.0.1:9880），先静音；启动 MamboTTS 后自动恢复")
@@ -462,6 +513,12 @@ class Speaker:
             self._winsound.PlaySound(
                 path, self._winsound.SND_FILENAME | self._winsound.SND_ASYNC | self._winsound.SND_NODEFAULT
             )
+            # PlaySound 返回时异步播放已经开始；这一刻才让头像抖，和声音同一时钟。
+            if self.on_start:
+                try:
+                    self.on_start(_wav_seconds(wav), text)
+                except Exception as e:
+                    print("窗口动画回调失败：", e)
             try:  # 自报一声，日志里能看清「这一句到底谁在响」
                 url = os.environ.get("STS2_OVERLAY_URL", "http://127.0.0.1:8730") + "/mark?ev=audio&role=window"
                 urllib.request.urlopen(url, timeout=0.5).read()
@@ -884,9 +941,11 @@ class StreamerWindow:
         self.topmost = topmost
         self.click_through = click_through
         self.exclude_capture = exclude_capture
-        self.speaker = Speaker(volume, enabled=not muted, voice=voice)
+        self.speaker = Speaker(volume, enabled=not muted, voice=voice,
+                               on_start=self.start_talking)
         self.text = ""
         self.status = {}
+        self.talk_start_at = 0.0
         self.talk_until = 0.0
         self.enter_at = 0.0
         self.dirty = True
@@ -1148,6 +1207,22 @@ class StreamerWindow:
                                    self._memdc, ctypes.byref(pt_src), 0, ctypes.byref(blend), ULW_ALPHA)
         user32.ReleaseDC(None, hdc_screen)
 
+    def start_talking(self, duration: float, text: str = ""):
+        """在 PlaySound 真正开始后由 Speaker 回调，动画和声音同一时刻起。
+
+        文案可以立刻出现（和页面一样先看到字），但头像不抖；旧实现 push()
+        一开始就设 talk_until，合成/等待页面期间头像白抖 2 秒。
+        """
+        if text and text != self.text:
+            return  # 上一句的迟到回调，不能拿来抖新弹幕
+        now = time.perf_counter()
+        dur = float(duration or 0.0)
+        if dur <= 0:
+            dur = min(8.5, max(2.4, 1.5 + len(self.text or "") * 0.07))
+        self.talk_start_at = now
+        self.talk_until = now + min(30.0, max(0.12, dur))
+        self.dirty = True
+
     def push(self, thought: str, meme: str, status: dict | None = None):
         text = compose(clip(thought, MAX_THOUGHT), clip(meme, MAX_MEME))
         if not text:
@@ -1158,7 +1233,9 @@ class StreamerWindow:
         elif self.status:
             self.status = dict(self.status)
         self.enter_at = time.perf_counter()
-        self.talk_until = self.enter_at + min(8.5, max(2.4, 1.5 + len(text) * 0.07))
+        # 文案入场立刻开始；喊话/头像动画等 Speaker 的 on_start 回调。
+        self.talk_start_at = 0.0
+        self.talk_until = 0.0
         self.dirty = True
         self.speaker.speak(text)   # 和页面一样：说的就是气泡里这一句
 
@@ -1170,8 +1247,9 @@ class StreamerWindow:
     def frame(self) -> Image.Image:
         now = time.perf_counter()
         talk = 0.0
-        if now < self.talk_until:
-            talk = 1.0 - (self.talk_until - now) / max(0.001, self.talk_until - self.enter_at)
+        if self.talk_start_at and now < self.talk_until:
+            span = max(0.001, self.talk_until - self.talk_start_at)
+            talk = min(1.0, max(0.0, (now - self.talk_start_at) / span))
         img = render(self.text or PLACEHOLDER, self.status, self.scale, talk)
         # 入场：滑 6px + 渐显（对应 CSS slidein .32s）
         dt = now - self.enter_at

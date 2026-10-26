@@ -129,10 +129,16 @@ check("错误定位到第 2 步", "第2步" in err, True)
 
 print()
 print("=== 8) 状态牌回合末掉血 ===")
-s = state([card("SLIMED", -1, playable=False), card("STRIKE_IRONCLAD", 1, dmg=6)],
+s = state([card("INFECTION", -1, playable=False), card("STRIKE_IRONCLAD", 1, dmg=6)],
           [enemy("A", 30, 10)])
 plan = sim.search(s)[0]
-check("黏液 3 伤计入", plan["taken"], 10 + 3)
+check("感染 3 伤计入", plan["taken"], 10 + 3)
+
+# 当前卡库 Slimed 是 1 费抽 1，不再有回合末 3 伤；Wound 也无效果。
+s = state([card("SLIMED", 1, draw=1, text="抽1张牌。消耗。"),
+           card("STRIKE_IRONCLAD", 1, dmg=6)], [enemy("A", 30, 10)])
+plan = sim.search(s)[0]
+check("黏液不再计 3 伤", plan["taken"], 10)
 
 print()
 print("ALL OK" if ok else "SOME CHECKS FAILED")

@@ -16,6 +16,7 @@ import sqlite3
 import sys
 import time
 import threading
+import uuid
 from collections import Counter
 from datetime import datetime
 
@@ -25,13 +26,36 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
+TOOLS = os.path.join(ROOT, "tools")
+if TOOLS not in sys.path:
+    sys.path.insert(0, TOOLS)
+
+import path as brps
+
 API = os.environ.get("STS2_API", "http://127.0.0.1:8080")
 OVERLAY = os.environ.get("STS2_OVERLAY", "http://127.0.0.1:8730")
 LOGS = os.path.join(ROOT, "logs")
 SESSION_PTR = os.path.join(LOGS, "current_session.json")
 PLAN_PATH = os.path.join(LOGS, "route_plan.json")
+ROUTE_ACTUAL = os.path.join(LOGS, "route_actual.jsonl")
 DATA_DIR = os.path.join(ROOT, "tools", "data", "eng")
 os.makedirs(LOGS, exist_ok=True)
+
+# ---- A/V 观测：客户端侧只记录，不参与任何播放决策。
+# 用 client_id 把 prewarm/publish 与页面的 bubble/audio mark 串起来。
+AV_CLIENT_LOG = os.path.join(LOGS, "av_client.jsonl")
+_av_lock = threading.Lock()
+
+
+def _av_log(ev: str, **fields) -> None:
+    row = {"t": time.time(), "ev": ev}
+    row.update(fields)
+    try:
+        with _av_lock:
+            with open(AV_CLIENT_LOG, "a", encoding="utf-8") as f:
+                f.write(json.dumps(row, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
 
 
 def _load_db(name: str) -> dict:
@@ -90,6 +114,7 @@ CARD_DB = _merge_db(
 RELIC_DB = _merge_db(_load_db("relics.json"), _load_sqlite("relics"))
 POTION_DB = _merge_db(_load_db("potions.json"), _load_sqlite("potions"))
 MONSTER_DB = _load_db("monsters.json")
+ENCOUNTER_DB = _load_db("encounters.json")
 
 
 # ---------------------------------------------------------------- plumbing
@@ -106,25 +131,94 @@ def get_actions() -> dict:
     return r.json().get("data", {})
 
 
-def _record_route_step():
-    """Append the node we just entered to logs/route_plan.json (actual path)."""
+def _append_route_actual(step: dict) -> None:
     try:
-        st = get_state()
+        with open(ROUTE_ACTUAL, "a", encoding="utf-8") as f:
+            f.write(json.dumps({"v": 1, **step, "ts": datetime.now().isoformat(timespec="seconds")},
+                               ensure_ascii=False) + "\n")
+    except OSError:
+        pass
+
+
+def _record_route_step(before=None, params=None, after=None):
+    """Append the node we just entered to the actual-path ledger.
+
+    The state after ``choose_map_node`` may no longer carry ``is_current``.
+    Therefore the selected node comes from the pre-action AVAILABLE list +
+    ``option_index`` first; the post-action map is only a fallback.
+    """
+    try:
+        st = after if isinstance(after, dict) and after.get("run") else get_state()
     except Exception:
         return
-    run = st.get("run") or {}
-    floor = run.get("floor")
-    nodes = (st.get("map") or {}).get("nodes") or []
-    cur = next((n for n in nodes if n.get("is_current")), None)
-    if cur is None or floor is None:
+    run = st.get("run") or (before or {}).get("run") or {}
+    before_run = (before or {}).get("run") or {}
+    floor = run.get("floor", before_run.get("floor"))
+    selected = None
+    if isinstance(params, dict):
+        idx = _int(params.get("option_index"), -1)
+        avail = [n for n in (((before or {}).get("map") or {}).get("nodes") or [])
+                 if n.get("is_available")]
+        if 0 <= idx < len(avail):
+            selected = avail[idx]
+    if selected is None:
+        nodes = (st.get("map") or {}).get("nodes") or []
+        selected = next((n for n in nodes if n.get("is_current")), None)
+    if selected is None or floor is None:
         return
+    hp = _int(run.get("current_hp", run.get("hp")), 0)
+    mhp = _int(run.get("max_hp"), 0)
+    step = {
+        "floor": floor,
+        "run_id": (st.get("run_id") or run.get("run_id")
+                   or (before or {}).get("run_id")
+                   or ((before or {}).get("run") or {}).get("run_id")),
+        "act_id": run.get("act_id", run.get("act",
+                                                before_run.get("act_id", before_run.get("act")))),
+        "row": selected.get("row"),
+        "col": selected.get("col"),
+        "type": selected.get("node_type"),
+        "hp": hp,
+        "max_hp": mhp,
+        "gold": _int(run.get("gold"), 0),
+        "potions": len([p for p in (run.get("potions") or [])
+                        if isinstance(p, dict) and (p.get("occupied") or p.get("potion_id"))]),
+    }
     try:
         with open(PLAN_PATH, encoding="utf-8") as f:
             plan = json.load(f)
     except (OSError, ValueError):
-        plan = {}
+        plan = None
+    if not isinstance(plan, dict):
+        _append_route_actual(step)
+        return
+    if not plan.get("identity"):
+        _append_route_actual(step)
+        print("ROUTE_PLAN_STALE 旧计划没有身份，不写 actual；先 route --commit 重记")
+        return
+    ident = plan.get("identity") or {}
+    cur_ident = {
+        "run_id": step["run_id"],
+        "act_id": step["act_id"],
+        "map_sig": brps.map_signature(
+            st.get("map") or (before or {}).get("map") or {}),
+    }
+    if any(ident.get(k) != v for k, v in cur_ident.items() if k in ident):
+        _append_route_actual(step)
+        print("ROUTE_PLAN_STALE 当前 run/act/map 与计划不同，不写 actual；先 route --commit 重记")
+        return
+    for pred in (plan.get("predicted") or {}).get("steps") or []:
+        if pred.get("row") == step["row"] and pred.get("col") == step["col"]:
+            # The actual HP is read when the map node is entered, i.e. before
+            # that node's combat.  Compare it to the prediction's hp_in; the
+            # predicted post-node HP is kept for the next step's check.
+            step["pred_hp"] = pred.get("hp_in")
+            step["pred_hp_out"] = pred.get("hp_out")
+            if isinstance(step["pred_hp"], (int, float)):
+                step["delta"] = hp - int(step["pred_hp"])
+            break
+    _append_route_actual(step)
     actual = plan.get("actual") or []
-    step = {"floor": floor, "row": cur.get("row"), "col": cur.get("col"), "type": cur.get("node_type")}
     if actual and actual[-1].get("floor") == floor:
         actual[-1] = step
     else:
@@ -142,17 +236,39 @@ def _record_route_step():
         pass
 
 
+def _enemy_hp(e: dict) -> int:
+    """敌人当前血优先；``hp`` 在部分接口里是最大血或旧字段。"""
+    cur = e.get("current_hp")
+    return _int(cur if cur is not None else e.get("hp"), 0)
+
+
+def _enemy_alive(e) -> bool:
+    return (isinstance(e, dict) and e.get("is_alive", True) is not False
+            and _enemy_hp(e) > 0)
+
+
 def _alive_enemies(st: dict) -> list:
-    return [x for x in ((st.get("combat") or {}).get("enemies") or []) if _int(x.get("hp"), 0) > 0]
+    return [x for x in ((st.get("combat") or {}).get("enemies") or []) if _enemy_alive(x)]
+
+
+def _enemy_index(st: dict, enemy: dict):
+    """目标下标用接口原始 index；没有 index 才退回敌人列表位置。"""
+    enemies = (st.get("combat") or {}).get("enemies") or []
+    for i, x in enumerate(enemies):
+        if x is enemy:
+            idx = x.get("index")
+            return _int(idx, i) if idx is not None else i
+    idx = enemy.get("index") if isinstance(enemy, dict) else None
+    return _int(idx, -1) if idx is not None else None
 
 
 def _auto_target_index(st: dict):
-    """Default target: lowest-HP alive enemy (fallback: first)."""
+    """Default target: lowest-HP alive enemy (fallback: first), original index."""
     es = _alive_enemies(st)
     if not es:
         return None
-    best = min(range(len(es)), key=lambda i: _int(es[i].get("hp"), 9999))
-    return best
+    best = min(es, key=_enemy_hp)
+    return _enemy_index(st, best)
 
 
 def act(action: str, **params) -> dict:
@@ -160,6 +276,12 @@ def act(action: str, **params) -> dict:
     for k, v in params.items():
         if v is not None:
             body[k] = v
+    before = None
+    if action == "choose_map_node":
+        try:
+            before = get_state()
+        except Exception:
+            before = None
     r = requests.post(API + "/action", json=body, timeout=40)
     try:
         d = r.json()
@@ -168,9 +290,10 @@ def act(action: str, **params) -> dict:
     if not d.get("ok"):
         err = d.get("error", {})
         raise RuntimeError(f"{action} failed: {err.get('code')} {err.get('message')}")
+    data = d.get("data", {})
     if action == "choose_map_node":
-        _record_route_step()
-    return d.get("data", {})
+        _record_route_step(before=before, params=params, after=data)
+    return data
 
 
 _END_PUNCT = "。！？!?…”）)"
@@ -194,14 +317,20 @@ def compose_speech(thought: str, meme: str) -> str:
     return _ensure_stop(t) + _ensure_stop(m)
 
 
-def _prewarm_tts(sentence: str) -> None:
+def _prewarm_tts(sentence: str, cid: str = "") -> None:
     """先合成进 overlay 磁盘缓存：页面拿 /tts 秒回，字幕和配音同时起，不再一前一后。"""
     if not sentence:
         return
+    t0 = time.time()
+    _av_log("prewarm_begin", cid=cid, chars=len(sentence))
     try:
-        requests.get(OVERLAY + "/tts", params={"text": sentence}, timeout=6)
-    except Exception:
-        pass
+        r = requests.get(OVERLAY + "/tts", params={"text": sentence}, timeout=6)
+        _av_log("prewarm_end", cid=cid, ms=round((time.time() - t0) * 1000, 1),
+                status=getattr(r, "status_code", None))
+    except Exception as e:
+        _av_log("prewarm_end", cid=cid, ms=round((time.time() - t0) * 1000, 1),
+                error=str(e)[:120])
+    return
 
 
 def overlay_say(tag: str, thought: str, meme: str, state: dict | None = None,
@@ -217,7 +346,10 @@ def overlay_say(tag: str, thought: str, meme: str, state: dict | None = None,
         return
     _last_say["key"] = sentence
     _last_say["at"] = now
-    payload = {"tag": tag, "thought": thought, "meme": meme, "speech": sentence}
+    cid = uuid.uuid4().hex[:12]
+    _av_log("say_begin", cid=cid, tag=tag, chars=len(sentence))
+    payload = {"tag": tag, "thought": thought, "meme": meme, "speech": sentence,
+               "client_id": cid}
     if state:
         run = state.get("run") or {}
         payload.update(
@@ -231,11 +363,21 @@ def overlay_say(tag: str, thought: str, meme: str, state: dict | None = None,
                 "screen": state.get("screen", ""),
             }
         )
-    _prewarm_tts(sentence)
+    _prewarm_tts(sentence, cid)
+    t_post = time.time()
     try:
-        requests.post(OVERLAY + "/comment", json=payload, timeout=1.5)
-    except Exception:
-        pass
+        r = requests.post(OVERLAY + "/comment", json=payload, timeout=1.5)
+        comment_id = None
+        try:
+            comment_id = int((r.json() or {}).get("comment", {}).get("id") or 0) or None
+        except Exception:
+            pass
+        _av_log("published", cid=cid, id=comment_id,
+                status=getattr(r, "status_code", None),
+                post_ms=round((time.time() - t_post) * 1000, 1))
+    except Exception as e:
+        _av_log("publish_fail", cid=cid, post_ms=round((time.time() - t_post) * 1000, 1),
+                error=str(e)[:120])
 
 
 def tag_for(screen: str) -> str:
@@ -316,8 +458,7 @@ def _hand_value_rank(hand, enemies) -> str:
     """Per-energy value ranking so cheap low-damage cards don't get defaulted to."""
     if not hand:
         return ""
-    n_enemy = max(1, len([e for e in (enemies or [])
-                          if isinstance(e, dict) and _int(e.get("hp", e.get("current_hp")), 1) > 0]))
+    n_enemy = max(1, len([e for e in (enemies or []) if _enemy_alive(e)]))
     atk, blk = [], []
     for c in hand:
         if not isinstance(c, dict):
@@ -649,11 +790,21 @@ def _hp_gate_line(s):
     avail = [n for n in ((s.get("map") or {}).get("nodes") or []) if n.get("is_available")]
     kinds = {str(n.get("node_type") or "").lower() for n in avail}
     pct = 100.0 * hp / mx
-    if "boss" in kinds and pct < 70:
-        return (f"BOSS_GATE HP {hp}/{mx}（{pct:.0f}%）< 70%：先回血再进 Boss —— "
-                f"57 局就是这么死的（48 血打 183 血）")
-    if "elite" in kinds and pct < 60:
-        return f"ELITE_GATE HP {hp}/{mx}（{pct:.0f}%）< 60%：这个精英会把你打死，绕或先睡"
+    asc = _int(run.get("ascension"), 10)
+    if "boss" in kinds:
+        gate = brps.boss_gate(s, CARD_DB, MONSTER_DB, ENCOUNTER_DB, asc)
+        if not gate.get("ok"):
+            return brps.gate_line(gate) + f" | HP {hp}/{mx}（{pct:.0f}%）"
+        if pct < 70:
+            return (f"BOSS_GATE HP {hp}/{mx}（{pct:.0f}%）< 70%：先回血再进 Boss —— "
+                    f"57 局就是这么死的（48 血打 183 血）")
+    if "elite" in kinds:
+        if pct < 60:
+            return f"ELITE_GATE HP {hp}/{mx}（{pct:.0f}%）< 60%：这个精英会把你打死，绕或先睡"
+        eg = brps.elite_gate(s, CARD_DB, MONSTER_DB, ENCOUNTER_DB, asc)
+        if eg.get("loss", 0) >= max(12, int(0.35 * hp)):
+            return (f"ELITE_TTK 预计 {eg.get('ttk')} 回合、掉 {eg.get('loss')} 血"
+                    f"（HP {hp}/{mx}）：收益不够就绕开")
     return None
 
 
@@ -799,7 +950,7 @@ def compact(state: dict, full: bool = False, brief: bool = False) -> str:
             if isinstance(e, dict):
                 lines.append(" " + _enemy_line(i, e))
         if incoming > 0:
-            pool, parts = hand_block_pool(hand)
+            pool, parts = hand_block_pool(hand, _int(_power_map(player.get("powers")).get("frail"), 0))
             if pool:
                 lines.append(f"BLOCK_POOL {pool}（{' + '.join(parts)}）")
         acts = state.get("available_actions") or []
@@ -899,7 +1050,8 @@ def compact(state: dict, full: bool = False, brief: bool = False) -> str:
             lines.append(row)
         _incoming = combat_incoming(state)
         if _incoming > 0:
-            lines.append(block_pool_note(hand, _incoming))
+            lines.append(block_pool_note(
+                hand, _incoming, _int(_power_map(player.get("powers")).get("frail"), 0)))
         held = [p for p in potion_slots(state) if p.get("potion_id")]
         if held and _incoming > 0:
             max_hp = _int(run.get("max_hp"), 0) or 80
@@ -1064,8 +1216,12 @@ def _session_path(action: str | None = None) -> str:
 
 def log(action: str, params: dict, before: dict, after: dict, resp: dict, thought: str, meme: str):
     run = after.get("run") or {}
+    combat = after.get("combat") or {}
     entry = {
         "ts": datetime.now().isoformat(timespec="seconds"),
+        "run_id": after.get("run_id") or run.get("run_id"),
+        "act_id": run.get("act_id"),
+        "turn": combat.get("turn"),
         "action": action,
         "params": params,
         "status": resp.get("status"),
@@ -1245,6 +1401,9 @@ def _snapshot(state: dict) -> dict:
     potions = run.get("potions") or []
     held = [p for p in potions if isinstance(p, dict) and (p.get("occupied") or p.get("potion_id"))]
     return {
+        "run_id": state.get("run_id") or run.get("run_id"),
+        "act_id": run.get("act_id", run.get("act")),
+        "map_sig": brps.map_signature(state.get("map") or {}),
         "floor": run.get("floor"),
         "act": run.get("act"),
         "hp": hp,
@@ -1254,6 +1413,19 @@ def _snapshot(state: dict) -> dict:
         "deck": _deck_stats(state),
         "ts": datetime.now().isoformat(timespec="seconds"),
     }
+
+
+def _plan_status(snap: dict, plan: dict) -> str:
+    """ok / stale / legacy.  A plan without identity is never PLAN_OK."""
+    if not isinstance(plan, dict):
+        return "none"
+    ident = plan.get("identity")
+    if not isinstance(ident, dict) or not ident:
+        return "legacy"
+    for key in ("run_id", "act_id", "map_sig"):
+        if key in ident and ident.get(key) != snap.get(key):
+            return "stale"
+    return "ok"
 
 
 def _fmt_snap(s: dict) -> str:
@@ -1284,6 +1456,11 @@ def _replan_reasons(cur: dict, plan: dict):
     reasons = []
     if not plan or not plan.get("snapshot"):
         return reasons
+    status = _plan_status(cur, plan)
+    if status == "legacy":
+        return ["旧计划没有 run_id/act/map 身份：无法确认它属于这一局，必须重新 route --commit"]
+    if status == "stale":
+        return [f"计划身份不匹配（计划 {plan.get('identity')} / 当前 run={cur.get('run_id')} act={cur.get('act_id')} map={cur.get('map_sig')}）：换局/换幕/换图后旧计划作废"]
     base = plan["snapshot"]
     cur_pct = (cur["hp"] / cur["max_hp"]) if cur.get("max_hp") else 0
     base_pct = (base["hp"] / base["max_hp"]) if base.get("max_hp") else 0
@@ -1394,7 +1571,6 @@ def cmd_route(commit=None, note=""):
         print("NO AVAILABLE NODES")
         return
 
-    sym = _route_sym()
     pct = (hp / mhp) if (hp and mhp) else 1.0
     print(f"ROUTE PLAN | HP {hp}/{mhp} ({pct:.0%}) gold {gold} | floor {run.get('floor', '?')}")
     snap = _snapshot(s)
@@ -1414,12 +1590,22 @@ def cmd_route(commit=None, note=""):
         paths = walk(start)
         if not paths:
             continue
-        best = max(paths, key=lambda p: score(p)[0])
-        sc, c, p, pre_shop = score(best)
-        ranked.append((sc, i, start, best, c, pre_shop))
+        scored = brps.score_paths(
+            s, m, paths,
+            CARD_DB, MONSTER_DB, ENCOUNTER_DB,
+            ascension=_int(run.get("ascension"), 10),
+        )
+        if not scored:
+            continue
+        b = scored[0]
+        sc, c, p, pre_shop = score(b["path"])
+        # BRPS is the primary key; the old resource score stays as a small
+        # tie-breaker so a plan is still readable by the previous playbook.
+        rank_sc = b["score"] + 0.25 * sc
+        ranked.append((rank_sc, sc, i, start, b["path"], c, pre_shop, b))
     ranked.sort(key=lambda x: x[0], reverse=True)
-    for sc, i, start, path, c, pre_shop in ranked[:3]:
-        seq = " ".join(sym.get(str(n.get("node_type")), "?") for n in path)
+    for rank_sc, sc, i, start, path, c, pre_shop, b in ranked[:3]:
+        seq = b["seq"]
         notes = []
         if c["Elite"]:
             notes.append(f"精英{c['Elite']}")
@@ -1433,15 +1619,29 @@ def cmd_route(commit=None, note=""):
             notes.append("Boss前有营火")
         if pre_shop:
             notes.append("Boss前有商店")
-        if pct < 0.70 and c["Elite"]:
-            notes.append("HP<70%：精英高风险")
-        print(f"opt{i} {start.get('node_type')} ({start.get('row')},{start.get('col')}) score={sc:.1f} | {' / '.join(notes) or '常规'}")
+        if b.get("dead"):
+            notes.append(f"预计死在 f{b.get('death_row')}")
+        if b.get("forced_elite"):
+            notes.append("单线强迫精英")
+        if not b.get("boss_gate", {}).get("ok"):
+            notes.append("Boss TTK 不够")
+        print(
+            f"opt{i} {start.get('node_type')} ({start.get('row')},{start.get('col')}) "
+            f"score={sc:.1f} brps={b.get('score', 0):.1f} "
+            f"HP→{b.get('hp_after')}/{mhp} | {' / '.join(notes) or '常规'}"
+        )
         print(f"  {seq}")
+        if ranked and b is ranked[0][7]:
+            print("  " + brps.gate_line(b.get("boss_gate")))
+            print(
+                f"  BRPS deck DPS {b.get('deck', {}).get('dps')} / block {b.get('deck', {}).get('block')} "
+                f"| 最差 Boss {b.get('boss_gate', {}).get('worst', {}).get('name')}"
+            )
     if pct < 0.70:
         print("WARNING HP<70%：火堆权重提高，优先睡觉；非必要不打精英。")
     if pct < 0.50:
         print("WARNING HP<50%：下一格必须营火；没有营火就改道/用药，不接双怪或精英。")
-    if gold >= 100 and not any(r[5] for r in ranked[:1]):
+    if gold >= 100 and not any(r[6] for r in ranked[:1]):
         print("WARNING 金币≥100 且首选路线 Boss 前无商店：考虑改道/预留删牌。")
 
     # 上次规划 vs 现在：状态变了就重规划，别按三层前的计划硬走。
@@ -1452,30 +1652,52 @@ def cmd_route(commit=None, note=""):
             f"PLAN_BASE 上次规划：第{base.get('floor')}层 opt{plan.get('option')} "
             f"{plan.get('seq', '')} | {_fmt_snap(base) if base else '?'}"
         )
-        reasons = _replan_reasons(snap, plan)
-        if reasons:
-            print("REPLAN 建议重规划：")
-            for r in reasons:
-                print("  - " + r)
+        status = _plan_status(snap, plan)
+        if status != "ok":
+            print("PLAN_STALE 计划身份不匹配，旧路线作废：先 route 重新排序，再 route --commit <opt>")
+            print(f"  plan={plan.get('identity')} | now run={snap.get('run_id')} "
+                  f"act={snap.get('act_id')} map={snap.get('map_sig')}")
         else:
-            print("PLAN_OK 状态与上次规划一致，按原计划走（每次仍要看 AVAILABLE）")
+            reasons = _replan_reasons(snap, plan)
+            if reasons:
+                print("REPLAN 建议重规划：")
+                for r in reasons:
+                    print("  - " + r)
+            else:
+                print("PLAN_OK 状态与上次规划一致，按原计划走（每次仍要看 AVAILABLE）")
     if commit is not None:
-        pick = next((r for r in ranked if r[1] == commit), None)
+        pick = next((r for r in ranked if r[2] == commit), None)
         if pick is None:
-            print(f"COMMIT_FAIL opt{commit} 不在候选里（候选：{[r[1] for r in ranked]}）")
+            print(f"COMMIT_FAIL opt{commit} 不在候选里（候选：{[r[2] for r in ranked]}）")
         else:
-            sc, i, start, path, c, pre_shop = pick
-            seq = " ".join(sym.get(str(n.get("node_type")), "?") for n in path)
+            rank_sc, sc, i, start, path, c, pre_shop, b = pick
+            seq = b["seq"]
             _save_plan(
                 {
+                    "identity": {
+                        "run_id": snap.get("run_id"),
+                        "act_id": snap.get("act_id"),
+                        "map_sig": snap.get("map_sig"),
+                    },
                     "snapshot": snap,
                     "option": i,
                     "start": {"row": start.get("row"), "col": start.get("col")},
                     "seq": seq,
                     "note": note,
+                    "predicted": {
+                        "score": b.get("score"),
+                        "hp_after": b.get("hp_after"),
+                        "dead": b.get("dead"),
+                        "forced": b.get("forced"),
+                        "steps": b.get("steps"),
+                        "boss_gate": b.get("boss_gate"),
+                    },
                 }
             )
-            print(f"PLAN_COMMIT 已记录 opt{i} ({start.get('row')},{start.get('col')}) {seq}")
+            print(
+                f"PLAN_COMMIT 已记录 opt{i} ({start.get('row')},{start.get('col')}) {seq} "
+                f"| 预测 HP→{b.get('hp_after')}/{mhp} brps={b.get('score')}"
+            )
 
 
 def cmd_plan(clear=False, note=""):
@@ -1497,6 +1719,9 @@ def cmd_plan(clear=False, note=""):
     line = _hp_gate_line(s)
     if line:
         print(line)
+    if not line or not line.startswith("BOSS_TTK"):
+        print(brps.gate_line(brps.boss_gate(
+            s, CARD_DB, MONSTER_DB, ENCOUNTER_DB, _int(run.get("ascension"), 10))))
     if clear:
         try:
             os.remove(PLAN_PATH)
@@ -1514,6 +1739,12 @@ def cmd_plan(clear=False, note=""):
         + (f" | {_fmt_snap(base)}" if base else "")
         + (f" | 备注：{plan['note']}" if plan.get("note") else "")
     )
+    status = _plan_status(snap, plan)
+    if status != "ok":
+        print("PLAN_STALE 计划身份不匹配，旧路线作废：先 route 重新排序，再 route --commit <opt>")
+        print(f"  plan={plan.get('identity')} | now run={snap.get('run_id')} "
+              f"act={snap.get('act_id')} map={snap.get('map_sig')}")
+        return
     reasons = _replan_reasons(snap, plan)
     if reasons:
         print("REPLAN 建议重规划：")
@@ -1808,33 +2039,62 @@ def _intent_cycle_lines(enemies, actions) -> list:
     return lines
 
 
-def _intent_damage(enemy: dict) -> int:
-    total = 0
+def _intent_damage_parts(enemy: dict) -> tuple[int, list[tuple[int, int]]]:
+    """拆敌人本回合攻击意图：``(total_damage 总和, 需要修正的 (每段, 段数))``。
+
+    ``total_damage`` 是 mod 已经算好的本回合最终值（含力量/虚弱/玩家易伤），
+    不能再乘段数或再乘一次易伤。只有字段缺失时才回落成
+    ``(damage + 敌力量) × hits``，这部分才需要调用方补虚弱/易伤。
+    """
+    final = 0
+    raw: list[tuple[int, int]] = []
+    str_amt = _int(_power_map(enemy.get("powers")).get("str"), 0)
     for it in enemy.get("intents") or []:
         if not isinstance(it, dict):
             continue
         typ = str(it.get("intent_type") or it.get("type") or "").upper()
         if "ATTACK" not in typ and "DEATH" not in typ:
             continue
-        # total_damage (when present) is already the full attack value for the
-        # turn (e.g. label "5x4" -> total_damage 20). Only multiply damage by
-        # hits when the mod left total_damage empty, otherwise incoming is
-        # over-counted by the hit count.
         td = it.get("total_damage")
         if td is not None:
-            total += _int(td)
+            final += _int(td)
             continue
-        dmg = _int(it.get("damage", it.get("value")), 0)
-        hits = _int(it.get("hits", 1), 1)
-        total += dmg * max(1, hits)
+        per = _int(it.get("damage", it.get("value")), 0) + str_amt
+        hits = max(1, _int(it.get("hits", 1), 1))
+        raw.append((per, hits))
+    return final, raw
+
+
+def _intent_damage(enemy: dict) -> int:
+    final, raw = _intent_damage_parts(enemy)
+    weak = _int(_power_map(enemy.get("powers")).get("weak"), 0)
+    total = final
+    for per, hits in raw:
+        total += (int(per * 0.75) if weak else per) * hits
     return total
 
 
 def combat_incoming(state: dict) -> int:
     if state.get("screen") != "COMBAT":
         return 0
-    enemies = ((state.get("combat") or {}).get("enemies") or [])
-    return sum(_intent_damage(e) for e in enemies if isinstance(e, dict))
+    c = state.get("combat") or {}
+    enemies = c.get("enemies") or []
+    player_vuln = _int(_power_map((c.get("player") or {}).get("powers")).get("vuln"), 0)
+    total = 0
+    for e in enemies:
+        if not isinstance(e, dict):
+            continue
+        final, raw = _intent_damage_parts(e)
+        total += final
+        weak = _int(_power_map(e.get("powers")).get("weak"), 0)
+        for per, hits in raw:
+            d = per
+            if weak:
+                d = int(d * 0.75)
+            if player_vuln:
+                d = int(d * 1.5)
+            total += d * hits
+    return total
 
 
 def combat_anchor(state: dict) -> str:
@@ -1883,11 +2143,11 @@ def combat_anchor(state: dict) -> str:
     if incoming == 0:
         line += " | NO_INCOMING: attack/engine first; pure defense only for setup/draw/retain"
     else:
-        line += " | " + block_pool_note(hand, incoming)
+        line += " | " + block_pool_note(hand, incoming, _int(pm_self.get("frail"), 0))
     return line
 
 
-def hand_block_pool(hand) -> tuple:
+def hand_block_pool(hand, frail: int = 0) -> tuple:
     """手牌里可直接提供的格挡合计（含覆甲/坚毅这类基础格挡牌）。"""
     total = 0
     parts = []
@@ -1903,19 +2163,23 @@ def hand_block_pool(hand) -> tuple:
                 block = _int(v.get("current_value", v.get("value")), 0)
         if block <= 0:
             continue
+        if frail:
+            block = int(block * 0.75)
+        if block <= 0:
+            continue
         total += block
         nm = (CARD_DB.get(cid) or {}).get("name") or cid
         parts.append(f"{nm}{block}")
     return total, parts
 
 
-def block_pool_note(hand, incoming: int) -> str:
+def block_pool_note(hand, incoming: int, frail: int = 0) -> str:
     """BLOCK_POOL：手牌够不够挡满？不够的话净掉多少？
 
     run33 复盘（用户指出）：潜行群落那一回合手里两张耸肩、两费富余，
     却没叠防御硬吃伤害。把「能挡多少 / 挡完净掉多少」直接打在屏上。
     """
-    total, parts = hand_block_pool(hand)
+    total, parts = hand_block_pool(hand, frail)
     if not parts:
         return f"BLOCK_POOL 手牌无格挡牌｜入伤 {incoming} → 净掉 {incoming}"
     txt = f"BLOCK_POOL 手牌可挡 {total}（{' + '.join(parts)}）｜入伤 {incoming} → "
@@ -2282,7 +2546,8 @@ def cmd_do(action, card=None, target=None, option=None, thought="", meme="", opt
         incoming = combat_incoming(before)
         player_blk = _int(((before.get("combat") or {}).get("player") or {}).get("block"), 0)
         if incoming > player_blk and energy > 0:
-            pool, parts = hand_block_pool(hand)
+            pm = _power_map(((before.get("combat") or {}).get("player") or {}).get("powers"))
+            pool, parts = hand_block_pool(hand, _int(pm.get("frail"), 0))
             if parts and pool > 0:
                 print(
                     f"LEFT_BLOCK_ON_TABLE 入伤 {incoming}、当前格挡 {player_blk}，手牌还有格挡 "
@@ -2500,6 +2765,9 @@ def cmd_batch(spec: str):
         print("BATCH_EMPTY 没有动作；要结束回合就写 {\"action\":\"end_turn\"}")
         sys.exit(2)
     ends = [i for i, it in enumerate(items) if it.get("action") == "end_turn"]
+    if len(ends) > 1:
+        print("BATCH_FIX end_turn 只能出现一次（重复 end 会把下一回合整回合空过）")
+        sys.exit(2)
     if ends and ends[-1] != len(items) - 1:
         print("BATCH_FIX end_turn 必须是最后一步（后面的动作会落到新回合，牌序已变）")
         sys.exit(2)
@@ -2577,8 +2845,6 @@ def cmd_batch(spec: str):
         cid = it.get("card_id")
         if cid and "card_index" not in params:
             hand = (before.get("combat") or {}).get("hand") or []
-            alive = [e for e in ((before.get("combat") or {}).get("enemies") or [])
-                     if isinstance(e, dict) and _int(e.get("hp"), 1) > 0]
             cands = [k for k, c in enumerate(hand)
                      if isinstance(c, dict) and str(c.get("card_id")) == str(cid)
                      and c.get("playable", True) is not False]
@@ -2590,13 +2856,22 @@ def cmd_batch(spec: str):
                 print(compact(before))
                 sys.exit(3)
             params["card_index"] = idx
-            # 目标已死 → 自动改打最低血活敌人，别把整刀浪费在尸体上
+        # 目标已死 → 自动改打最低血活敌人，别把整刀浪费在尸体上。
+        # target_index 是接口的原始敌人下标（enemies[i].index），不是 alive 列表位置。
+        if a == "play_card" and "target_index" in params:
+            alive = _alive_enemies(before)
             ti = params.get("target_index")
-            if ti is not None and a == "play_card" and alive:
-                if not (0 <= _int(ti, -1) < len(alive)):
-                    hi = min(alive, key=lambda e: _int(e.get("hp"), 9999))
-                    params["target_index"] = alive.index(hi)
-                    print(f"TARGET_FIX 目标 {ti} 已不在场 → 改打最低血敌人 {params['target_index']}")
+            if ti is not None:
+                if not alive:
+                    print(f"BATCH STOP at {i} {a}: 目标 {ti} 不在场且没有活怪，拒绝空打")
+                    print(compact(before))
+                    sys.exit(3)
+                targets = {_enemy_index(before, e) for e in alive}
+                if _int(ti, -1) not in targets:
+                    hi = min(alive, key=_enemy_hp)
+                    new_ti = _enemy_index(before, hi)
+                    params["target_index"] = new_ti
+                    print(f"TARGET_FIX 目标 {ti} 已不在场 → 改打最低血敌人 {new_ti}")
         thought = it.get("thought", "")
         meme = it.get("meme", "")
         try:
@@ -2842,6 +3117,15 @@ def memory_digest(state: dict) -> list[str]:
                 f"f{e.get('floor', '?')} {str(e.get('action', '?'))[:18]} hp{e.get('hp', '?')}" for e in tail
             )
         )
+    try:
+        import decision_log
+        rid = state.get("run_id") or (state.get("run") or {}).get("run_id")
+        n = sum(1 for r in decision_log.read_decisions()
+                if rid and str(r.get("run_id")) == str(rid))
+        if n:
+            lines.append(f"DECISIONS {n} (logs/decisions.jsonl)")
+    except Exception:
+        pass
     risk = []
     if pct < 50:
         risk.append("血闸<50%")
@@ -2889,6 +3173,23 @@ def cmd_journal(floor: int | None = None, last: int = 20):
               f"{e.get('action')} {e.get('params')} {('| ' + th) if th else ''}")
 
 
+def _latest_run_summary() -> dict:
+    """读 P0-1 账本写的最近一局 summary；没有就空。"""
+    try:
+        import decision_log
+        p = os.path.join(decision_log.log_dir(), "run_summary.json")
+    except Exception:
+        p = os.path.join(LOGS, "run_summary.json")
+    try:
+        if not os.path.exists(p):
+            return {}
+        with open(p, encoding="utf-8") as f:
+            d = json.load(f)
+        return d if isinstance(d, dict) else {}
+    except Exception:
+        return {}
+
+
 def cmd_report():
     path = _session_path()
     out = os.path.splitext(path)[0] + ".md"
@@ -2897,11 +3198,28 @@ def cmd_report():
         with open(path, encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
-                if line:
+                if not line:
+                    continue
+                try:
                     entries.append(json.loads(line))
+                except ValueError:
+                    continue
     lines = ["# 杀戮尖塔 2 · AI 实况战报", ""]
     lines.append(f"- 录像会话：`{path}`")
     lines.append(f"- 动作数：{len(entries)}")
+    summary = _latest_run_summary()
+    if summary:
+        sl = summary.get("sl")
+        lines += [
+            "",
+            "## 最近一局结算（决策账本）",
+            f"- run `{summary.get('run_id')}` · {summary.get('result')} · "
+            f"f{summary.get('floor')} · HP {summary.get('hp')}/{summary.get('max_hp')} · "
+            f"gold {summary.get('gold')} · deck {summary.get('deck_size')}",
+            f"- 决策回合 {summary.get('decisions', '?')} · 被拒 {summary.get('rejected', '?')} · "
+            f"掉血 {summary.get('hp_lost', '?')} · 药水 {summary.get('potions_used', '?')} · "
+            f"SL {sl if sl is not None else '?'}/3",
+        ]
     lines.append("")
     for e in entries:
         lines.append(

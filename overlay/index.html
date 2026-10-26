@@ -358,7 +358,7 @@
     return /[。！？!?…”）)]$/.test(s) ? s : s + '。';
   }
 
-  function renderBubble(sentence, durMs) {
+  function renderBubble(sentence, durMs, c) {
     const total = sentence.length;
     feed.dataset.len = total > 170 ? 'xlong' : total > 110 ? 'long' : 'short';
     const div = document.createElement('div');
@@ -368,7 +368,7 @@
     // 关键：整块替换，永远只有一条对话。
     feed.replaceChildren(div);
     // 自报渲染时刻，用来量「弹窗 vs 声音」的真实差（服务端只记一行日志）
-    try { fetch('/mark?ev=bubble&role=' + encodeURIComponent(ROLE), { cache: 'no-store' }); } catch (e) {}
+    mark('bubble', c);
     panel.classList.remove('empty');
     // 有真实音频长度就按它抖（说多久抖多久），没有才退回按字数估
     startTalking(durMs > 0 ? durMs : Math.max(2400, Math.min(8500, 1500 + total * 70)));
@@ -380,6 +380,24 @@
   const spokenIds = new Set();   // 同一条台词只播一次（SSE 和兜底轮询可能同时送到）
   const qs0 = new URLSearchParams(location.search);
   const ROLE = (qs0.get('role') || (qs0.get('live') ? 'live' : 'record')).toLowerCase();
+
+  // 只上报观测数据，不参与渲染/播放决策。
+  // id/cid 让页面的一条 bubble/audio 和 sts2 的 prewarm/publish 精确对上。
+  function mark(ev, c, extra) {
+    const qs = new URLSearchParams();
+    qs.set('ev', ev);
+    qs.set('role', ROLE);
+    if (c && typeof c.id === 'number') qs.set('id', String(c.id));
+    if (c && c.client_id) qs.set('cid', String(c.client_id).slice(0, 64));
+    qs.set('page_t', String(Date.now() / 1000));
+    if (extra) {
+      for (const k of Object.keys(extra)) {
+        const v = extra[k];
+        if (v !== undefined && v !== null) qs.set(k, String(v));
+      }
+    }
+    try { fetch('/mark?' + qs.toString(), { cache: 'no-store' }).catch(() => {}); } catch (e) {}
+  }
 
   function enqueueSay(c, silent) {
     if (c && typeof c.id === 'number') {
@@ -414,12 +432,12 @@
     if (!sentence) return;
 
     // 刷新/重连时只补字幕，不重放上一句
-    if (silent) { renderBubble(sentence, 0); return; }
+    if (silent) { renderBubble(sentence, 0, c); return; }
     // 先把声音起出来，等它真的从浏览器音频缓冲里出来，再让弹窗和头像抖动一起出。
     // 实测：post → OBS 拿到声音要 ~256ms，而画面几乎立刻可见 —— 差的就是这一段缓冲。
-    const said = await mamboSay(sentence);
+    const said = await mamboSay(sentence, c);
     if (said.ok) await sleep(SPEAK_LEAD_MS);
-    renderBubble(sentence, said.durMs);
+    renderBubble(sentence, said.durMs, c);
     // 一句说完再上下一条，队列里的话不会被吃掉
     if (said.ok) await sleep(said.durMs + 120);
   }
@@ -470,7 +488,7 @@
   }
   // 返回 true = 声音真的起了（字幕就跟这一刻一起放）
   // 返回 {ok, durMs}：durMs 就是这一句的真实音频长度，气泡抖多久由它说了算
-  async function mamboSay(sentence) {
+  async function mamboSay(sentence, c) {
     if (!sentence) return { ok: false, durMs: 0 };
     try {
       const buf = await mamboLoad(sentence);
@@ -483,10 +501,22 @@
       src.connect(ctx.destination);
       mamboSource = src;
       src.onended = () => {
+        mark('audio_end', c, { ctx: ctx.currentTime, dur: buf.duration });
         if (mamboSource === src) { mamboSource = null; stopTalking(); }
       };
+      // 起播前后各记一次：src.start() 只是调度，不是实际出声。
+      const startPageT = Date.now() / 1000;
+      const startCtx = ctx.currentTime;
+      const baseLatency = Number(ctx.baseLatency || 0);
+      const outputLatency = Number(ctx.outputLatency || 0);
       src.start();
-      try { fetch('/mark?ev=audio&role=' + encodeURIComponent(ROLE), { cache: 'no-store' }); } catch (e) {}
+      mark('audio', c, {
+        ctx: startCtx,
+        base: baseLatency,
+        out: outputLatency,
+        dur: buf.duration,
+        start_t: startPageT,
+      });
       return { ok: true, durMs: buf.duration * 1000 };
     } catch (e) {
       return { ok: false, durMs: 0 };
@@ -509,7 +539,7 @@
     hydrated = true;
     lastId = Math.max(lastId, ...fresh.map((c) => c.id));
     if (silent) {
-      try { fetch('/mark?ev=silent&role=' + encodeURIComponent(ROLE), { cache: 'no-store' }); } catch (e) {}
+      mark('silent', fresh[fresh.length - 1]);
       showComment(fresh[fresh.length - 1], true);
       return;
     }

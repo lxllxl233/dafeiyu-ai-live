@@ -110,6 +110,66 @@ def main():
     check(sp.toggle() is True, "toggle 应打开")
     check(sp.toggle() is False, "toggle 应关闭")
 
+    # 11) 主播窗时钟：push 只做文案入场，不得提前设置说话动画
+    class FakeSpeaker:
+        def __init__(self):
+            self.spoken = []
+
+        def speak(self, text):
+            self.spoken.append(text)
+
+    w = object.__new__(S.StreamerWindow)
+    w.text = ""
+    w.status = {}
+    w.talk_start_at = 0.0
+    w.talk_until = 0.0
+    w.enter_at = 0.0
+    w.dirty = False
+    w.speaker = FakeSpeaker()
+    w.push("它 21，我最多挡 15", "差 6，嗨呀")
+    check(w.talk_until == 0.0 and w.talk_start_at == 0.0,
+          "push 阶段不能开始说话动画（否则头像会早于声音）")
+    check(w.enter_at > 0 and w.dirty, "文案仍要立刻入场")
+    check(w.speaker.spoken == [w.text], "push 应把同一句交给 Speaker")
+
+    w.start_talking(1.25, w.text)
+    check(w.talk_until - w.talk_start_at > 1.2,
+          f"说话动画应按真实音频长度，实际 {w.talk_until - w.talk_start_at:.2f}s")
+    old_text = w.text
+    w.push("下一句", "")
+    w.start_talking(1.0, old_text)
+    check(w.talk_start_at == 0.0, "上一句的迟到回调不能抖新弹幕")
+
+    # 12) Speaker 必须在 PlaySound 之后才回调 on_start（不能提前抖）
+    calls = []
+    events = []
+
+    class FakeWinsound:
+        SND_FILENAME = 1
+        SND_ASYNC = 2
+        SND_NODEFAULT = 4
+
+        @staticmethod
+        def PlaySound(*args):
+            events.append("play")
+
+    wav = S.animalese_wav("测试回调", 1.0)
+    check(wav is not None, "测试 WAV 应能合成")
+    if wav:
+        orig_cached = S.mambo_cached_wav
+        try:
+            S.mambo_cached_wav = lambda text, volume: wav
+            sp2 = S.Speaker(0.55, on_start=lambda dur, text: (
+                events.append("start"), calls.append((dur, text))))
+            sp2.delegate = False
+            sp2._winsound = FakeWinsound
+            sp2._play("测试回调")
+        finally:
+            S.mambo_cached_wav = orig_cached
+        check(events == ["play", "start"], f"应先 PlaySound 再动画，实际顺序 {events}")
+        check(calls and calls[0][0] > 0.1 and calls[0][1] == "测试回调",
+              f"回调应收到真实时长/文本，实际 {calls}")
+
     # 9) 静止帧命中缓存（第二次应明显快）
     t0 = time.perf_counter()
     S.render("缓存测试", STATUS, 1.0)

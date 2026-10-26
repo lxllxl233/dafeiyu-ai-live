@@ -12,6 +12,9 @@ import sts2  # noqa: E402
 import ctx  # noqa: E402
 import act  # noqa: E402
 
+# 这是执行器的离线测试，不写真实决策账本；账本自身由 test_decision_log.py 覆盖。
+os.environ.setdefault("STS2_DECISION_LOG", "0")
+
 ok = True
 
 

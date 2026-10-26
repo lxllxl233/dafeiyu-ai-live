@@ -149,6 +149,8 @@ block = Σ(卡牌格挡) × (Frail ? 0.75 : 1) + Plating(回合结束) + 遗物/
    - 有终结线就直接走；多拖一回合的期望损失通常大于成长收益。
 4. **不要在手牌信息不完整时做不可逆承诺**。
    - 有抽牌手段先用（Shrug/Pommel/Offering），把信息拉满，再决定高费牌打哪张。
+   - 抽牌后手牌未知：**只把抽牌牌单独发出去（不写 end）**，读新 `ctx` 再排下一手；
+     同一 `seq` 里写“抽牌牌 + 抽牌前不在手里的牌”会被 `act` 以 `抽牌边界` 整手拒绝。
    - 但 Battle Trance 会关闭后续抽牌，放最后。
 
 ### 特殊牌序
@@ -231,16 +233,21 @@ block = Σ(卡牌格挡) × (Frail ? 0.75 : 1) + Plating(回合结束) + 遗物/
 ## 7. 伤害/格挡公式（STS2 字段）
 
 ```
-incoming = Σ intent.total_damage（存在就直接用，它已经是本回合总伤害）
-           仅当 total_damage 为空时：Σ damage × hits
-           （例：label "5×4" 的 total_damage=20，就是 20 点，不要再乘 4）
+incoming = Σ intent.total_damage（存在就直接用，它已经是本回合最终值：
+           含敌力量/敌虚弱/玩家易伤/段数，不要再乘段数或再乘易伤）
+           仅当 total_damage 为空时：
+           Σ [(damage + 敌力量) × (敌虚弱 ? 0.75 : 1) × (玩家易伤 ? 1.5 : 1)] × hits
 block    = Σ card block × (Frail ? 0.75 : 1)
            + Plating（回合结束）
            + 遗物/能力格挡
-outgoing = Σ (base + Strength) × (Vulnerable ? 1.5 : 1)
-           × (Weak ? 0.75 : 1) - 敌人格挡
-lethal   = outgoing >= 敌人 HP
+outgoing = Σ [(base + Strength) × (Vulnerable ? 1.5 : 1)
+           × (Weak ? 0.75 : 1)] - 敌人格挡
+status   = 可格挡状态伤害进 block 池；无视格挡失血（呼唤/悔恨）直接进 taken
+lethal   = 单体/AOE/伤害药水按 sim 实际结算 ≥ 敌人 HP+格挡
+           （P1-2 起 calc.lethal 同时覆盖 AOE 与药水；见 [`PLAN_VISIBILITY.md`](PLAN_VISIBILITY.md)）
 ```
+
+完整口径、状态牌表和已知边界见 [`COMBAT_MATH.md`](COMBAT_MATH.md)。
 
 - 敌人有 **Artifact**：易伤/虚弱会被挡一次；先破或直接伤害。
 - 玩家有 **Weak**：攻击伤害 -25%；玩家有 **Frail**：卡牌格挡 -25%。

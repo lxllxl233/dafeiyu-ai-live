@@ -10,6 +10,8 @@
    模型不心算，只做「打谁、先打哪张、要不要交药」的取舍。
 3. **省 token**：短键、同名牌合并、死怪不写、空字段不写、牌组只给数量；
    典型战斗 1.2–2.2KB，比自然语言快照小一个量级。
+4. **非战斗给建议**：奖励/商店/营火/选牌在 `choice.eval` 里给缺口、分数和门槛；
+   只做排序提示，不替代路线/事件判断，也不执行动作。
 
 用法
 ----
@@ -35,6 +37,7 @@ sys.path.insert(0, os.path.join(ROOT, "tools"))
 import sts2  # noqa: E402
 import sim  # noqa: E402
 import mech as mechlib  # noqa: E402
+import noncombat  # noqa: E402
 
 DB = os.path.join(ROOT, "db", "sts2.db")
 MEM_PATH = os.path.join(ROOT, "logs", "intent_memory.json")
@@ -166,7 +169,7 @@ def _save_mem(mem: dict):
 
 
 # ---------------------------------------------------------------- 战斗
-def _intent(e: dict, str_amt: int = 0) -> dict:
+def _intent(e: dict, str_amt: int = 0, weak: int = 0, player_vuln: int = 0) -> dict:
     its = [x for x in (e.get("intents") or []) if isinstance(x, dict)]
     if not its:
         return {"t": "?"}
@@ -186,6 +189,10 @@ def _intent(e: dict, str_amt: int = 0) -> dict:
             h = max(h, hits)
         elif kind == "A":
             dd = _int(it.get("damage", it.get("value")), 0) + str_amt
+            if weak:
+                dd = int(dd * 0.75)
+            if player_vuln:
+                dd = int(dd * 1.5)
             hh = _int(it.get("hits"), 1) or 1
             d, h = max(d, dd), max(h, hh)
             tot += dd * hh
@@ -213,10 +220,7 @@ def _buffs(powers) -> list[str]:
 
 
 def _str_amt(e: dict) -> int:
-    for p in e.get("powers") or []:
-        if isinstance(p, dict) and str(p.get("power_id") or "").upper() == "STRENGTH_POWER":
-            return _int(p.get("amount"), 0)
-    return 0
+    return _int(sts2._power_map(e.get("powers")).get("str"), 0)
 
 
 _BASE_POWER = {"STRENGTH_POWER", "DEXTERITY_POWER", "WEAK_POWER",
@@ -279,29 +283,59 @@ def _card_stats(cid: str) -> tuple[float, int, int]:
 
 
 def _nx_draw(state: dict, need: int = 5, energy: int = 3) -> dict:
-    """下回合手牌预测：抽牌堆够就按已知组成估，不够就按洗牌比例估。"""
+    """下回合手牌预测：只给期望值，不假装知道抽牌顺序。
+
+    P1-3：抽牌堆 >=5 时按整堆组成估 5 张；<5 时先拿光抽牌堆，再从弃牌堆
+    按平均质量补足。两种都标 `uncertain:1`，模型不能把它当成确定手牌。
+    """
     draw, dis, _exh = _piles_cards(state)
     draw_ids = [str(x.get("card_id") or "?") for x in draw]
     dis_ids = [str(x.get("card_id") or "?") for x in dis]
     if not draw_ids and not dis_ids:
         return {}
-    # 抽牌堆 >=5：下一手是抽牌堆的前 5 张（顺序未知，按组成算期望）
-    # 抽牌堆 <5：必抽光 + 从弃牌堆洗牌补齐
-    mixed = len(draw_ids) < need
-    pool = list(draw_ids) if not mixed else (draw_ids + dis_ids[:max(0, need - len(draw_ids))])
-    if not pool:
+    draw_stats = [_card_stats(cid) for cid in draw_ids]
+    dis_stats = [_card_stats(cid) for cid in dis_ids]
+    mixed = len(draw_stats) < need
+    if not mixed:
+        # 抽牌堆够 5：下一手是从整堆里抽 5 张，顺序未知，按组成算期望。
+        total = need
+        extra = 0
+        mean_cost = sum(s[0] for s in draw_stats) / len(draw_stats)
+        raw_blk = sum(s[1] for s in draw_stats) * need / len(draw_stats)
+        raw_dmg = sum(s[2] for s in draw_stats) * need / len(draw_stats)
+        why = "按抽牌堆组成估期望；抽牌顺序未知"
+        short = 0
+    else:
+        # 抽牌堆不足 5：先全部抽光，再从弃牌堆随机补 extra 张。
+        extra = min(need - len(draw_stats), len(dis_stats))
+        total = len(draw_stats) + extra
+        known_blk = sum(s[1] for s in draw_stats)
+        known_dmg = sum(s[2] for s in draw_stats)
+        if extra and dis_stats:
+            dis_mean_blk = sum(s[1] for s in dis_stats) / len(dis_stats)
+            dis_mean_dmg = sum(s[2] for s in dis_stats) / len(dis_stats)
+            dis_mean_cost = sum(s[0] for s in dis_stats) / len(dis_stats)
+        else:
+            dis_mean_blk = dis_mean_dmg = dis_mean_cost = 0.0
+        raw_blk = known_blk + extra * dis_mean_blk
+        raw_dmg = known_dmg + extra * dis_mean_dmg
+        cost_sum = sum(s[0] for s in draw_stats) + extra * dis_mean_cost
+        mean_cost = cost_sum / total if total else 1.0
+        if extra:
+            why = "抽牌堆不足5，弃牌堆洗牌顺序未知；按比例估"
+        else:
+            why = "抽牌堆不足5且弃牌堆为空；只能抽到现有张数"
+        short = 1 if total < need else 0
+    if total <= 0:
         return {}
-    stats = [_card_stats(cid) for cid in pool]
-    n = len(pool)
-    mean_cost = sum(s[0] for s in stats) / n or 1.0
-    per = need / n
-    raw_blk = sum(s[1] for s in stats) * per
-    raw_dmg = sum(s[2] for s in stats) * per
+    mean_cost = mean_cost or 1.0
     # 3 费能打出的比例（平均每费产出）
     scale = min(1.0, energy / (mean_cost * 3)) if mean_cost else 1.0
     scale = max(0.45, scale)
-    out = {"n": need, "blk": int(raw_blk * scale), "dmg": int(raw_dmg * scale),
-           "pool": n, "mix": bool(mixed)}
+    out = {"n": total, "blk": int(raw_blk * scale), "dmg": int(raw_dmg * scale),
+           "pool": total, "mix": bool(extra), "uncertain": 1, "why": why}
+    if short:
+        out["short"] = 1
     return out
 
 
@@ -404,13 +438,17 @@ def _hand_out(hand: list[dict]) -> list[dict]:
 def _calc(state: dict, st: sim.Sim, hand: list[dict], potions: list[dict]) -> tuple[dict, list]:
     inc = st.incoming()
     blk = sim.max_block(state)
-    full = blk >= inc if inc else True
+    tax_dmg, tax_hp = sim.status_tax_parts(st.hand)
+    tax = tax_dmg + tax_hp
+    # 可格挡状态伤害和攻击共用格挡池；无视格挡的失血直接进净掉血。
+    net = max(0, inc + tax_dmg - blk) + tax_hp
+    full = net == 0
     lethal = sim.lethal_targets(state)
-    tax = sum(sim.STATUS_TAX.get(c["id"], 0) for c in st.hand
-              if not c.get("play", True))
-    out = {"n": len(st.alive()), "inc": inc, "blk": blk, "net": max(0, inc - blk), "full": full}
+    out = {"n": len(st.alive()), "inc": inc, "blk": blk, "net": net, "full": full}
     if tax:
         out["tax"] = tax
+        out["tax_dmg"] = tax_dmg
+        out["tax_hp"] = tax_hp
     if lethal:
         out["lethal"] = [x["i"] for x in lethal]
         chain = []
@@ -518,6 +556,7 @@ def _combat(state: dict, mem: dict) -> dict:
 
     # 敌人
     asc = _int(run.get("ascension"), 0)
+    pm_self = sts2._power_map(p.get("powers"))
     en_out = []
     for i, e in enumerate([x for x in (c.get("enemies") or []) if isinstance(x, dict)]):
         if not (e.get("is_alive", True) and _int(e.get("current_hp", e.get("hp")), 1) > 0):
@@ -533,7 +572,9 @@ def _combat(state: dict, mem: dict) -> dict:
         bd = _buff_info(e.get("powers"))
         if bd:
             x["bd"] = bd
-        x["it"] = _intent(e, _str_amt(e))
+        x["it"] = _intent(e, _str_amt(e),
+                          _int(sts2._power_map(e.get("powers")).get("weak"), 0),
+                          _int(pm_self.get("vuln"), 0))
         rec = _record_intent(state, i, e, mem)
         if rec.get("h"):
             x["hist"] = rec["h"]
@@ -554,15 +595,18 @@ def _combat(state: dict, mem: dict) -> dict:
     if can:
         out["can"] = can
 
-    plans = sim.search(state, max_cards=6, max_plans=6)
+    plans = sim.search(state, max_cards=8, max_plans=5, time_limit=0.8,
+                       max_nodes=120_000)
     plan_out = []
-    for pl in plans[:3]:
+    for pl in plans:
         p_out = {"k": pl["k"], "s": pl["seq"], "d": pl["dmg"], "take": pl["taken"],
                  "hp": pl["hp"], "e": pl["e"]}
         if pl.get("kill"):
             p_out["kill"] = pl["kill"]
         if pl.get("stun"):
             p_out["stun"] = pl["stun"]
+        if pl.get("risk") or pl.get("hp", 1) <= 0:
+            p_out["risk"] = 1
         plan_out.append(p_out)
     out["plans"] = plan_out
 
@@ -589,14 +633,18 @@ def _combat(state: dict, mem: dict) -> dict:
         warns.append(f"hp<50%({hp}/{maxhp})")
     if not potions:
         warns.append("no_potion")
-    if calc["inc"] and not calc["full"]:
-        warns.append(f"cannot_full_block(-{calc['inc'] - calc['blk']})")
-    if calc["inc"] >= hp:
+    if calc["net"] and not calc["full"]:
+        warns.append(f"cannot_full_block(-{calc['net']})")
+    if calc["net"] >= hp:
         warns.append("incoming>=hp：必须全挡/斩杀/喝药")
-    if en_out and not calc["inc"]:
+    if en_out and not calc["inc"] and not calc.get("tax"):
         warns.append("本回合无入伤：可少起防，全力输出")
     if calc.get("nx_inc") and calc["nx_inc"] >= hp:
         warns.append(f"下回合预计吃{calc['nx_inc']}≥血量：这回合必须解决或留药")
+    risk = [p for p in plans if p.get("risk") or p.get("hp", 1) <= 0]
+    if risk:
+        kinds = ",".join(p["k"] for p in risk)
+        warns.append(f"RISK {kinds} hp<=0：只作伤害上限，不要照打")
     if calc.get("tax"):
         warns.append(f"status_tax({calc['tax']})")
     if piles and piles.get("draw", {}).get("n", 99) <= 2:
@@ -649,9 +697,17 @@ def _choice(state: dict) -> dict:
         out = {"kind": "shop", "gold": _int((state.get("run") or {}).get("gold")), "items": []}
         for sec in ("cards", "relics", "potions"):
             for i, it in enumerate([x for x in (sh.get(sec) or []) if isinstance(x, dict)]):
-                out["items"].append({"sec": sec, "i": i, "n": _short(it.get("name") or "", 30),
-                                     "price": _int(it.get("price")),
-                                     "ok": bool(it.get("available", True))})
+                item = {"sec": sec, "i": i, "n": _short(it.get("name") or "", 30),
+                        "price": _int(it.get("price")),
+                        "ok": bool(it.get("available", True))}
+                cid = str(it.get("card_id") or it.get("item_id") or it.get("relic_id")
+                          or it.get("potion_id") or it.get("id") or "")
+                if cid:
+                    item["id"] = cid
+                fx = _short(it.get("description") or it.get("resolved_rules_text") or "", 48)
+                if fx:
+                    item["fx"] = fx
+                out["items"].append(item)
         rem = sh.get("card_removal") or {}
         if rem:
             out["removal"] = {"ok": bool(rem.get("available")), "price": _int(rem.get("price"))}
@@ -794,7 +850,15 @@ def build(state: dict) -> dict:
     deck = _deck(state)
     if deck:
         out["deck"] = deck
-    out["choice"] = _choice(state)
+    choice = _choice(state)
+    try:
+        ev = noncombat.evaluate(state, choice)
+    except Exception:
+        # 评估器是附加建议层；坏牌面/未知 shop 字段不能阻断原始 ctx。
+        ev = None
+    if ev:
+        choice["eval"] = ev
+    out["choice"] = choice
     return out
 
 

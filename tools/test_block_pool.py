@@ -31,6 +31,8 @@ check("两张耸肩明细", parts, ["耸肩无视8", "耸肩无视8"])
 note = sts2.block_pool_note(two_shrugs, 20)
 check("不够挡满时提示净掉", "净掉 4" in note, True)
 check("够挡满时提示", "够挡满" in sts2.block_pool_note(two_shrugs, 16), True)
+check("脆弱后 16→12", sts2.hand_block_pool(two_shrugs, 1)[0], 12)
+check("脆弱后够挡提示按 12 算", "净掉 4" in sts2.block_pool_note(two_shrugs, 16, 1), True)
 check("无格挡牌", "无格挡牌" in sts2.block_pool_note([{"card_id": "STRIKE_IRONCLAD"}], 9), True)
 
 # 攻击牌上的 Block 字段不该被当成格挡牌（坚毅/铁斩波才该算）

@@ -7,10 +7,11 @@
 | `hand` | **实费** `c` + 张数 `q` + 类型 `t` + `dmg/hits/cond/blk/draw/en/hp/vuln/weak/aoe/x/exh/cm/add/pw/play`；`kw`=词条（EXH 消耗／ETH 虚无／INN 固有／RET 保留／UNP 不可打／ETR 永恒／SLY）；`tx`=带机制的原文（≤42 字，如踩踏「每打一张攻击 -1 费」）；`nxt`=留给下一轮什么（`vuln/weak/frail` 挂敌、`str/dex/plating/power` 挂己、`retain/draw/block_keep`） |
 | `enemies` | `i/id/n/hp/max/blk/b/bd/it/nx/nx_tot/hist/mech` |
 | `piles` | `draw`/`dis`/`exh`：张数 + 组成（同名合并，`STRIKE+` 带加号） |
-| `calc` | `inc/blk/net/full/lethal/chain/aoe/tax` + `dmg`（本回合最大伤害）/`ttk`（每怪还几回合死）/`ttk_all`/`nx_inc`（下回合预计总入伤）/`nxdraw`（下一手 5 张期望 `blk/dmg`） |
+| `calc` | `inc/blk/net/full/lethal/chain/aoe/tax` + `dmg`（本回合最大伤害）/`ttk`（每怪还几回合死）/`ttk_all`/`nx_inc`（下回合预计总入伤）/`nxdraw`（下一手期望 `{n,blk,dmg,uncertain}`） |
 | `can` | `vuln/weak/draw/en/cost/exh/add/aoe/tf/buff`；`buff=[{id,nxt}]`=本回合能给下一轮上 buff 的牌/药水 |
-| `plans` | `k/s/d/take/hp/e/kill/stun`；`s` 是含药水的牌序；`k=maxdmg` 是纯伤害上限线 |
+| `plans` | 五类各一：`k/s/d/take/hp/e/kill/stun/risk`；`s` 是含药水的牌序；`k=maxdmg` 是纯伤害上限线，`risk=1` 时 `hp<=0`，只作上限不要照打；`k=potion` 是单独的药水线 |
 | `warn`/`choice` | 红灯；非战斗 map/event/reward/shop/rest/select/chest/modal/over |
+| `choice.eval` | 非战斗建议层：`deck` 结构、`need` 缺口、`opts[{i|sec,sc,tag,why}]`、`best`、`skip`/`buy`、`bar`、`heal`/`up`。是排序提示，不是胜率；地图仍走 `route`，事件仍读原文 |
 
 ## 意图与机制
 
@@ -22,10 +23,11 @@
 
 ## 数字口径
 
-- `calc.dmg`：`sim.search(max_cards=6)` 的 `maxdmg` 线，含易伤/力量/变费，**不含随机抽牌收益**。
+- `calc.dmg`：`sim.search(max_cards=8, max_plans=5)` 的 `maxdmg` 线，含易伤/力量/变费，**不含随机抽牌收益**；覆盖最多 10 张手牌里的第 8 张。
 - `calc.ttk`/`ttk_all`：`ceil((hp+blk)/dmg)`，是「按这回合上限每回合都这么打」的乐观值。
-- `calc.nxdraw`：抽牌堆 ≥5 时按抽牌堆组成算期望；<5 时按「抽光+弃牌堆洗牌」比例算（`mix:true`）。
-- `plans` 不假设抽牌收益；靠抽牌才能成立的线，用 `mid` 分两步打。
+- `calc.nxdraw`：`{n,blk,dmg,pool,mix,uncertain,why[,short]}`；抽牌堆 ≥5 按整堆组成估 5 张，<5 时先抽光再按弃牌堆平均质量补；`uncertain:1` 表示**期望值、不是牌堆顶**。
+- `plans` 不假设抽牌收益；抽牌后未知牌用 `mid` 分两步打（见 `docs/DRAW_BOUNDARY.md`）。
+- `plans` 五类都看：`best` 综合、`kill` 斩杀、`guard` 全挡、`potion` 药水线、`maxdmg` 纯伤害上限；`maxdmg` 的 `risk=1` 是自杀线，只能当上限。
 
 ## 维护
 

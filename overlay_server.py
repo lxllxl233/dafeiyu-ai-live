@@ -160,6 +160,36 @@ _status = {
     "screen": "MAIN_MENU",
 }
 
+# ---- A/V 观测：只落盘，不改变任何显示/播放时序。
+# av_marks.log 保持旧的 3 列前缀（time/event/role），第 4 列起才是 id；
+# av_marks.jsonl 给新脚本用，避免再靠猜解析。
+AV_MARKS = os.path.join(ROOT, "logs", "av_marks.log")
+AV_MARKS_JSONL = os.path.join(ROOT, "logs", "av_marks.jsonl")
+_av_lock = threading.Lock()
+
+
+def _av_num(v):
+    """把 query 里的数字尽量变成 number，方便直接算差值。"""
+    if v is None or v == "":
+        return None
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return str(v)[:80]
+
+
+def _av_append(row: dict, tsv: str | None = None) -> None:
+    try:
+        os.makedirs(os.path.dirname(AV_MARKS_JSONL), exist_ok=True)
+        with _av_lock:
+            if tsv:
+                with open(AV_MARKS, "a", encoding="utf-8") as f:
+                    f.write(tsv)
+            with open(AV_MARKS_JSONL, "a", encoding="utf-8") as f:
+                f.write(json.dumps(row, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+
 
 def add_comment(payload: dict) -> dict:
     global _seq
@@ -172,6 +202,8 @@ def add_comment(payload: dict) -> dict:
             "thought": _SPEAKER_RE.sub("", str(payload.get("thought") or "")).strip()[:220],
             "meme": _SPEAKER_RE.sub("", str(payload.get("meme") or "")).strip()[:220],
             "speech": str(payload.get("speech") or "")[:300],
+            # 客户端关联 id：把 sts2 的 prewarm/publish 和页面 bubble/audio 串起来。
+            "client_id": str(payload.get("client_id") or "")[:64],
         }
         _comments.append(c)
         _save_seq()
@@ -179,6 +211,16 @@ def add_comment(payload: dict) -> dict:
             if payload.get(key) is not None:
                 _status[key] = payload[key]
         snap = {"seq": _seq, "comments": [c], "status": dict(_status)}
+    _av_append(
+        {
+            "t": c["ts"],
+            "ev": "comment",
+            "id": c["id"],
+            "cid": c["client_id"],
+            "tag": c["tag"],
+            "speech": c["speech"],
+        }
+    )
     publish(snap)
     return c
 
@@ -384,12 +426,20 @@ class Handler(BaseHTTPRequestHandler):
             # 页面自报「弹窗渲染/音频起播」的时间戳，用来对齐/核对谁在响（只写日志）
             try:
                 qs = urllib.parse.parse_qs(self.path.split("?", 1)[1] if "?" in self.path else "")
-                ev = (qs.get("ev") or ["?"])[0]
+                ev = (qs.get("ev") or ["?"])[0][:32]
                 role = (qs.get("role") or [""])[0] or "-"
+                mid = (qs.get("id") or [""])[0][:32]
+                cid = (qs.get("cid") or [""])[0][:64]
+                t = time.time()
                 if ev == "audio" and role in _audio_ts:
-                    _audio_ts[role] = time.time()
-                with open(os.path.join(ROOT, "logs", "av_marks.log"), "a", encoding="utf-8") as f:
-                    f.write(f"{time.time():.4f}\t{ev}\t{role}\n")
+                    _audio_ts[role] = t
+                row = {"t": t, "ev": ev, "role": role,
+                       "id": _av_num(mid), "cid": cid}
+                for key in ("page_t", "ctx", "base", "out", "dur", "start_t"):
+                    val = (qs.get(key) or [""])[0]
+                    if val:
+                        row[key] = _av_num(val)
+                _av_append(row, tsv=f"{t:.4f}\t{ev}\t{role}\t{mid or '-'}\n")
             except Exception:
                 pass
             self._send(200, b'{"ok":true}', "application/json")

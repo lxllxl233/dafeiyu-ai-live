@@ -20,20 +20,49 @@ v19 的 `advisor._simulate` 只认「伤害/格挡/易伤/虚弱」，于是：
     sim.play(card, target_index) -> step dict
     sim.use_potion(slot, target_index) -> step dict
     sim.end_turn() -> 结算 dict
-    sql = search(state, max_cards=5) -> [plan dict, ...]
+    plans = search(state, max_cards=8, max_plans=5) -> [plan dict, ...]
     ok, err, sim, steps = validate(state, seq)
 """
 from __future__ import annotations
 
 import re
+import time
 
 import sts2
 
 TYPES = {"Attack": "A", "Skill": "S", "Power": "P", "Status": "T", "Curse": "C"}
 TYPE_CN = {"A": "攻", "S": "技", "P": "能", "T": "状", "C": "诅", "?": "?"}
 
-# 不打出来也能算进「回合末掉血」的状态牌（skill §3）
-STATUS_TAX = {"SLIMED": 3, "WOUND": 3, "INFECTION": 3, "CALL": 6, "BURN": 2, "DAZED": 0, "VOID": 0}
+# 回合末状态牌税：按当前 STS2 卡库拆成「可格挡伤害」与「无视格挡失去生命」。
+# 旧表把 SLIMED/WOUND 当成 3 伤，但当前卡库 Slimed 是 1 费抽 1、Wound 无效果。
+STATUS_DAMAGE = {
+    "BURN": 2, "INFECTION": 3, "DECAY": 2, "TOXIC": 5, "DISINTEGRATION": 6,
+}
+STATUS_HP_LOSS = {
+    "BAD_LUCK": 13, "BECKON": 6, "CALL": 6,  # CALL 是旧 id，保留兼容
+}
+STATUS_HP_PER_CARD = {"REGRET": 1}
+STATUS_TAX = {
+    **STATUS_DAMAGE, **STATUS_HP_LOSS,
+    "SLIMED": 0, "WOUND": 0, "DAZED": 0, "VOID": 0,
+}
+
+
+def status_tax_parts(hand) -> tuple[int, int]:
+    """未打出的状态牌回合末税：``(可被格挡的伤害, 无视格挡的失去生命)``。
+
+    只认当前卡库真实有回合末掉血/失血的牌；REGRET 按手牌张数逐张扣。
+    未知状态牌按 0 处理并在文档里标 unknown，不猜伤害。
+    """
+    dmg = hp = 0
+    live = [c for c in (hand or []) if isinstance(c, dict) and not c.get("_played")]
+    for c in live:
+        cid = str(c.get("id") or c.get("card_id") or "").upper()
+        dmg += STATUS_DAMAGE.get(cid, 0)
+        hp += STATUS_HP_LOSS.get(cid, 0)
+        if cid in STATUS_HP_PER_CARD:
+            hp += STATUS_HP_PER_CARD[cid] * len(live)
+    return dmg, hp
 
 
 def _num(name: str, text: str, default=0) -> int:
@@ -242,7 +271,7 @@ def _power_ids(powers) -> dict:
 def enemy_state(e: dict, idx: int | None = None) -> dict:
     pid = _power_ids(e.get("powers"))
     pm = sts2._power_map(e.get("powers"))
-    atk = sts2._intent_damage(e)
+    final_atk, raw_atk = sts2._intent_damage_parts(e)
     types = [str(x.get("intent_type") or x.get("type") or "?")
              for x in (e.get("intents") or []) if isinstance(x, dict)]
     ravenous = "RAVENOUS_POWER" in pid or any("当有敌人死亡" in str(x.get("description") or "") for x in (e.get("powers") or []) if isinstance(x, dict))
@@ -252,7 +281,9 @@ def enemy_state(e: dict, idx: int | None = None) -> dict:
         "hp": sts2._int(e.get("current_hp", e.get("hp")), 0),
         "max": sts2._int(e.get("max_hp"), 0),
         "blk": sts2._int(e.get("block"), 0),
-        "atk": atk, "types": types,
+        "atk": final_atk + sum(per * hits for per, hits in raw_atk),
+        "atk_final": final_atk, "atk_raw": raw_atk,
+        "types": types,
         "vuln": sts2._int(pm.get("vuln"), 0), "weak": sts2._int(pm.get("weak"), 0),
         "timid": sts2._int(pm.get("timid"), 0), "thorns": sts2._int(pm.get("thorns"), 0),
         "slippery": sts2._int(pid.get("SLIPPERY_POWER"), 0),
@@ -261,7 +292,7 @@ def enemy_state(e: dict, idx: int | None = None) -> dict:
         "ravenous": ravenous,
         "minion": "MINION_POWER" in pid,
         "dead": not (e.get("is_alive", True) and sts2._int(e.get("current_hp", e.get("hp")), 1) > 0),
-        "stunned": False, "str": 0,
+        "stunned": False, "str": sts2._int(pm.get("str"), 0),
     }
 
 
@@ -298,8 +329,10 @@ class Sim:
         self.dark_embrace = 0
         self.rupture = 0
         self.player_vuln = 0
+        self.player_frail = 0
         self.player_weak = 0
         self.status_tax = 0
+        self.thorns_taken = 0
         self.steps: list[dict] = []
         self.exhaust_pile = 0
 
@@ -320,6 +353,8 @@ class Sim:
         pid = _power_ids(p.get("powers"))
         pm = sts2._power_map(p.get("powers"))
         s.player_vuln = sts2._int(pm.get("vuln"), 0)
+        s.player_frail = sts2._int(pm.get("frail"), 0)
+        s.player_weak = sts2._int(pm.get("weak"), 0)
         s.metallicize = sts2._int(pm.get("metallicize"), 0)
         s.barricade = bool(pm.get("barricade"))
         s.plating = sts2._int(pm.get("plating"), 0)
@@ -376,12 +411,16 @@ class Sim:
         for e in self.alive():
             if e["stunned"]:
                 continue
-            atk = e["atk"]
-            if e["weak"]:
-                atk = int(atk * 0.75)
-            total += atk
-        if self.player_vuln:
-            total = int(total * 1.5)
+            # total_damage 已是最终值（含敌力量/虚弱/玩家易伤）；只有回落
+            # 到 damage×hits 的那部分才补修正，避免玩家易伤被乘两次。
+            total += sts2._int(e.get("atk_final"), 0)
+            for per, hits in e.get("atk_raw") or []:
+                d = sts2._int(per, 0)
+                if e["weak"]:
+                    d = int(d * 0.75)
+                if self.player_vuln:
+                    d = int(d * 1.5)
+                total += d * max(1, sts2._int(hits, 1))
         return total
 
     # ---------------------------------------------------------------- 结算
@@ -403,10 +442,15 @@ class Sim:
         self.lost_hp_turn += d
         return d
 
-    def hurt_enemy(self, e: dict, per: int, hits: int = 1) -> int:
+    def hurt_enemy(self, e: dict, per: int, hits: int = 1,
+                   strength: bool = True, vuln: bool = True) -> int:
         if e["dead"] or e["hp"] <= 0:
             return 0
-        per = max(0, int(per + self.str_bonus))
+        per = max(0, int(per))
+        if strength:
+            per += self.str_bonus
+        if vuln and e["vuln"]:
+            per = int(per * 1.5)  # 力量先加，易伤后乘；顺序不能反
         if e["timid"]:
             e["blk"] += e["timid"]
             e["timid"] = 0
@@ -428,7 +472,8 @@ class Sim:
             e["hp"] -= d
             dealt += d
             if e["thorns"]:
-                self.hurt_player(e["thorns"])
+                d = self.hurt_player(e["thorns"])
+                self.thorns_taken += d
             if e["hp"] <= 0:
                 e["hp"] = 0
                 e["dead"] = True
@@ -464,19 +509,15 @@ class Sim:
         """只结算、不改状态（搜索会在同一节点反复调用）。"""
         inc = self.incoming()
         block = self.block + self.metallicize + self.plating
-        taken = max(0, inc - block)
-        # 状态牌留在手里：回合末掉血（呼唤无视格挡）
-        tax = 0
-        for c in self.hand:
-            if c.get("_played"):
-                continue
-            if not c.get("play", True) and c["id"] in STATUS_TAX:
-                tax += STATUS_TAX[c["id"]]
-        if tax:
-            taken += tax
-        hp_after = self.hp - taken
+        # 可格挡的状态伤害与攻击共享格挡池；失去生命（呼唤/悔恨）无视格挡。
+        tax_dmg, tax_hp = status_tax_parts(self.hand)
+        end_taken = max(0, inc + tax_dmg - block)
+        taken = end_taken + tax_hp + self.thorns_taken
+        hp_after = self.hp - end_taken - tax_hp
         return {"incoming": inc, "taken": taken, "hp_after": hp_after,
-                "block": block, "tax": tax}
+                "block": block, "tax": tax_dmg + tax_hp,
+                "tax_dmg": tax_dmg, "tax_hp": tax_hp,
+                "thorns": self.thorns_taken}
 
     # ---------------------------------------------------------------- 出牌
     def play(self, card: dict, target: int | None = None) -> dict | None:
@@ -521,6 +562,8 @@ class Sim:
                 gain = max(0, card["blk"] * n)
             else:
                 gain = max(0, card["blk"] + self.dex_bonus)
+            if self.player_frail:
+                gain = int(gain * 0.75)  # 脆弱只砍卡牌格挡；药水/覆甲/金属化不砍
             self.block += gain
             step["blk"] = gain
         if card.get("add"):
@@ -554,8 +597,7 @@ class Sim:
                 h = hits
                 if t["vuln"] and card.get("cond"):
                     h = max(h, int(card["cond"]))
-                mul = 1.5 if t["vuln"] else 1.0
-                dealt += self.hurt_enemy(t, int(per * mul), h)
+                dealt += self.hurt_enemy(t, per, h)
             step["d"] = dealt
             if card["id"] == "REAPER":
                 self.hp = min(self.maxhp, self.hp + dealt)
@@ -661,7 +703,7 @@ class Sim:
             dealt = 0
             for t in targets:
                 if t:
-                    dealt += self.hurt_enemy(t, p["dmg"], 1)
+                    dealt += self.hurt_enemy(t, p["dmg"], 1, strength=False, vuln=False)
             step["d"] = dealt
         e = self.by_index(target) if target is not None else None
         if p.get("vuln"):
@@ -741,18 +783,26 @@ def _plan(sim: Sim, res: dict, score: float, kind: str) -> dict:
     stun = [e["i"] for e in sim.enemies if e["stunned"] and not e["dead"]]
     return {"k": kind, "seq": _seq_json(sim), "dmg": sum(s.get("d", 0) for s in sim.steps),
             "kill": kills, "stun": stun, "taken": res["taken"],
-            "hp": res["hp_after"], "e": sim.energy, "score": round(score, 1)}
+            "hp": res["hp_after"], "e": sim.energy, "score": round(score, 1),
+            "risk": bool(res["hp_after"] <= 0)}
 
 
-def search(state: dict, max_cards: int = 5, max_plans: int = 3) -> list[dict]:
-    """穷举「费用内所有牌序 × 目标策略」，返回 1–3 条候选（best/guard/kill）。"""
+def search(state: dict, max_cards: int = 6, max_plans: int = 5,
+           time_limit: float = 1.0, max_nodes: int = 200_000) -> list[dict]:
+    """穷举「费用内所有牌序 × 目标策略」，返回 best/maxdmg/kill/guard/potion。
+
+    P1-2：手牌最多看 10 张、深度默认 6（ctx 传 8）；DFS 有墙钟和节点上限，
+    超时只停止继续展开，已经找到的候选仍然返回。`maxdmg` 是纯伤害上限，
+    可能是 hp<=0 的自杀线，带 `risk=True`，调用方必须单独提示。
+    """
     base = Sim.from_state(state)
     if not base.alive():
         return []
     energy0, hp0, incoming0 = base.energy, base.hp, base.incoming()
     playable = [c for c in base.hand if c.get("play", True)]
-    if len(playable) > 7:
-        playable = playable[:7]
+    if len(playable) > 10:
+        playable = playable[:10]
+    depth = max(0, min(int(max_cards), 8))
     seen_keys: list[tuple] = []
     for c in playable:
         key = (c["id"], c.get("up", 0), c.get("c", 0))
@@ -760,14 +810,33 @@ def search(state: dict, max_cards: int = 5, max_plans: int = 3) -> list[dict]:
             seen_keys.append(key)
 
     best: dict[str, tuple[float, Sim, dict]] = {}
+    started = time.monotonic()
+    deadline = started + time_limit if time_limit and time_limit > 0 else None
+    nodes = 0
+    timed_out = False
 
     def record(sim: Sim, res: dict, score: float, kind: str):
         cur = best.get(kind)
         if cur is None or score > cur[0]:
             best[kind] = (score, sim.clone(), res)
 
+    def record_maxdmg(sim: Sim, res: dict, dmg: float):
+        """伤害并列时优先活下来/少打牌，避免 maxdmg 把自杀线当默认上限。"""
+        cur = best.get("maxdmg")
+        if cur is None or dmg > cur[0] or (
+                dmg == cur[0] and (res["hp_after"], -len(sim.steps)) >
+                (cur[2]["hp_after"], -len(cur[1].steps))):
+            best["maxdmg"] = (dmg, sim.clone(), res)
+
     def dfs(sim: Sim, used: set[int], depth: int, policy: str, focus: int | None,
             potion_line: bool = False):
+        nonlocal nodes, timed_out
+        if timed_out:
+            return
+        nodes += 1
+        if nodes > max_nodes or (deadline is not None and time.monotonic() > deadline):
+            timed_out = True
+            return
         res = sim.end_turn()
         score = _score(sim, res, energy0, hp0, incoming0, [])
         dmg_total = sum(s.get("d", 0) for s in sim.steps)
@@ -776,7 +845,7 @@ def search(state: dict, max_cards: int = 5, max_plans: int = 3) -> list[dict]:
         else:
             record(sim, res, score, "best")
             # 纯伤害上限：不管防御，只看这回合最多能打多少（ctx.calc.dmg / ttk 用）
-            record(sim, res, dmg_total, "maxdmg")
+            record_maxdmg(sim, res, dmg_total)
             if res["taken"] == 0:
                 record(sim, res, score, "guard")
             if any(e["dead"] for e in sim.enemies):
@@ -807,28 +876,28 @@ def search(state: dict, max_cards: int = 5, max_plans: int = 3) -> list[dict]:
             dfs(nxt, used | {c["i"]}, depth - 1, policy, focus, potion_line)
 
     for policy, focus in _policies(base):
-        dfs(base.clone(), set(), max_cards, policy, focus)
+        dfs(base.clone(), set(), depth, policy, focus)
 
     # 药水线：只试「药水先手」，让回能/斩杀药水能进入候选（用一次扣分，不轻易交）
     useful = [p for p in base.potions if p.get("use") and any(
         p.get(k) for k in ("dmg", "blk", "en", "heal", "vuln", "weak", "str", "dex"))]
     for p in useful[:2]:
         for policy, focus in _policies(base):
+            if timed_out:
+                break
             nxt = base.clone()
             pp = next((x for x in nxt.potions if x["p"] == p["p"]), None)
             if not pp:
                 continue
             tgt = _pick_target(nxt, policy, focus, {}) if pp["t"] == "enemy" else None
             nxt.potion(pp, tgt)
-            dfs(nxt, set(), max_cards, policy, focus, potion_line=True)
+            dfs(nxt, set(), depth, policy, focus, potion_line=True)
 
     out = []
     for kind in ("best", "maxdmg", "kill", "guard", "potion"):
         if kind in best:
             score, sim, res = best[kind]
-            plan = _plan(sim, res, score, kind)
-            if all(plan["seq"] != o["seq"] for o in out):
-                out.append(plan)
+            out.append(_plan(sim, res, score, kind))
     return out[:max_plans]
 
 
@@ -846,28 +915,96 @@ def max_block(state: dict) -> int:
 
 
 def lethal_targets(state: dict) -> list[dict]:
-    """每个敌人：把易伤/攻击都灌给它，最多能打多少；够斩杀就列出来。"""
+    """每个敌人：把易伤/力量/AOE/药水都算进去，够斩杀就列出来。
+
+    P1-2 起不再只算单体攻击：AOE 牌与伤害药水会命中所有活怪，药水的
+    力量/易伤/回能也会在伤害前使用。这里用少量确定性顺序做贪心核对
+    （vuln 先手 / 纯伤害 / AOE 先手），不展开完整 DFS；返回的 `d`
+    是从该怪「当前 HP+格挡」实际扣掉的值。
+    """
     base = Sim.from_state(state)
     out = []
+    time_limit = 0.35
+    deadline = time.monotonic() + time_limit
+
+    def _effective(e: dict) -> int:
+        return 0 if e["dead"] or e["hp"] <= 0 else e["hp"] + e["blk"]
+
+    def _target_damage(s: Sim, c: dict, e: dict) -> int:
+        if c.get("id") == "BODY_SLAM":
+            per = s.block
+        else:
+            per = sts2._int(c.get("dmg"), 0)
+        if per <= 0:
+            return 0
+        per += s.str_bonus
+        if e and e["vuln"]:
+            per = int(per * 1.5)
+        return per * max(1, sts2._int(c.get("hits"), 1))
+
+    def _use_buffs(s: Sim, target: int, use_vuln: bool):
+        """先喝力量/回能/易伤药，再打力量/回能/易伤牌（药水不占费用）。"""
+        for p in s.potions:
+            if p.get("_used") or not p.get("use"):
+                continue
+            useful = p.get("en") or p.get("str") or (use_vuln and p.get("vuln"))
+            if useful:
+                s.potion(p, target)
+        cards = [c for c in s.hand if c.get("play", True) and not c.get("_played")
+                 and (c.get("en") or c.get("str") or (use_vuln and c.get("vuln")))]
+        cards.sort(key=lambda c: (s.cost_of(c), 0 if c.get("en") else 1, -_target_damage(s, c, s.by_index(target))))
+        for c in cards:
+            if s.cost_of(c) > s.energy:
+                continue
+            s.play(c, target)
+
+    def _use_damage(s: Sim, target: int, aoe_first: bool):
+        """药水伤害先结（不吃力量/易伤），再按对目标伤害/费用打牌。"""
+        for p in s.potions:
+            if p.get("_used") or not p.get("use") or not p.get("dmg"):
+                continue
+            s.potion(p, target)
+            if s.by_index(target) is None:
+                return
+        cards = [c for c in s.hand if c.get("play", True) and not c.get("_played")
+                 and (c.get("dmg") is not None or c.get("id") == "BODY_SLAM")]
+        cards.sort(key=lambda c: (
+            0 if (aoe_first and c.get("aoe")) else 1,
+            -_target_damage(s, c, s.by_index(target)) / max(1, s.cost_of(c)),
+            s.cost_of(c),
+        ))
+        for c in cards:
+            if s.cost_of(c) > s.energy:
+                continue
+            s.play(c, target)
+            if s.by_index(target) is None:
+                return
+
     for target in base.alive():
-        s = base.clone()
-        e = s.by_index(target["i"])
-        vuln_cards = sorted([c for c in s.hand if c.get("play", True) and c.get("vuln")],
-                            key=lambda c: s.cost_of(c))
-        for c in vuln_cards:
-            if s.cost_of(c) <= s.energy:
-                s.play(c, target["i"])
-        atk = sorted([c for c in s.hand if c.get("play", True) and c.get("dmg") is not None
-                      and not c.get("aoe")],
-                     key=lambda c: -(c.get("dmg", 0) * max(1, c.get("hits", 1))
-                                     * (1.5 if e and e["vuln"] else 1.0) / max(1, s.cost_of(c))))
-        dealt = sum(x.get("d", 0) for x in s.steps)
-        for c in atk:
-            if s.cost_of(c) <= s.energy:
-                s.play(c, target["i"])
-        dealt = sum(x.get("d", 0) for x in s.steps)
-        if dealt >= target["hp"] + target["blk"]:
-            out.append({"i": target["i"], "d": dealt, "hp": target["hp"]})
+        if time.monotonic() > deadline:
+            break
+        before = _effective(target)
+        if before <= 0:
+            continue
+        best = 0
+        killed = False
+        # 三种确定性顺序：易伤先手、纯伤害、AOE 先手；任一能杀就算能杀。
+        for mode in ("vuln", "direct", "aoe"):
+            s = base.clone()
+            e = s.by_index(target["i"])
+            if not e:
+                continue
+            _use_buffs(s, target["i"], use_vuln=(mode != "direct"))
+            _use_damage(s, target["i"], aoe_first=(mode == "aoe"))
+            e2 = s.by_index(target["i"])
+            after = _effective(e2) if e2 else 0
+            dealt = max(0, before - after)
+            best = max(best, dealt)
+            if e2 is None or after <= 0:
+                killed = True
+                break
+        if killed:
+            out.append({"i": target["i"], "d": max(best, before), "hp": target["hp"]})
     return out
 
 
@@ -894,19 +1031,31 @@ def resolve_card(sim: Sim, cid: str, used: set[int]) -> dict | None:
 def validate(state: dict, seq: list) -> tuple[bool, str, Sim, list]:
     """逐步校验模型给的顺序：牌/药水是否存在、每一步当下费用够不够。
 
-    目标死了自动改打威胁最大的活怪（和游戏里的 batch 一致），记在 sim.retargets。
-    返回 (ok, err, sim, steps)。ok=False 时调用方一张都不许打。
+    end 只能出现一次且必须是最后一步；end 后还有动作（包括双 end）整手拒绝，
+    不截断前半手假装成功。目标死了自动改打威胁最大的活怪（和游戏里的 batch
+    一致），记在 sim.retargets。返回 (ok, err, sim, steps)。ok=False 时调用方
+    一张都不许打。
+
+    P1-3 抽牌边界：`draw` 只会增加 `sim.draws`，不会把未知牌放进 `sim.hand`。
+    如果抽牌后又写一张不在抽牌前手里的牌，返回 `抽牌边界：...` 错误；调用方
+    必须停在这张抽牌牌（不写 end），读新 ctx 再决定。
     """
     sim = Sim.from_state(state)
     sim.retargets = []
     used: set[int] = set()
     steps = []
-    for n, raw in enumerate(seq or []):
+    seq = list(seq or [])
+    for n, raw in enumerate(seq):
         if isinstance(raw, str):
             raw = {"end": 1} if raw.lower() == "end" else {"c": raw}
         if not isinstance(raw, dict):
             return False, f"第{n + 1}步不是对象", sim, steps
         if raw.get("end") or raw.get("a") == "end":
+            # end_turn 之后再写的动作会落到新回合，牌序/能量都已经变了。
+            # 严格拒绝，而不是截断前半手后假装成功。
+            if n != len(seq) - 1:
+                return (False, f"第{n + 1}步 end 必须是最后一步（后面还有 "
+                              f"{len(seq) - n - 1} 步）；拒绝执行整手", sim, steps)
             steps.append({"k": "end"})
             return True, "", sim, steps
         if "p" in raw or raw.get("a") == "potion" or "slot" in raw:
@@ -938,6 +1087,11 @@ def validate(state: dict, seq: list) -> tuple[bool, str, Sim, list]:
         cid = raw.get("c", raw.get("id", raw.get("card_id")))
         card = resolve_card(sim, str(cid or ""), used)
         if not card:
+            if sim.draws:
+                return (False, (f"抽牌边界：第{n + 1}步 {cid} 不在抽牌前手牌里；"
+                                f"前面已抽 {sim.draws} 张，抽到什么由游戏决定，不能预排。"
+                                "先把抽牌牌单独打出去（不要写 end），读新 ctx 再出下一手"),
+                        sim, steps)
             return False, f"第{n + 1}步：手里没有可打的 {cid}", sim, steps
         cost = sim.cost_of(card)
         if cost > sim.energy:

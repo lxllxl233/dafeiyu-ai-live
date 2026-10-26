@@ -19,12 +19,15 @@
 · t = 敌人下标（可省：默认打威胁最大的活怪；AOE 不写）
 · p = 药水槽位（t 可选，targeted 药水必须给）
 · end 必须是最后一步；不写 end = 只打到一半就停（等抽牌/Buff 落地时用）
+· 抽牌后手牌未知：只发抽牌牌本身（不写 end），读返回的新 ctx 再排下一手；
+  若在同一 seq 里写“抽牌牌 + 不在当前手里的牌”，整手拒绝并提示 split_at_draw
 · say 1–3 句：第一句随本回合播，其余排队；写法看 sts2-caster
-· fx 可选：只支持 e/hp/take（硬校验）、draw/exh/self（软提醒）
+· fx 可选：只支持 e/hp/take（通常硬校验；抽牌+end 的 hp/take 只作近似）、draw/exh/self（软提醒）
 
 输出（stdout 最后一行）
 ----------------------
 {"ok": true, "fx": {...}, "ctx": {...下一回合局面包...}}
+不写 end：另带 {"mid":1,"next":"read_ctx","mid_reason":"..."}；抽牌后必须重读 ctx。
 出错时 ok=false，err 说明，ctx 仍是当前局面；**一张都不会打**（除非 batch 中途 STOP）。
 """
 from __future__ import annotations
@@ -44,6 +47,7 @@ sys.path.insert(0, os.path.join(ROOT, "tools"))
 
 import sts2  # noqa: E402
 import ctx as ctxmod  # noqa: E402
+import decision_log  # noqa: E402
 import sim  # noqa: E402
 
 
@@ -123,8 +127,34 @@ def _attach_say(actions: list, lines: list) -> None:
     actions[0]["meme"] = first.get("m", "")
 
 
-def _next_ctx(mem: dict | None = None) -> dict:
-    return ctxmod.build_with_mem(sts2.get_state(), mem if mem is not None else ctxmod._load_mem())
+def _next_ctx(mem: dict | None = None, st: dict | None = None) -> dict:
+    return ctxmod.build_with_mem(st if st is not None else sts2.get_state(),
+                                 mem if mem is not None else ctxmod._load_mem())
+
+
+def _candidate_plans(st: dict) -> list:
+    """只给账本看：不写 mem、不改状态；失败不冒充有候选。"""
+    if not isinstance(st, dict) or st.get("screen") != "COMBAT":
+        return []
+    try:
+        return sim.search(st, max_cards=8, max_plans=5, time_limit=0.8,
+                          max_nodes=120_000)
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def _log_decision(st: dict, seq: list, lines: list, fx: dict, *, outcome: str,
+                  err=None, steps=None, forecast=None, plans=None, batch=None,
+                  after=None, retargets=None, mode: str = "model") -> None:
+    """账本失败绝不能影响出牌。"""
+    try:
+        decision_log.record_decision(
+            st, seq, lines, fx, outcome=outcome, err=err, steps=steps,
+            forecast=forecast, plans=plans, batch=batch, after=after,
+            retargets=retargets, mode=mode,
+        )
+    except Exception:  # noqa: BLE001
+        pass
 
 
 # ---------------------------------------------------------------- 校验
@@ -146,6 +176,9 @@ def forecast(st: dict, sm: sim.Sim, steps: list, ended: bool) -> dict:
     kills = [e["i"] for e in sm.enemies if e["dead"]]
     stun = [e["i"] for e in sm.enemies if e["stunned"] and not e["dead"]]
     fx = {"e": sm.energy, "hp": hp, "draw": sm.draws, "exh": sm.exhausts}
+    if ended and sm.draws:
+        # 抽到的牌不在本地 sim 手里；end_turn 的状态税/掉血只能按旧手牌估。
+        fx["draw_unknown"] = sm.draws
     if take is not None:
         fx["take"] = take
     if sm.selfhp:
@@ -158,8 +191,15 @@ def forecast(st: dict, sm: sim.Sim, steps: list, ended: bool) -> dict:
 
 
 def fx_error(got: dict, want: dict) -> str | None:
-    """模型自报的硬资源（费/血/掉血）必须和本地账本一致；不写 fx 就不查。"""
-    for k, label in (("e", "回合末能量"), ("hp", "回合末血量"), ("take", "本回合净掉血")):
+    """模型自报的硬资源（费/血/掉血）必须和本地账本一致；不写 fx 就不查。
+
+    含抽牌的回合：抽到的牌不在本地 sim 手里，end_turn 的血量/状态税只能按旧
+    手牌估，不能当作硬账本；此时只验能量，hp/take 由下一回合 ctx 复核。
+    """
+    keys = [("e", "回合末能量")]
+    if not want.get("draw_unknown"):
+        keys += [("hp", "回合末血量"), ("take", "本回合净掉血")]
+    for k, label in keys:
         if k in got and k in want:
             if sts2._int(got[k], 0) != sts2._int(want[k], 0):
                 return f"fx.{k} 不对：你写 {got[k]}，实际 {want[k]}（{label}）"
@@ -183,35 +223,87 @@ def _read_memo() -> dict:
         return {}
 
 
-def _write_memo(turn, mid: bool) -> None:
+def _write_memo(turn, mid: bool, ended_turn=None) -> None:
     try:
         os.makedirs(os.path.dirname(TURN_MEMO), exist_ok=True)
+        data = {"turn": turn, "mid": bool(mid)}
+        if ended_turn is not None:
+            data["ended_turn"] = ended_turn
         with open(TURN_MEMO, "w", encoding="utf-8") as f:
-            json.dump({"turn": turn, "mid": bool(mid)}, f)
+            json.dump(data, f)
     except Exception:
         pass
 
 
+def _end_count(seq: list) -> int:
+    n = 0
+    for x in seq or []:
+        if isinstance(x, str):
+            if x.strip().lower() == "end":
+                n += 1
+        elif isinstance(x, dict) and (x.get("end") or str(x.get("a") or "").lower() == "end"):
+            n += 1
+    return n
+
+
 def _end_only(seq: list) -> bool:
-    return len(seq) == 1 and isinstance(seq[0], dict) and bool(seq[0].get("end"))
+    return len(seq) == 1 and _end_count(seq) == 1
+
+
+def _has_playable(st: dict) -> bool:
+    """保守判断：新回合手上有能打出的牌时，禁止用纯 end 白白空过。"""
+    try:
+        sm = sim.Sim.from_state(st)
+        return any(sm.cost_of(c) <= sm.energy for c in sm.hand)
+    except Exception:  # noqa: BLE001
+        c = st.get("combat") or {}
+        energy = sts2._int((c.get("player") or {}).get("energy"), 0)
+        for card in c.get("hand") or []:
+            if not isinstance(card, dict) or card.get("playable") is False:
+                continue
+            cost = sts2._int(card.get("energy_cost", card.get("cost")), 99)
+            if cost <= energy:
+                return True
+        return False
 
 
 def _stale_end(st: dict, seq: list) -> str | None:
     """上一次停在 mid、回合却已经换了：再发 end 会把新回合整个空过（run60 白吃 16 血）。"""
-    if st.get("screen") != "COMBAT" or not _end_only(seq):
+    seq = seq or []
+    if st.get("screen") != "COMBAT":
+        return None
+    ends = _end_count(seq)
+    if ends > 1:
+        return f"seq 里出现 {ends} 次 end；end_turn 只能发一次且必须是最后一步，拒绝执行整手"
+    if not _end_only(seq):
         return None
     cur, memo = _turn_of(st), _read_memo()
+    if not isinstance(memo, dict):
+        memo = {}
     if cur is not None and memo.get("mid") and memo.get("turn") != cur:
         return f"回合已切换（turn {memo.get('turn')}→{cur}）：上一手停在 mid，这里再 end 会空过整回合；先读 ctx 出牌"
+    ended_turn = memo.get("ended_turn")
+    if cur is not None and ended_turn is not None:
+        if ended_turn == cur:
+            return f"turn {cur} 已经 end 过一次：状态还没推进，再发 end 会重复结束；先读 ctx"
+        if ended_turn != cur and _has_playable(st):
+            return (f"上一手已经 end_turn（turn {ended_turn}→{cur}），新回合手里还有能打的牌；"
+                    "先读 ctx 出牌，不要只发 end")
     return None
 
 
 # ---------------------------------------------------------------- 执行
 def _execute(st: dict, seq: list, lines: list, fx: dict) -> dict:
     lines = [{"t": x, "m": ""} if isinstance(x, str) else x for x in (lines or []) if x]
+    plans = _candidate_plans(st) if decision_log.enabled() else []
     ok, err, sm, steps, ended = validate_plan(st, seq)
     if not ok:
         out = {"ok": False, "err": err, "ctx": ctxmod.build_with_mem(st, ctxmod._load_mem())}
+        if err.startswith("抽牌边界"):
+            out["next"] = "split_at_draw"
+            out["hint"] = "抽牌后手牌未知：先只打抽牌牌（不写 end），先读 ctx 再出下一手"
+        _log_decision(st, seq, lines, fx, outcome="rejected_validate", err=err,
+                      steps=steps, plans=plans, retargets=getattr(sm, "retargets", None))
         return out
 
     want = forecast(st, sm, steps, ended)
@@ -219,10 +311,16 @@ def _execute(st: dict, seq: list, lines: list, fx: dict) -> dict:
     if bad:
         out = {"ok": False, "err": bad, "fx": want,
                "ctx": ctxmod.build_with_mem(st, ctxmod._load_mem())}
+        _log_decision(st, seq, lines, fx, outcome="rejected_fx", err=bad,
+                      steps=steps, forecast=want, plans=plans,
+                      retargets=getattr(sm, "retargets", None))
         return out
 
     actions = _actions(steps)
     if not actions:
+        _log_decision(st, seq, lines, fx, outcome="no_actions", err="seq 里没有动作",
+                      steps=steps, forecast=want, plans=plans,
+                      retargets=getattr(sm, "retargets", None))
         return {"ok": False, "err": "seq 里没有动作（要结束回合就写 {\"end\":1}）",
                 "ctx": ctxmod.build_with_mem(st, ctxmod._load_mem())}
     _attach_say(actions, lines)
@@ -238,7 +336,23 @@ def _execute(st: dict, seq: list, lines: list, fx: dict) -> dict:
         out["retarget"] = sm.retargets
     if not ended:
         out["mid"] = 1
-    out["ctx"] = _next_ctx()
+        out["next"] = "read_ctx"
+        if sm.draws:
+            out["mid_reason"] = (f"已抽 {sm.draws} 张，手牌已变；先读 ctx 再出下一手，"
+                                 "不要按抽牌前的手牌继续排")
+        else:
+            out["mid_reason"] = "没写 end：本手只打到一半；先读 ctx 确认手牌/能量，再决定是否结束回合"
+    elif run_err is None:
+        # 用于下一次 act 识别「刚 end 完又补 end」：记录结束的是哪一回合。
+        out["ended_turn"] = _turn_of(st)
+    next_st = sts2.get_state()
+    out["ctx"] = _next_ctx(st=next_st)
+
+    batch_info = {"ok": run_err is None, "err": run_err, "log": log[-8:]}
+    _log_decision(st, seq, lines, fx,
+                  outcome="executed" if run_err is None else "batch_error",
+                  err=run_err, steps=steps, forecast=want, plans=plans,
+                  batch=batch_info, after=next_st, retargets=sm.retargets)
 
     # 第一句已随动作播；其余排队（不阻塞本回合）
     for ln in lines[1:]:
@@ -281,17 +395,27 @@ def _auto(turns: int, stop_hp: int, lines: list) -> dict:
             failed = True
             break
         actions = _actions(steps)
-        if lines and not spoke:
+        speak_now = bool(lines and not spoke)
+        if speak_now:
             _attach_say(actions, lines)
             spoke = True
         _lg, run_err = _run_batch(actions)
+        _log_decision(st, seq, lines if speak_now else [], {},
+                      outcome="executed" if run_err is None else "batch_error",
+                      err=run_err, steps=steps, forecast=forecast(st, sm, steps, ended),
+                      plans=plans, retargets=sm.retargets, mode="auto")
         log.append(f"AUTO T{n + 1}: 伤害{plans[0]['dmg']} 斩{plans[0].get('kill', [])} 净掉{plans[0]['taken']}")
         if run_err:
             log.append(f"AUTO T{n + 1}: {run_err}")
             failed = True
             break
     out = {"ok": not failed, "log": log}
-    out["ctx"] = _next_ctx()
+    next_st = sts2.get_state()
+    out["ctx"] = _next_ctx(st=next_st)
+    try:
+        decision_log.record_run_summary(next_st)
+    except Exception:  # noqa: BLE001
+        pass
     return out
 
 
@@ -312,22 +436,29 @@ def main():
     seq, lines, fx, auto = normalize(spec)
     st = sts2.get_state()
     if st.get("screen") != "COMBAT":
-        print(json.dumps({"ok": False, "err": f"当前不是战斗（{st.get('screen')}）",
+        err = f"当前不是战斗（{st.get('screen')}）"
+        _log_decision(st, seq, lines, fx, outcome="not_combat", err=err)
+        print(json.dumps({"ok": False, "err": err,
                           "ctx": ctxmod.build_with_mem(st, ctxmod._load_mem())}, ensure_ascii=False))
         return
     stale = _stale_end(st, seq)
     if stale:
+        _log_decision(st, seq, lines, fx, outcome="stale_end", err=stale)
         print(json.dumps({"ok": False, "err": stale,
                           "ctx": ctxmod.build_with_mem(st, ctxmod._load_mem())}, ensure_ascii=False))
         return
     if auto:
         out = _auto(sts2._int(auto.get("turns"), 1), sts2._int(auto.get("stop_hp"), 0), lines)
     elif not seq:
-        out = {"ok": False, "err": "缺 seq（要结束回合就写 [{\"end\":1}]）",
+        err = "缺 seq（要结束回合就写 [{\"end\":1}]）"
+        _log_decision(st, seq, lines, fx, outcome="missing_seq", err=err)
+        out = {"ok": False, "err": err,
                "ctx": ctxmod.build_with_mem(st, ctxmod._load_mem())}
     else:
         out = _execute(st, seq, lines, fx)
-    _write_memo(_turn_of(sts2.get_state()), bool(out.get("mid")))
+    # 只有真的执行成功才更新回合记忆；被拒/批处理报错不能把上一手的 mid 清掉。
+    if out.get("ok"):
+        _write_memo(_turn_of(sts2.get_state()), bool(out.get("mid")), out.get("ended_turn"))
     print(json.dumps(out, ensure_ascii=False))
 
 

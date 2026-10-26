@@ -24,7 +24,7 @@ python tools/act.py --file tmp_plan.json  # 执行 seq，回下一回合 ctx（�
 
 - `c`：`card_id`（不写下标；升级版写 `STRIKE_IRONCLAD+`；同名多张默认打最便宜/最强那张）。
 - `t`：敌人下标；可省（默认打威胁最大的活怪）。`p`：药水槽，targeted 必须给 `t`。
-- `end`：最后一步。**不写 `end` = 只打到一半就停**（等抽牌/Buff），回 `mid:1`。
+- `end`：最后一步。**不写 `end` = 只打到一半就停**，回 `mid:1`；抽牌后读 ctx。
 - `say`：1–3 句；第一句随本回合播，其余排队；写法看 `sts2-caster`。
 - `fx`：可选自报账；写 `e`/`hp`/`take` 会被硬校验，和本地账本不一致就**整手不打**打回。
 - **省请求**：杂怪（非精英/Boss、血安全）加 `{"auto":{"turns":3,"stop_hp":40}}`，本地连打，血线到/战斗结束/进选牌就停。一场杂怪 1 次请求。
@@ -44,7 +44,7 @@ python tools/act.py --file tmp_plan.json  # 执行 seq，回下一回合 ctx（�
 
 - `mech`=DB 机制（`招：藤蔓9A+W｜挥击7A｜大啃18A`）｜`bd`=当前 buff 机制｜`it.tot` 已含力量与我方易伤。
 - `calc.dmg`=本回合伤害上限，`calc.ttk`=还几回合杀，`nx_inc`=下回合预计入伤，`nxdraw`=下一手期望甲/伤。
-- 意图码、`cm` 变费、`plans` 语义 → `references/ctx_fields.md`。
+- 意图码、`cm` 变费、`plans` 五类/`risk` → `references/ctx_fields.md`。
 
 ## 0.6 输出：牌序就是资源顺序
 
@@ -65,7 +65,7 @@ python tools/act.py --file tmp_plan.json  # 执行 seq，回下一回合 ctx（�
 2 读 enemies：`mech` 先判机制（召唤/塞牌/成长/反伤/分裂）；`it.d×h`（×力量×虚弱）＝**每怪本轮入伤**，逐个加总核对 `calc.inc`；`nx` 预判下一手，`hist` 找周期
 3 读 calc：inc/blk/net/full/lethal/chain/aoe/tax；算「杀→晕」与两回合账（要铺就看 `hand[].nxt`/`can.buff`）
 4 定回合类型：斩杀｜全挡/喝药｜≤10% 最大生命挡满｜换血（净掉≤5）｜铺场
-5 选线：kill→stun > AOE 清场 > 全挡 > 换血 > 铺场；plans.best/guard/potion 只作参考
+5 选线：kill→stun > AOE 清场 > 全挡 > 换血 > 铺场；plans 全看，`maxdmg` 的 `risk=1` 只作上限
 6 写 seq（牌+药水按资源顺序），能自报就写 fx
 7 收尾三查：e=0/N｜没有能打的格挡牌｜没有 0 费/回合末扣血牌
 8 空费诊断：e>0 且手里只剩状态牌/不可打牌 → 不是手慢，是**牌组攻击牌 <6**；记 `deck_issue`，下个商店先补每费价值 ≥8 的牌再删牌
@@ -103,7 +103,7 @@ AOE 清算：总量 A vs 全场血 H；A≥H 清场；A<H 收最危险 1–2 只
 ```
 
 - **每费价值**：飞剑+ 12｜耸肩+ 11｜飞剑 9｜余烬 9｜上勾拳 6.5｜打击 6｜防御 5。
-- **状态牌**：感染/黏液 3 伤、呼唤 6 伤（无视格挡）全算进 `calc.tax`/`incoming`。
+- **状态牌**：感染 3 伤、燃烧 2 伤、剧毒 5 伤、呼唤 6 伤（无视格挡）全算进 `calc.tax`；可格挡部分与 `incoming` 共用格挡池；黏液 1 费抽 1，Wound 无回合末伤害。
 - **自伤四问**（放血/祭品/血墙/突破）：2–6 血换的能量本回合能斩杀/挡 ≥ 自伤吗？HP ≤40% 不交；有别的回能不交。
 - 跨费先看 `plans[].d` 与 `calc.lethal`，别用旧斩杀线。
 
@@ -128,8 +128,8 @@ AOE 清算：总量 A vs 全场血 H；A≥H 清场；A<H 收最危险 1–2 只
 ## 6. 路线 / 非战斗
 
 - 地图：`ctx.choice.opts` → `route --commit <i> --note "…"` → 每节点 `plan` 对账（PLAN_OK/REPLAN）。低血优先级：营火 > 问号 > 商店 > 怪 > 精英。
-- 事件/奖励/商店/营火/选牌：读 `ctx.choice`，讲清取舍再 `sts2.py do <action> --option i`；`--full` 只复盘用。
-- REPLAN：血线 <70%｜掉血 ≥20% 最大｜拿首张 AOE｜金币 100+｜牌组 +3｜多诅咒。**金币只有一个用途：删牌**；有诅咒时「全金币换牌面变化」一律拒绝。
+- 非战斗：读 `choice.eval` 的 `need/best/skip/buy/bar/why`（提示，非胜率）；冲突按牌面/手册，再 `do --option i`。事件读原文，地图走 route；`--full` 复盘。
+- REPLAN：血线 <70%｜掉血 ≥20% 最大｜拿首张 AOE｜金币 100+｜牌组 +3｜多诅咒。**金币只删牌**；诅咒局拒绝全金币换牌。
 
 ## 7. 构筑
 
@@ -142,7 +142,7 @@ AOE 清算：总量 A vs 全场血 H；A≥H 清场；A<H 收最危险 1–2 只
 | 收尾 | 1 张（重锤/契约终结） | 无收尾 = 打不死 Boss |
 | 运转 | Act2 前 4 + 2 回费 | 只有一套启动 = 死 |
 
-只补缺口：**AOE > 主轴核心 > 防御 > 运转 > 收尾**；≥14 张只拿 A 级。奖励先看 `ctx.choice.cards` 的 `dmg/blk/draw/aoe`。
+只补缺口：**AOE > 主轴 > 防御 > 运转 > 收尾**；≥14 张只拿 A 级。奖励看 `cards` 的 `dmg/blk/draw/aoe`。
 
 ## 8. 精英 / Boss
 
