@@ -2362,10 +2362,69 @@ def _delta_line(before: dict, after: dict) -> str:
     return " · ".join(bits)
 
 
+def _plan_cost(state: dict, items: list) -> tuple[int, int]:
+    """本回合计划的费用合计 vs 当前能量（只数当前手牌里能对上的牌）。"""
+    combat = state.get("combat") or {}
+    energy = _int((combat.get("player") or {}).get("energy"), 0)
+    hand = [c for c in (combat.get("hand") or []) if isinstance(c, dict)]
+    by_id = {}
+    for c in hand:
+        cid = str(c.get("card_id") or c.get("id") or "")
+        cost = _int(c.get("energy_cost", c.get("cost")), 0)
+        by_id.setdefault(cid, max(0, cost))
+    total = 0
+    for it in items:
+        if it.get("action") != "play_card":
+            continue
+        cid = str(it.get("card_id") or "")
+        if cid and cid in by_id:
+            total += by_id[cid]
+        elif "card_index" in it:
+            k = _int(it.get("card_index"), -1)
+            if 0 <= k < len(hand):
+                total += max(0, _int(hand[k].get("energy_cost", hand[k].get("cost")), 0))
+    return energy, total
+
+
 def cmd_batch(spec: str):
-    items = json.loads(spec)
+    """一次调用打完整个回合，并直接吐出下一回合的快照。
+
+    为什么这么设计：模型每多一次工具调用，就把整段上下文（实战 30 万 token 级）
+    重新读一遍。旧协议「每刀一条 play + 每回合一条 state」= 5–7 次请求/回合；
+    这里压成 1 次。安全性不靠模型重复读数，靠工具逐步重解析 card_id：
+      · 每步按当前手牌重新找下标（手牌压缩不会打错牌）
+      · 缺牌/非法立刻 STOP 并回快照（绝不盲打，也不吞动作）
+      · 费用超预算在动手前就打回（不打半截回合）
+      · end_turn 之后等新回合手牌抽稳，直接打完整 state（下一回合不用再 state）
+    """
+    try:
+        items = json.loads(spec)
+    except json.JSONDecodeError as e:
+        print(f"BATCH_BAD_JSON {e}")
+        sys.exit(2)
     if isinstance(items, dict):
         items = items.get("actions", [])
+    if not items:
+        print("BATCH_EMPTY 没有动作；要结束回合就写 {\"action\":\"end_turn\"}")
+        sys.exit(2)
+    ends = [i for i, it in enumerate(items) if it.get("action") == "end_turn"]
+    if ends and ends[-1] != len(items) - 1:
+        print("BATCH_FIX end_turn 必须是最后一步（后面的动作会落到新回合，牌序已变）")
+        sys.exit(2)
+
+    start = get_state()
+    if start.get("screen") == "COMBAT":
+        energy, need = _plan_cost(start, items)
+        if need > energy:
+            print(
+                f"PLAN_OVER_BUDGET 这手要 {need} 费、只剩 {energy}：一张都不打，"
+                "改计划重发（打半截回合最亏）"
+            )
+            print(compact(start, brief=True))
+            sys.exit(2)
+
+    ended = False
+    after = start
     for i, it in enumerate(items):
         a = it.get("action")
         if not a:
@@ -2374,15 +2433,54 @@ def cmd_batch(spec: str):
         if i > 0:
             st = _player_turn_state()
             if st is None:
+                if a == "end_turn":
+                    # 上一刀已经打完战斗/进选牌：没有玩家回合可结束，别把 end_turn 发出去。
+                    print(f"[{i}] end_turn 跳过：战斗已经结束（没有玩家回合）")
+                    ended = True
+                    break
                 print(f"BATCH STOP at {i} {a}: 没有玩家回合快照（战斗结束/进了选牌/敌人回合）")
                 print(compact(get_state()))
                 sys.exit(3)
         before = get_state()
+        if (
+            i == 0
+            and before.get("screen") == "COMBAT"
+            and a in ("play_card", "end_turn")
+            and a not in (before.get("available_actions") or [])
+        ):
+            # 先点进战斗/敌人回合还没完：等一会儿，别把动作丢进过渡态。
+            waited = wait_legal(a, timeout=5.0)
+            if waited is not None and a in (waited.get("available_actions") or []):
+                before = waited
+            else:
+                print(f"BATCH STOP at {i} {a}: 当前不是玩家回合（{before.get('screen')}），没有发出动作")
+                print(compact(before))
+                sys.exit(3)
+        if a == "end_turn":
+            if before.get("screen") != "COMBAT":
+                # 最后一刀已经把战斗打完/进选牌了：end_turn 会 invalid_action，直接收工。
+                print(f"[{i}] end_turn 跳过：已经是 {before.get('screen')}（战斗结束，别补刀）")
+                ended = True
+                break
+            try:
+                resp = act("end_turn")
+            except Exception as e:
+                print(f"BATCH STOP at end_turn: {e}")
+                print(compact(get_state()))
+                sys.exit(2)
+            prev = len(((before.get("combat") or {}).get("hand") or []))
+            after = wait_new_turn_hand(prev) or get_state()
+            log(a, {}, before, after, resp or {}, it.get("thought", ""), it.get("meme", ""))
+            print(f"[{i}] end_turn -> {resp.get('status')} | {_delta_line(before, after)}")
+            ended = True
+            break
         params = {k: it[k] for k in ("card_index", "target_index", "option_index") if k in it}
         # 允许按 card_id 指定，客户端每步按当前手牌重新解析下标（手牌会压缩）。
         cid = it.get("card_id")
         if cid and "card_index" not in params:
             hand = (before.get("combat") or {}).get("hand") or []
+            alive = [e for e in ((before.get("combat") or {}).get("enemies") or [])
+                     if isinstance(e, dict) and _int(e.get("hp"), 1) > 0]
             idx = next(
                 (k for k, c in enumerate(hand)
                  if isinstance(c, dict) and str(c.get("card_id")) == str(cid)
@@ -2394,6 +2492,13 @@ def cmd_batch(spec: str):
                 print(compact(before))
                 sys.exit(3)
             params["card_index"] = idx
+            # 目标已死 → 自动改打最低血活敌人，别把整刀浪费在尸体上
+            ti = params.get("target_index")
+            if ti is not None and a == "play_card" and alive:
+                if not (0 <= _int(ti, -1) < len(alive)):
+                    hi = min(alive, key=lambda e: _int(e.get("hp"), 9999))
+                    params["target_index"] = alive.index(hi)
+                    print(f"TARGET_FIX 目标 {ti} 已不在场 → 改打最低血敌人 {params['target_index']}")
         thought = it.get("thought", "")
         meme = it.get("meme", "")
         try:
@@ -2402,10 +2507,23 @@ def cmd_batch(spec: str):
             print(f"BATCH STOP at {i} {a}: {e}")
             sys.exit(2)
         after = resp.get("state") or get_state()
+        if a == "play_card":
+            # 过渡快照守卫：动作后状态没变，说明撞上了出牌动画；等一手再读，
+            # 否则下一步 card_index 会解析到旧手牌（run55 的 ACTION_SKIPPED 就是这么来的）。
+            for _ in range(3):
+                if _fingerprint(after) != _fingerprint(before):
+                    break
+                time.sleep(0.12)
+                after = get_state()
         overlay_say(tag_for(after.get("screen", "")), thought, meme, after)
         log(a, params, before, after, resp or {}, thought, meme)
         print(f"[{i}] {a} {params.get('card_index', params)} -> {resp.get('status')} | {_delta_line(before, after)}")
-    print(compact(get_state(), brief=True))
+    if ended:
+        # 完整快照 = 下一回合的 state：省掉「回合开始再 state 一次」的那次请求。
+        print(compact(after))
+    else:
+        print(compact(get_state(), brief=True))
+    _meme_hint()
 
 
 def cmd_wait(screen=None, player_turn=False, timeout=30):
@@ -2677,8 +2795,8 @@ def main():
     p.add_argument("--thought", default="")
     p.add_argument("--meme", default="")
     p.add_argument("--full", action="store_true", help="动作后打完整 state")
-    p = sub.add_parser("batch")
-    p.add_argument("spec")
+    p = sub.add_parser("batch", help="一次调用打完整个回合（推荐）：actions 列表 + 可选 end_turn")
+    p.add_argument("spec", help='JSON：{"actions":[{"action":"play_card","card_id":"BASH","target_index":0},...,{"action":"end_turn"}]}')
     p = sub.add_parser("wait")
     p.add_argument("--screen")
     p.add_argument("--player-turn", action="store_true")

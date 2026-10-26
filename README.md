@@ -73,7 +73,7 @@ COPIES STRIKE_IRONCLAD: 升级版 [3] vs 未升级 [1] → 打升级版
 - 多段意图统一印成 `dmg=8x4=32 多段4次`，挡牌按较大值。
 - **省 token 设计（2026-10-26，第 56 局后）**：`state` 默认只打**增量**——药水/遗物/诅咒/机制只在一行 `HUD` 里常驻，完整 `POTION FX / RELIC FX / DECK_BAD / MECHANICS` 只在变化时出现；手里见过的牌走短格式（`DISMANTLE c1 敌 | Damage=8`），第一次见到才打全卡面。实测重复读态比旧版短 **31–45%**。要全量用 `state --full`（新卡、新药水、换幕时看一次）。
 - **出牌后只回一行**：`play` / `do play_card` 在战斗内只打 `DELTA E2→1 blk0 hp53 · e0:32 · hand4` + 极简手牌/敌人/入伤（约 **280 B**，比热读再省 **73%**）；要看逐卡 EFF/斩杀表就 `state` 一次（每回合 1 次足够），或 `play … --full`。
-- **一回合多刀用 `batch`**：客户端每步等「玩家回合」快照、按 `card_id` 重新解析下标、任何异常（缺牌/战斗结束/进选牌）立即停并打印当前状态，中间步只打一行 `E3→2 · blk0 · e0:62 · hand2` 增量。斩杀/易伤链这种顺序敏感的仍建议单张。
+- **一回合一条 `batch`（v18，省 token 的主开关）**：整个回合的出牌 + `end_turn` 写进一条命令，末尾**直接吐出下一回合的完整快照**，下一回合不用再 `state`。安全由工具保证——每步等「玩家回合」快照、按 `card_id` 重解析下标、撞过渡快照自动重读、缺牌/超费/目标失效立即停并打印当前状态。实测一拍 3 刀的回合同比：**请求 5 次 → 1 次，回显 2,279 → 610 字符**（`python tools/compare_turn_protocol.py`）。顺序确实定不下来时才退回单张。
 
 ## 分层记忆（2026-10-26，回答「能不能用结构化摘要」）
 
@@ -81,9 +81,9 @@ COPIES STRIKE_IRONCLAD: 升级版 [3] vs 未升级 [1] → 打升级版
 
 | 层 | 命令 | 体积 | 何时用 |
 |---|---|---|---|
-| L0 规则 | skill（`.dsh/skills/sts2-ironclad-ironclad`） | ~4k tok | 常驻 |
+| L0 规则 | skill（`.dsh/skills/sts2-ironclad-ironclad`，v18） | ~3.6k tok | 常驻（一次，别重复加载） |
 | L1 结构化记忆 | `python sts2.py memory`（`--write` 落盘 `logs/run_memory.md`） | ~150 tok | 开局/换幕/新 session 恢复 |
-| L2 当前状态 | `python sts2.py state`（回合开始）/ 出牌后自动 `DELTA` | 90–350 tok | 每回合 1 次 + 每刀自动 |
+| L2 当前状态 | `batch` 尾部快照（没有就用 `state`） | 90–350 tok | 每回合 1 次 |
 | L3 细节检索 | `python sts2.py journal --floor 12 --last 20` | 按需 | 回溯某层怎么掉的、复盘 |
 
 `memory` 从当前 `state` + 本局 JSONL + `route_plan.json` 现算，输出一屏（实测 449 B / 9 行）：
@@ -112,8 +112,9 @@ python sts2.py state            # 压缩状态（只打增量：药水/遗物/�
 python sts2.py state --full     # 全量状态（新卡/新药水/换幕时看一眼）
 python sts2.py acts             # 当前合法动作
 python sts2.py do play_card --card 0 --target 0 --thought "..." --meme "..."
-python sts2.py batch '{"actions":[{"action":"play_card","card_id":"BASH","target_index":0},{"action":"play_card","card_id":"DISMANTLE","target_index":0}]}'
-                                # 同回合确定顺序的连招：每步等玩家回合快照、按 card_id 找牌、异常即停
+python sts2.py batch '{"actions":[{"action":"play_card","card_id":"BASH","target_index":0},{"action":"play_card","card_id":"DISMANTLE","target_index":0},{"action":"end_turn","thought":"...","meme":"..."}]}'
+                                # 一回合一条：每步等玩家回合快照、按 card_id 找牌、异常即停，
+                                # 末尾直接给下一回合快照（下一回合不用再 state）
 python sts2.py do end_turn --thought "..." --meme "..."
 python sts2.py do select_deck_card --options 0,2 --thought "..."   # 多选界面一次点完（自动确认）
 python sts2.py say --thought "..." --meme "..."
@@ -122,7 +123,10 @@ python sts2.py route --commit 0 --note "商店线"   # 把 opt0 记为当前计�
 python sts2.py plan             # 对账：PLAN_OK / REPLAN（状态一变就提示重规划）
 python sts2.py report           # JSONL -> Markdown
 python tools/test_state_compact.py   # 状态增量输出回归
-python tools/test_batch.py           # batch 回归（等快照/按 card_id/异常停）
+python tools/test_batch.py           # batch 回归（等快照/按 card_id/超费/过渡态/异常停）
+python tools/audit_tokens.py          # token 账本：请求数/上下文/各命令回显（读 DSH 日志）
+python tools/compare_turn_protocol.py # 旧协议 vs v18 一回合一条 batch 的回显/请求对比
+python tools/check_skill.py           # skill 规则覆盖断言（阈值/关键词/反模式编号不许丢）
 python obsctl.py free           # 切窗口/游戏采集（切到 B 站也继续录游戏画面）
 python obsctl.py free window    # 游戏采集不工作时，退回窗口采集（WGC）
 python obsctl.py health         # 录制自检：有没有画面/声音、游戏窗口是否最小化

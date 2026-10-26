@@ -1,18 +1,11 @@
 你现在接手一个 Slay the Spire 2 项目：在 Windows 工作目录 D:\aigame\sljt\sljt 下，用本地 mod API 打 A10 铁甲战士，同时录制游戏视频+游戏音频，并用 OBS 浏览器源显示 DeepSeek 大肥鱼 overlay 解说。
 
-当前状态：游戏在 MAIN_MENU，录像已停止，没有进行中的局。上一局 run9 因“状态过渡快照”误发 end_turn 异常结束，不是正常战败；不要恢复上一局。
+当前状态：游戏在 MAIN_MENU，录像已停止，没有进行中的局。上一局异常结束的局不要恢复。
 
-开始前先读这些文件（按顺序）：
-README.md
-docs/A10_GAP_ANALYSIS.md
-docs/ACT1_PLAYBOOK.md
-docs/COMBAT_TURN.md
-docs/SHOP_DECISIONS.md
-docs/CAMPFIRE_UPGRADES.md
-docs/NEOW_DECISIONS.md
-docs/ACT2_ACT3_PLAYBOOK.md
-docs/LESSONS.md
-docs/RUN_REVIEW.md
+开始前只需要读两样（**别再把 docs/ 全读一遍**，那是 2 万 token 的开场白）：
+1. skill `sts2-ironclad-ironclad`（决策 OS v18，一次加载）
+2. README.md 的「常用命令」一节
+其余细节按需 `grep` 关键词再 `read` 带 offset/limit 取 20–40 行：LESSONS.md / ACT1_PLAYBOOK.md / COMBAT_TURN.md / NEOW_DECISIONS.md。
 
 目标：新开一局 A10 铁甲战士，从选人开始完整录制，打到本局结束；每局结束写战报/复盘/lessons。
 
@@ -24,18 +17,23 @@ docs/RUN_REVIEW.md
 5. python sts2.py do embark；Neow 按 docs/NEOW_DECISIONS.md 比较稀缺性（商店能补的删牌降权；变2牌在血线能兜住时优先），不要默认安全。
 6. 进地图先 python sts2.py route，把路线发到 overlay，再选第一格；HP<50% 下一格必须营火，HP<35% 不接双怪/精英。
 
-战斗/操作硬规则：
-- 每张牌后重读敌人/incoming/目标索引；敌人死亡或意图变化就丢弃旧计划。
+战斗/操作硬规则（v18）：
+- **一回合一条 batch**：`python sts2.py batch '{"actions":[…出牌…,{"action":"end_turn"}]}'`，每刀带 thought/meme。它末尾会直接给下一回合快照，**下一回合不要先 state**。
+- 只有三种情况退回单张 `play`：要靠抽牌/弃牌才能定下一步；要等 Buff 落地；batch 中途 STOP 过。
+- 见到 `BATCH STOP` / `PLAN_OVER_BUDGET`：用回显快照改计划重发，**绝不接 end_turn 硬收**。
 - incoming=0 时不要打纯防御（除非为 Body Slam/Barricade/Feel No Pain/保留格挡铺垫）。
 - 结束回合前清 0 费牌（Spite/Anger/Bloodletting/Battle Trance 等），除非 Thorns/自伤致死。
-- 只信稳定玩家回合：play_card/end_turn 不在 available_actions 就等待，不在过渡态发 end_turn；ANCHOR 的 enemies/incoming 是每次决策依据。
-- 用 python sts2.py play <CARD_ID> 出牌，不凭记忆连打；每次动作后看 ANCHOR 和手牌/能量。
+- 只信稳定玩家回合：play_card/end_turn 不在 available_actions 就等，不在过渡态发 end_turn。
 - HP<50% 下一格必须营火；商店先写“最缺/预算/必买/不买”，第二次进店没有目标就离开；不买便宜但不解决主要矛盾的牌。
 - 篝火 HP≥70% 且有关键质变升级就锻造；不连敲两张打击/防御。
 - Act1 目标：2 AOE、1–2 易伤、2–3 优质防御、1–2 运转、1 收尾，牌组≤15、最多 1 精英、Boss 前花光金币；Boss 前 HP≥70%、2 张优质防御、药水可用。
 - 解说 banner 只写一句自然中文，不写“大肥鱼/DeepSeek/AI:”前缀，不拆 tag/黄字，整句同色；适度社区梗，不要每句都玩梗。
 
-结束：
-python obsctl.py stop；把录像重命名为 recordings/sts2_ironclad_a10_run10_<result>.mp4；python sts2.py report；按 docs/RUN_REVIEW.md 复盘；更新 docs/LESSONS.md 和策略规则。
+省 token 的两条习惯：
+- 每幕结束 `python sts2.py memory --write`，然后**开新会话续跑**（旧 transcript 不再被每次请求重读，这是单笔最大的一省）。
+- 不整份读长文档/日志；要查就 grep 行号再 read 窗口。
 
-现在开始：先读文件，确认状态，然后开新局；不要先问我难度，默认 A10。
+结束：
+python obsctl.py stop；把录像重命名为 recordings/sts2_ironclad_a10_run<N>_<result>.mp4；python sts2.py report；按 docs/RUN_REVIEW.md 复盘；更新 docs/LESSONS.md 和策略规则。
+
+现在开始：先加载 skill，确认状态，然后开新局；不要先问我难度，默认 A10。

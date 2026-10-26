@@ -8,12 +8,14 @@ Checks:
   3. 没有一代旧卡名（煤渣/嗜血/愤怒/灰烬打击…）。
   4. 关键小节齐全，体量没膨胀（常驻上下文必须精简）。
   5. references/ 由生成器产出、覆盖对应幕/卡池。
+  6. **规则覆盖**：v17.1 的阈值/关键词/反模式编号必须还在——压缩只许改写法，
+     不许丢规则。少一条就 FAIL，别用「感觉还在」验收。
+  7. **协议覆盖**：一回合一条 batch 的关键标记（card_id / 尾部快照 / STOP 处理）。
 
 Usage: python tools/check_skill.py
 """
 import re
 import sys
-import unicodedata
 from pathlib import Path
 
 ROOT = Path(".").resolve()
@@ -21,9 +23,57 @@ SKILL_DIR = ROOT / ".dsh" / "skills" / "sts2-ironclad-ironclad"
 SKILL = SKILL_DIR / "SKILL.md"
 
 LEGACY = ["煤渣", "嗜血", "灰烬打击", "冲击波", "暴力", "愤怒"]
-SECTIONS = ["三条铁律", "每回合 7 步", "构筑", "敌人", "精英 / Boss", "工具坑", "反模式", "收尾", "口头禅"]
-MAX_BYTES = 16000
+SECTIONS = [
+    "传输协议", "记忆分层", "三条铁律", "准入闸", "每回合七步", "数值与斩杀",
+    "血预算", "路线", "构筑", "敌人", "精英 / Boss", "工具坑", "反模式", "收尾",
+]
+MAX_BYTES = 12000
 MAX_LINES = 190
+MAX_TOKENS = 3600
+
+# ---- 规则覆盖：压缩可以改措辞，这些数字/机制/编号不能消失 ----
+CJK = re.compile(r"[\u3400-\u9fff\uff00-\uffef\u3000-\u303f]")
+
+
+def est_tokens(text: str) -> int:
+    cjk = len(CJK.findall(text))
+    return int(cjk + (len(text) - cjk) / 3.6)
+
+
+THRESHOLDS = [
+    "≤8", "9–14", "≥15",            # 铁律2 三档
+    "×1.5", "×0.75", "+6/7", "3×3", "5×2",   # 伤害修正/多段
+    "2–6", "≤40%",                  # 自伤
+    "×0.6",                        # 精英/Boss 总账
+    "≤5 血/场", "≤20",              # Act1 道中预算
+    "50%", "60%", "70%",            # 血闸三档
+    "14–18", "≤22", ">24", "18 张",  # 构筑张数
+    "≤3", "≥6", "1–2 张", "4 + 2",   # 打击/防御/AOE/运转
+    "199", "15–18", "11–13", "19–33",       # Act1 Boss 账
+    "399", "25–35", "12–16", "≥100", "20+", "≤18",  # Act2 Boss 账
+    "15–25",                       # 死亡召唤型压血
+    "10%", "5–15", "≤3 次",         # 药水/斩杀差/SL
+    "60%", "70%", "100+", "+3", "≥20%",     # 闸与 REPLAN
+    "飞剑+ 12", "耸肩+ 11", "飞剑 9", "余烬 9", "上勾拳 6.5", "打击 6", "防御 5",
+    "3 伤", "6 伤", "79 血", "+4", "+12",    # 状态牌/召唤型精英/血量两件套
+]
+
+KEYWORDS = [
+    "incoming", "BLOCK_POOL", "EFF", "ANCHOR", "HUD", "LEGAL", "INTENT_MEM", "MECHANICS",
+    "易伤", "虚弱", "脆弱", "胆小", "荆棘", "人工制品", "无实体", "滑溜",
+    "召唤", "死亡召唤", "缠结", "懒惰", "蛇行扼杀者", "寄生蛙", "活雾", "雾魔",
+    "燃烧之血", "狂宴", "黑暗之血", "重锤", "契约终结", "飞剑", "耸肩", "余烬", "上勾拳",
+    "药水四问", "两回合账", "自伤四问", "能量纪律", "AOE 清算",
+    "换血闸", "多怪闸", "血闸", "REPLAN", "PLAN_OK",
+    "save_and_quit", "continue_run", "choose_reward_card", "use_potion",
+    "--full", "--target", "--option",
+    "memory --write", "journal", "sts2.py report",
+    "obsctl stop", "LESSONS.md", "check_skill.py", "check_caster.py", "sts2-caster",
+    "playbook.md", "cards.md", "enemies.md",
+]
+
+ANTI_PATTERNS = "①②③④⑤⑥⑦⑧⑩⑪⑫⑬⑭⑯⑱㉓㉔㉕㉖㉙㉜㉝㉞"
+PROTOCOL = ["batch", "card_id", "PLAN_OVER_BUDGET", "BATCH STOP", "end_turn", "尾部快照"]
 
 errors = []
 warnings = []
@@ -49,6 +99,9 @@ def main() -> int:
         fail(f"SKILL.md {size} 字节 > {MAX_BYTES}：常驻上下文膨胀，先压细节")
     if len(lines) > MAX_LINES:
         fail(f"SKILL.md {len(lines)} 行 > {MAX_LINES} 行")
+    tok = est_tokens(text)
+    if tok > MAX_TOKENS:
+        fail(f"SKILL.md 估算 {tok} token > {MAX_TOKENS}：每回合都在上下文里，先删废话")
     if not text.startswith("---\n"):
         fail("SKILL.md 缺少 frontmatter（技能会从 available_skills 消失）")
     else:
@@ -71,7 +124,7 @@ def main() -> int:
                 fail(f"SKILL.md:{i} 出现一代旧卡名「{bad}」：{line.strip()[:40]}")
 
     # 引用的文件路径
-    refs = set(re.findall(r"`([\w./-]+\.(?:md|py|db|json))`", text))
+    refs = set(re.findall(r"`([\w./-]+\.(?:md|py|db|json|mp4))`", text))
     for ref in sorted(refs):
         p = SKILL_DIR / ref if ref.startswith("references/") else ROOT / ref
         if not p.exists():
@@ -103,6 +156,28 @@ def main() -> int:
     fm = text.split("---", 2)[1] if text.startswith("---") else ""
     if "enemies.md" not in fm:
         warn("description 没提 enemies.md，模型可能不知道要查")
+    if "batch" not in fm:
+        warn("description 没提 batch：模型可能仍按「每刀一条命令」打")
+
+    # ---- 规则覆盖（v17.1 → v18 不丢规则） ----
+    missing = [t for t in THRESHOLDS if t not in text]
+    if missing:
+        fail(f"丢了阈值：{', '.join(missing)}")
+    missing = [k for k in KEYWORDS if k not in text]
+    if missing:
+        fail(f"丢了关键词：{', '.join(missing)}")
+    missing = [c for c in ANTI_PATTERNS if c not in text]
+    if missing:
+        fail(f"丢了反模式编号：{''.join(missing)}")
+    missing = [p for p in PROTOCOL if p not in text]
+    if missing:
+        fail(f"缺协议标记：{', '.join(missing)}")
+
+    # 每个反模式编号后面要有内容（别只剩下编号）
+    for c in ANTI_PATTERNS:
+        m = re.search(re.escape(c) + r"([^①-⑳㉕]{2,})", text)
+        if not m:
+            warn(f"反模式 {c} 后面像没有说明文字")
 
     return report()
 
