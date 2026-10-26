@@ -110,7 +110,7 @@ sts2.get_state = lambda: st
 sts2.overlay_say = lambda *a, **k: None
 sts2.cmd_batch = lambda spec: calls.append(json.loads(spec))
 seq = [{"c": "BASH", "t": 0}, {"c": "STRIKE_IRONCLAD", "t": 0}, {"end": 1}]
-out = act._execute(st, seq, ["它 18，先破甲。", "一刀带走。"], {})
+out = act._execute(st, seq, ["它 18，先破甲。", "一刀带走。"], {}, {"allow_take": True})
 print("  ", {k: out.get(k) for k in ("ok", "fx", "retarget", "mid")})
 check("执行成功", out["ok"], True)
 check("发了一条 batch", len(calls), 1)
@@ -149,7 +149,8 @@ check("自动换目标", bool(out.get("retarget")), True)
 print()
 print("=== 7) act：老 plan 格式仍可用 ===")
 st = make_state()
-out = act._execute(st, [{"a": "play", "id": "STRIKE_IRONCLAD", "t": 0}, {"a": "end"}], [], {})
+out = act._execute(st, [{"a": "play", "id": "STRIKE_IRONCLAD", "t": 0}, {"a": "end"}], [], {},
+                   {"allow_leftover": True, "allow_take": True})
 check("兼容 v19", out["ok"], True)
 
 print()
@@ -169,7 +170,8 @@ d = ctx._combat(st, {})
 check("ctx 标出 can.cost", d.get("can", {}).get("cost", [{}])[0].get("id"), "UNRELENTING")
 calls.clear()
 out = act._execute(st, [{"c": "UNRELENTING", "t": 0}, {"c": "BASH", "t": 0},
-                        {"c": "DEFEND_IRONCLAD"}, {"end": 1}], [], {})
+                        {"c": "DEFEND_IRONCLAD"}, {"end": 1}], [], {},
+                    {"allow_no_lethal": True, "allow_take": True})
 print("  ", out.get("ok"), out.get("err"))
 check("2+0+1 费可执行", out["ok"], True)
 check("发了 3 张牌 + end", len(calls[0]["actions"]), 4)
@@ -181,7 +183,7 @@ st["combat"]["hand"] = [card("STRIKE_IRONCLAD", 1, dmg=6)]
 st["combat"]["player"]["energy"] = 3
 calls.clear()
 out = act._execute(st, [{"c": "STRIKE_IRONCLAD", "t": 1}, {"p": 0, "t": 1}, {"end": 1}], [], {})
-print("  ", out.get("ok"), out.get("fx"))
+print("  ", out.get("ok"), out.get("err"), out.get("fx"))
 check("药水执行", out["ok"], True)
 check("第二步是药水", calls[0]["actions"][1]["action"], "use_potion")
 check("药水目标 1", calls[0]["actions"][1].get("target_index"), 1)
@@ -189,12 +191,25 @@ check("药水目标 1", calls[0]["actions"][1].get("target_index"), 1)
 print()
 print("=== 11) fx 全对时放行 ===")
 st = make_state()
-out = act._execute(st, [{"c": "STRIKE_IRONCLAD", "t": 0}, {"end": 1}], [], {})
+out = act._execute(st, [{"c": "BASH", "t": 0}, {"c": "STRIKE_IRONCLAD", "t": 0}, {"end": 1}],
+                   [], {}, {"allow_take": True})
 fx = out["fx"]
-out2 = act._execute(st, [{"c": "STRIKE_IRONCLAD", "t": 0}, {"end": 1}], [],
-                    {"e": fx["e"], "hp": fx["hp"], "take": fx["take"]})
+out2 = act._execute(st, [{"c": "BASH", "t": 0}, {"c": "STRIKE_IRONCLAD", "t": 0}, {"end": 1}],
+                    [], {"e": fx["e"], "hp": fx["hp"], "take": fx["take"]},
+                    {"allow_take": True})
 print("  ", out2.get("ok"), out2.get("err"))
 check("自报账正确", out2["ok"], True)
+
+print()
+print("=== 12) 牌面文字用引擎实时文本，DB 过期要标 txdiff ===")
+st = make_state()
+hand = st["combat"]["hand"]
+hand[0]["resolved_rules_text"] = "每打出一张攻击牌，回复1点能量。"
+d = ctx._combat(st, {})
+bash = [x for x in d["hand"] if x["id"] == "BASH"][0]
+print("  ", bash.get("tx"), "txdiff", bash.get("txdiff"))
+check("tx 用实时文本", "回复1点能量" in (bash.get("tx") or ""), True)
+check("和 DB 不一致要标 txdiff", bash.get("txdiff"), 1)
 
 print()
 print("ALL OK" if ok else "SOME CHECKS FAILED")

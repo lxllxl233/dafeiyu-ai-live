@@ -311,8 +311,158 @@ def _stale_end(st: dict, seq: list) -> str | None:
     return None
 
 
+# ---------------------------------------------------------------- 硬护栏
+# run69 的病根：手牌读到的是「过渡快照 / 合并后的残缺列表」，我据此排的牌序
+# 会漏掉还在手上的防御牌，于是「有费不叠甲、掉血」；斩杀线算不出来，于是
+# 「能斩不斩、多吃一回合」。下面三条在任何一手执行前强制检查，不靠模型自觉。
+def _affordable(sm) -> list:
+    """(牌, 实费) —— 当前能量下真正打得出来的牌（sim 里打过的牌只是标记 _played，还在手里）。"""
+    out = []
+    for c in sm.hand:
+        if not c.get("play", True) or c.get("_played"):
+            continue
+        cost = sm.cost_of(c)
+        if cost <= sm.energy:
+            out.append((c, cost))
+    return out
+
+
+def _is_block_card(c: dict) -> bool:
+    if sts2._int(c.get("blk"), 0) > 0:
+        return True
+    return str(c.get("id") or "") in {
+        "BLOOD_WALL", "DEFEND_IRONCLAD", "EXPECT_A_FIGHT", "ARMAMENTS", "SHRUG_IT_OFF",
+        "TRUE_GRIT", "SECOND_WIND", "IMPERVIOUS", "FLAME_BARRIER", "ENTRENCH",
+        "BODY_SLAM",  # 靠甲打人：先起甲再撞
+    }
+
+
+def _guard_leftover(sm, allow: dict) -> tuple[str | None, dict]:
+    """结束回合还剩能量、手上还有牌没打 —— 等于把费扔了（含「有费不叠甲」）。"""
+    if allow.get("allow_leftover") or sm.energy <= 0:
+        return None, {}
+    left = _affordable(sm)
+    if not left:
+        return None, {}
+    blocks = [(c, cost) for c, cost in left if _is_block_card(c)]
+    names = "、".join(f"{c['id']}({cost}费)" for c, cost in left[:5])
+    if blocks:
+        bn = "、".join(f"{c['id']}({cost}费)" for c, cost in blocks[:4])
+        return (f"护栏·漏费：结束回合还剩 {sm.energy} 费，手上还有能打的牌 {names}，"
+                f"其中 {bn} 可以叠甲。先把费花掉（优先起甲/斩杀）再 end；"
+                f"确实要留费就写 {{\"allow_leftover\":1}} 并说明原因"), {"left_n": len(left)}
+    return (f"护栏·漏费：结束回合还剩 {sm.energy} 费，手上还能打 {names}。"
+            f"先把费花掉再 end；确实要留费就写 {{\"allow_leftover\":1}}"), {"left_n": len(left)}
+
+
+def _guard_missed_lethal(st: dict, sm, allow: dict) -> str | None:
+    """这回合能全斩却不斩：白送一回合挨打（run69 多次「能斩不斩」）。
+
+    只信「能重新校验通过、并且真的把活怪清空」的斩杀线：本地搜索偶尔会给出
+    牌序上打不出来的线，拿那种线来拦会误伤，这里逐条复核。
+    """
+    if allow.get("allow_no_lethal"):
+        return None
+    alive = sm.alive()
+    if not alive:
+        return None
+    try:
+        plans = sim.search(st, max_cards=8, max_plans=3, time_limit=0.8, max_nodes=80_000)
+    except Exception:  # noqa: BLE001
+        return None
+    for p in plans or []:
+        seq = []
+        for step in p.get("seq") or []:
+            cid = str(step[0])
+            tgt = step[1] if len(step) > 1 else None
+            if cid.startswith("@"):
+                seq.append({"p": sts2._int(cid.lstrip("@"), 0), "t": tgt})
+            else:
+                seq.append({"c": cid, "t": tgt})
+        okv, _e, sm2, _s = sim.validate(st, seq)
+        if not okv or sm2.alive():
+            continue
+        line = " → ".join(str(x[0]) for x in p.get("seq") or [])
+        return (f"护栏·漏斩：这回合有全斩线（{p.get('dmg')} 伤害）：{line}。"
+                f"多拖一回合就多挨一刀；确认要拖就写 {{\"allow_no_lethal\":1}}")
+    return None
+
+
+def _taken_if_end(sm) -> int:
+    """这一手 end 之后本回合会净掉多少血（不改真状态）。"""
+    try:
+        return sts2._int(sm.clone().end_turn().get("taken"), 0)
+    except Exception:  # noqa: BLE001
+        return 0
+
+
+def _free_block_cards(base, require_value: bool = True) -> list:
+    """起手就能打的真·防御牌（血墙这种扣血换甲的要算过账）。"""
+    out = []
+    for c in base.hand:
+        if not c.get("play", True) or c.get("_played") or not _is_block_card(c):
+            continue
+        cost = base.cost_of(c)
+        if cost > base.energy:
+            continue
+        hp_cost = sts2._int(c.get("hp"), 0)
+        blk = sts2._int(c.get("blk"), 0)
+        if require_value and hp_cost and blk and blk <= hp_cost * 2:
+            continue
+        out.append((c, cost))
+    return out
+
+
+def _guard_take(st: dict, sm, allow: dict) -> tuple[str | None, str | None]:
+    """有甲可起却裸吃伤害：这一手结束要掉血，起手有便宜防御却一张没打。
+
+    小刮擦（<6 点）只提醒不拦；真要换血写 allow_take。
+    """
+    if allow.get("allow_take") or allow.get("allow_leftover"):
+        return None, None
+    if sm.incoming() <= 0:
+        return None, None
+    taken = _taken_if_end(sm)
+    if taken <= 0:
+        return None, None
+    base = sim.Sim.from_state(st)
+    blocks = _free_block_cards(base)
+    if not blocks:
+        return None, None
+    best = max(sts2._int(c.get("blk"), 0) for c, _k in blocks)
+    bn = "、".join(f"{c['id']}({cost}费)" for c, cost in blocks[:4])
+    if taken < 6 or best < 4:
+        return None, (f"这小伤可省：净挨 {taken} 点，起手有 {bn} 能起甲（拦阈值 6 点/4 甲）")
+    return (f"护栏·漏甲：这一手结束要净挨 {taken} 点，起手有 {bn} 能起甲却没用。"
+            f"要么把甲叠起来，要么写 {{\"allow_take\":1}} 说明为什么换血"), None
+
+
+def _guards(st: dict, sm, ended: bool, allow: dict) -> tuple[str | None, dict]:
+    """返回 (拒绝原因, 附加信息)。只在「这一手会结束回合」时查漏斩/漏费/漏甲。
+
+    顺序按「亏多少」排：漏斩最贵（白送一回合挨打），其次漏费，最后漏甲。
+    """
+    if not ended:
+        return None, {}
+    if not sm.alive():
+        return None, {}  # 已经清场：剩下的费/甲都没意义
+    extra: dict = {}
+    err = _guard_missed_lethal(st, sm, allow)
+    if err:
+        return err, extra
+    err, meta = _guard_leftover(sm, allow)
+    extra.update(meta)
+    if err:
+        return err, extra
+    err, warn = _guard_take(st, sm, allow)
+    if warn:
+        extra["warn"] = [warn]
+    return err, extra
+
+
 # ---------------------------------------------------------------- 执行
-def _execute(st: dict, seq: list, lines: list, fx: dict) -> dict:
+def _execute(st: dict, seq: list, lines: list, fx: dict,
+             allow: dict | None = None) -> dict:
     lines = [{"t": x, "m": ""} if isinstance(x, str) else x for x in (lines or []) if x]
     plans = _candidate_plans(st) if decision_log.enabled() else []
     ok, err, sm, steps, ended = validate_plan(st, seq)
@@ -335,6 +485,17 @@ def _execute(st: dict, seq: list, lines: list, fx: dict) -> dict:
                       retargets=getattr(sm, "retargets", None))
         return out
 
+    guard_err, guard_meta = _guards(st, sm, ended, allow or {})
+    if guard_err:
+        out = {"ok": False, "err": guard_err, "fx": want,
+               "ctx": ctxmod.build_with_mem(st, ctxmod._load_mem())}
+        if guard_meta:
+            out.update(guard_meta)
+        _log_decision(st, seq, lines, fx, outcome="rejected_guard", err=guard_err,
+                      steps=steps, forecast=want, plans=plans,
+                      retargets=getattr(sm, "retargets", None))
+        return out
+
     actions = _actions(steps)
     if not actions:
         _log_decision(st, seq, lines, fx, outcome="no_actions", err="seq 里没有动作",
@@ -346,6 +507,8 @@ def _execute(st: dict, seq: list, lines: list, fx: dict) -> dict:
     log, run_err = _run_batch(actions)
 
     out = {"ok": run_err is None, "fx": want}
+    if guard_meta.get("warn"):
+        out["warn"] = guard_meta["warn"]
     if run_err:
         out["err"] = run_err
         tail = [x for x in log if ("STOP" in x or "BUDGET" in x or "TARGET" in x or "FIX" in x)]
@@ -364,8 +527,21 @@ def _execute(st: dict, seq: list, lines: list, fx: dict) -> dict:
     elif run_err is None:
         # 用于下一次 act 识别「刚 end 完又补 end」：记录结束的是哪一回合。
         out["ended_turn"] = _turn_of(st)
-    next_st = sts2.get_state()
+    if ended:
+        # run69 的病根之二：end_turn 之后立刻读状态，拿到的是「新回合还没抽牌」
+        # 的过渡快照（手牌 1 张 / 空）。照它排下一手就是漏费漏甲。这里等抽完牌、
+        # 状态指纹连续两次不变再交出去；读不到就明确标 stale，别让模型照着排。
+        try:
+            next_st = sts2.wait_new_turn_hand(
+                len(st.get("combat", {}).get("hand") or []), timeout=6.0)
+        except Exception:  # noqa: BLE001
+            next_st = sts2.get_state()
+    else:
+        next_st = sts2.get_state()
     out["ctx"] = _next_ctx(st=next_st)
+    if ended and next_st.get("screen") == "COMBAT" and _pre_draw(next_st):
+        out["stale_ctx"] = ("新回合还没抽完牌（手牌空/只有 1 张）：这份 ctx 不能用来排牌序，"
+                            "先跑 python tools/ctx.py 再出牌")
 
     batch_info = {"ok": run_err is None, "err": run_err, "log": log[-8:]}
     _log_decision(st, seq, lines, fx,
@@ -453,6 +629,7 @@ def main():
         sys.exit(2)
 
     seq, lines, fx, auto = normalize(spec)
+    allow = {str(k): bool(v) for k, v in spec.items() if str(k).startswith("allow")}
     st = sts2.get_state()
     if st.get("screen") != "COMBAT":
         err = f"当前不是战斗（{st.get('screen')}）"
@@ -474,7 +651,7 @@ def main():
         out = {"ok": False, "err": err,
                "ctx": ctxmod.build_with_mem(st, ctxmod._load_mem())}
     else:
-        out = _execute(st, seq, lines, fx)
+        out = _execute(st, seq, lines, fx, allow)
     # 只有真的执行成功才更新回合记忆；被拒/批处理报错不能把上一手的 mid 清掉。
     if out.get("ok"):
         _write_memo(_turn_of(sts2.get_state()), bool(out.get("mid")), out.get("ended_turn"))

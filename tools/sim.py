@@ -137,6 +137,10 @@ def parse_card(card: dict, idx: int | None = None) -> dict:
     if not out["play"]:
         out["why"] = str(card.get("unplayable_reason") or "")[:24]
 
+    # 引擎给的实时牌面（ctx 用它，而不是 DB 里可能过期的中文描述）
+    if text:
+        out["ltx"] = text
+
     prof = sts2._attack_profile(card)
     if prof:
         per, fixed, cond = prof

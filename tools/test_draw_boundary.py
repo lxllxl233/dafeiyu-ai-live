@@ -62,12 +62,12 @@ def make_state(hand=None):
     }
 
 
-def call_execute(st, seq):
+def call_execute(st, seq, allow=None):
     calls = []
     sts2.get_state = lambda: st
     sts2.overlay_say = lambda *a, **k: None
     sts2.cmd_batch = lambda spec: calls.append(json.loads(spec))
-    out = act._execute(st, seq, [], {})
+    out = act._execute(st, seq, [], {}, allow or {})
     return out, calls
 
 
@@ -95,7 +95,8 @@ check("没有发 batch", calls, [])
 print()
 print("=== 3) 抽牌后打抽牌前已有的牌：允许 ===")
 out, calls = call_execute(st, [{"c": "POMMEL_STRIKE", "t": 0},
-                               {"c": "BASH", "t": 0}, {"end": 1}])
+                               {"c": "BASH", "t": 0}, {"end": 1}],
+                          {"allow_take": True})
 print("  ", out.get("ok"), out.get("err"))
 check("已知牌仍可顺序打", out["ok"], True)
 check("发了 3 个动作", len(calls[0]["actions"]), 3)
@@ -112,7 +113,8 @@ check("没有 end_turn", calls[0]["actions"][-1].get("action"), "play_card")
 
 print()
 print("=== 5) 抽牌后直接 end：合法，但账本标抽牌未知 ===")
-out, calls = call_execute(st, [{"c": "POMMEL_STRIKE", "t": 0}, {"end": 1}])
+out, calls = call_execute(st, [{"c": "POMMEL_STRIKE", "t": 0}, {"end": 1}],
+                          {"allow_take": True, "allow_leftover": True})
 check("抽牌后结束合法", out["ok"], True)
 check("最后是 end_turn", calls[0]["actions"][-1].get("action"), "end_turn")
 check("fx 标 draw_unknown", out["fx"].get("draw_unknown"), 1)

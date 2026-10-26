@@ -420,9 +420,15 @@ def _hand_out(hand: list[dict]) -> list[dict]:
         info = mechlib.card_info(c["id"])
         if info.get("kw"):
             e["kw"] = info["kw"]
-        tx = (info.get("tx") or "").strip()
+        # 牌面文字优先用引擎的实时文本：DB 里的中文描述可能落后于版本
+        # （run69：跃跃欲试 DB 写「获得15点格挡」，引擎实际是回能牌 → 白挨 16 点）。
+        live = (c.get("ltx") or "").strip()
+        dbx = (info.get("tx") or "").strip()
+        if live and dbx and live != dbx:
+            e["txdiff"] = 1
+        tx = live or dbx
         if tx and _needs_text(tx) and not c.get("up"):
-            e["tx"] = tx[:42]
+            e["tx"] = tx[:60]
         e["q"] = 1
         groups[key] = e
         order.append(key)
@@ -550,6 +556,8 @@ def _combat(state: dict, mem: dict) -> dict:
         out["potions"] = _potions_out(run)
 
     out["hand"] = _hand_out(st.hand)
+    # 同名牌会合并成一条（q 张），只看条数会以为手牌很少：给一个真实张数。
+    out["hand_n"] = len(st.hand)
     piles = _piles(state)
     if piles:
         out["piles"] = piles
@@ -868,6 +876,19 @@ def main():
     ap.add_argument("--pretty", action="store_true")
     args = ap.parse_args()
     st = sts2.get_state()
+    # end_turn 之后的过渡快照（新回合还没抽牌）不能当手牌用：等抽完再读。
+    if st.get("screen") == "COMBAT":
+        _c = st.get("combat") or {}
+        _hand = [x for x in (_c.get("hand") or []) if isinstance(x, dict)]
+        try:
+            _draw, _dis, _exh = _piles_cards(st)
+        except Exception:  # noqa: BLE001
+            _draw = _dis = 0
+        if len(_hand) <= 1 and (_draw or _dis):
+            try:
+                st = sts2.wait_new_turn_hand(len(_hand), timeout=6.0)
+            except Exception:  # noqa: BLE001
+                pass
     mem = _load_mem()
     d = build_with_mem(st, mem)
     s = json.dumps(d, ensure_ascii=False, indent=1 if args.pretty else None,
