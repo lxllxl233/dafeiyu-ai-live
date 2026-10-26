@@ -50,6 +50,13 @@ python obsctl.py setup
 
 # 3) 自检：出帧 / 游戏窗口 / 静音 / 音频
 python obsctl.py health
+
+# 4) 主播链路一体体检（弹幕窗心跳 / 曼波合成 / OBS 源 / 游戏 API）
+python tools/live.py check
+# 有 BAD 就修：坏的是弹幕窗时用这个重启，其它按提示处理
+python tools/live.py restart-streamer
+# 长时间直播建议挂着看护：心跳卡死自动重启主播窗
+python tools/live.py watch --interval 30
 ```
 
 `setup` 会建场景 `StS2`，包含：`StS2 Game`（game_capture）、`AI Commentary`（浏览器源 → 8730）、`StS2 Audio`（进程音频）。手搓 OBS 的话照着这三个名字建，`obsctl.py` 认名字。
@@ -91,5 +98,7 @@ python sts2.py report        # JSONL 战报 → logs/run_*.md
 | OBS 录出来黑屏 | 游戏不是窗口化；用 `python obsctl.py free` 切窗口采集 |
 | 录像没声音 | `python obsctl.py health` 看「后台静音」；`python obsctl.py nomute` 后重启游戏 |
 | 药水用了没反应 | 旧版行为：`use_potion` 返回 `pending` 时重读 state 看 `is_queued`，最多重试 1 次 |
+| 前几句有声、后面全哑 | MamboTTS 假活：`python tools/tts_guard.py --check`，坏了 `--restart`（overlay 连续合成失败会自动拉起 guard） |
+| 同一句说两次（回音） | 看 `curl 127.0.0.1:8730/health` 的 `roles`：只允许一个 `live` 页面出声、主播窗在页面出声时让位；`audio_ts` 能看出是谁在响 |
 
 更多命令见 [README.md](README.md)。

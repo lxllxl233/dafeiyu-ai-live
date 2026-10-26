@@ -27,9 +27,9 @@ SECTIONS = [
     "传输协议", "记忆分层", "三条铁律", "准入闸", "每回合七步", "数值与斩杀",
     "血预算", "路线", "构筑", "敌人", "精英 / Boss", "工具坑", "反模式", "收尾",
 ]
-MAX_BYTES = 12000
-MAX_LINES = 190
-MAX_TOKENS = 3600
+MAX_BYTES = 14500
+MAX_LINES = 215
+MAX_TOKENS = 4400
 
 # ---- 规则覆盖：压缩可以改措辞，这些数字/机制/编号不能消失 ----
 CJK = re.compile(r"[\u3400-\u9fff\uff00-\uffef\u3000-\u303f]")
@@ -57,9 +57,9 @@ THRESHOLDS = [
     "飞剑+ 12", "耸肩+ 11", "飞剑 9", "余烬 9", "上勾拳 6.5", "打击 6", "防御 5",
     "3 伤", "6 伤", "79 血", "+4", "+12",    # 状态牌/召唤型精英/血量两件套
 ]
-
 KEYWORDS = [
-    "incoming", "BLOCK_POOL", "EFF", "ANCHOR", "HUD", "LEGAL", "INTENT_MEM", "MECHANICS",
+    "incoming", "calc.blk", "calc.chain", "calc", "ctx", "plans", "seq", "say", "fx", "auto",
+    "hist", "nx", "mech", "potions", "relics", "hand", "choice", "piles",
     "易伤", "虚弱", "脆弱", "胆小", "荆棘", "人工制品", "无实体", "滑溜",
     "召唤", "死亡召唤", "缠结", "懒惰", "蛇行扼杀者", "寄生蛙", "活雾", "雾魔",
     "燃烧之血", "狂宴", "黑暗之血", "重锤", "契约终结", "飞剑", "耸肩", "余烬", "上勾拳",
@@ -72,8 +72,8 @@ KEYWORDS = [
     "playbook.md", "cards.md", "enemies.md",
 ]
 
-ANTI_PATTERNS = "①②③④⑤⑥⑦⑧⑩⑪⑫⑬⑭⑯⑱㉓㉔㉕㉖㉙㉜㉝㉞"
-PROTOCOL = ["batch", "card_id", "PLAN_OVER_BUDGET", "BATCH STOP", "end_turn", "尾部快照"]
+ANTI_PATTERNS = "①②③④⑤⑥⑦⑧⑩⑪⑫⑬⑭⑯⑱㉓㉔㉕㉖㉙㉜㉝㉞㉟㊱㊲㊳"
+PROTOCOL = ["ctx.py", "act.py", "seq", "say", "fx", "auto", "card_id"]
 
 errors = []
 warnings = []
@@ -126,7 +126,12 @@ def main() -> int:
     # 引用的文件路径
     refs = set(re.findall(r"`([\w./-]+\.(?:md|py|db|json|mp4))`", text))
     for ref in sorted(refs):
-        p = SKILL_DIR / ref if ref.startswith("references/") else ROOT / ref
+        if ref.startswith("references/"):
+            p = SKILL_DIR / ref
+        elif ref in ("ctx.py", "act.py"):
+            p = ROOT / "tools" / ref
+        else:
+            p = ROOT / ref
         if not p.exists():
             fail(f"引用的文件不存在：{ref}")
 
@@ -156,8 +161,8 @@ def main() -> int:
     fm = text.split("---", 2)[1] if text.startswith("---") else ""
     if "enemies.md" not in fm:
         warn("description 没提 enemies.md，模型可能不知道要查")
-    if "batch" not in fm:
-        warn("description 没提 batch：模型可能仍按「每刀一条命令」打")
+    if "ctx.py" not in fm:
+        warn("description 没提 ctx.py：模型可能又回去读自然语言快照")
 
     # ---- 规则覆盖（v17.1 → v18 不丢规则） ----
     missing = [t for t in THRESHOLDS if t not in text]

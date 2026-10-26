@@ -21,9 +21,15 @@ dist/
 # 临时文件
 tmp_*.txt
 tmp_*.py
+tmp_*.json
+tmp_*.png
+tmp_*.wav
 
 # 本地调试产物（截图/JSON 转储），不入库
 logs/*.png
 logs/*.json
 logs/*.txt
 logs/*.js
+logs/*.log
+logs/tts_cache/
+*.wav

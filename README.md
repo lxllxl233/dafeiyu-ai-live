@@ -109,7 +109,8 @@ COPIES STRIKE_IRONCLAD: 升级版 [3] vs 未升级 [1] → 打升级版
 - 多段意图统一印成 `dmg=8x4=32 多段4次`，挡牌按较大值。
 - **省 token 设计（2026-10-26，第 56 局后）**：`state` 默认只打**增量**——药水/遗物/诅咒/机制只在一行 `HUD` 里常驻，完整 `POTION FX / RELIC FX / DECK_BAD / MECHANICS` 只在变化时出现；手里见过的牌走短格式（`DISMANTLE c1 敌 | Damage=8`），第一次见到才打全卡面。实测重复读态比旧版短 **31–45%**。要全量用 `state --full`（新卡、新药水、换幕时看一次）。
 - **出牌后只回一行**：`play` / `do play_card` 在战斗内只打 `DELTA E2→1 blk0 hp53 · e0:32 · hand4` + 极简手牌/敌人/入伤（约 **280 B**，比热读再省 **73%**）；要看逐卡 EFF/斩杀表就 `state` 一次（每回合 1 次足够），或 `play … --full`。
-- **一回合一条 `batch`（v18，省 token 的主开关）**：整个回合的出牌 + `end_turn` 写进一条命令，末尾**直接吐出下一回合的完整快照**，下一回合不用再 `state`。安全由工具保证——每步等「玩家回合」快照、按 `card_id` 重解析下标、撞过渡快照自动重读、缺牌/超费/目标失效立即停并打印当前状态。实测一拍 3 刀的回合同比：**请求 5 次 → 1 次，回显 2,279 → 610 字符**（`python tools/compare_turn_protocol.py`）。顺序确实定不下来时才退回单张。
+- **一回合一条 `batch`（v18，省 token 的主开关）**：整个回合的出牌 + `end_turn` 写进一条命令，末尾**直接吐出下一回合的完整快照**，下一回合不用再 `state`。安全由工具保证——每步等「玩家回合」快照、按 `card_id` 重解析下标、撞过渡快照自动重读、缺牌/超费/目标失效立即停并打印当前状态。实测一拍 3 刀的回合同比：**请求 5 次 → 1 次，回显 2,279 → 610 字符**（`python tools/compare_turn_protocol.py`）。
+- **v20：结构化输入 + 结构化输出（在 v18 batch 之上）**：`python tools/ctx.py` 给一份 JSON 局面包（手牌实费/全部效果、抽弃消耗堆、遗物、药水、双方 buff、每怪当前+下一次意图+机制、入伤/格挡/斩杀/击杀连锁、候选 `plans`），模型输出 `say + seq`（牌+药水混排），`python tools/act.py --file tmp_plan.json` 逐步验算后执行并回下一回合 ctx。费用/变费/回能/抽牌/消耗/加牌都在 `tools/sim.py` 里算；杂怪仍可 `auto` 连打。
 
 ## 分层记忆（2026-10-26，回答「能不能用结构化摘要」）
 
@@ -117,9 +118,9 @@ COPIES STRIKE_IRONCLAD: 升级版 [3] vs 未升级 [1] → 打升级版
 
 | 层 | 命令 | 体积 | 何时用 |
 |---|---|---|---|
-| L0 规则 | skill（`.dsh/skills/sts2-ironclad-ironclad`，v18） | ~3.6k tok | 常驻（一次，别重复加载） |
+| L0 规则 | skill（`.dsh/skills/sts2-ironclad-ironclad`，v20） | ~4.4k tok | 常驻（一次，别重复加载） |
 | L1 结构化记忆 | `python sts2.py memory`（`--write` 落盘 `logs/run_memory.md`） | ~150 tok | 开局/换幕/新 session 恢复 |
-| L2 当前状态 | `batch` 尾部快照（没有就用 `state`） | 90–350 tok | 每回合 1 次 |
+| L2 当前状态 | `python tools/ctx.py`（下一回合用 `act.py` 返回值） | ~700–1200 tok | 每回合 1 次 |
 | L3 细节检索 | `python sts2.py journal --floor 12 --last 20` | 按需 | 回溯某层怎么掉的、复盘 |
 
 `memory` 从当前 `state` + 本局 JSONL + `route_plan.json` 现算，输出一屏（实测 449 B / 9 行）：
@@ -151,6 +152,13 @@ python sts2.py do play_card --card 0 --target 0 --thought "..." --meme "..."
 python sts2.py batch '{"actions":[{"action":"play_card","card_id":"BASH","target_index":0},{"action":"play_card","card_id":"DISMANTLE","target_index":0},{"action":"end_turn","thought":"...","meme":"..."}]}'
                                 # 一回合一条：每步等玩家回合快照、按 card_id 找牌、异常即停，
                                 # 末尾直接给下一回合快照（下一回合不用再 state）
+python sts2.py batch --file spec.json --wait player
+                                # 中文 spec 走 UTF-8 文件（不过 PowerShell 引号），打完顺手等下一帧
+python tools/ctx.py             # v20 局面包：全部事实 + 本地账本 + 候选 plans（JSON）
+python tools/act.py --file tmp_plan.json
+                                # 校验并执行 say+seq（牌+药水混排），回下一回合 ctx
+                                # 杂怪连打：JSON 里加 {"auto":{"turns":3,"stop_hp":40}}
+python tools/live.py check      # 主播链路体检：弹幕窗心跳 / 曼波合成 / OBS 源 / 游戏 API
 python sts2.py do end_turn --thought "..." --meme "..."
 python sts2.py do select_deck_card --options 0,2 --thought "..."   # 多选界面一次点完（自动确认）
 python sts2.py say --thought "..." --meme "..."
@@ -162,6 +170,8 @@ python tools/test_state_compact.py   # 状态增量输出回归
 python tools/test_batch.py           # batch 回归（等快照/按 card_id/超费/过渡态/异常停）
 python tools/audit_tokens.py          # token 账本：请求数/上下文/各命令回显（读 DSH 日志）
 python tools/compare_turn_protocol.py # 旧协议 vs v18 一回合一条 batch 的回显/请求对比
+python tools/test_sim.py               # 模拟器回归：实费/回能/变费/抽牌/消耗/药水/连锁
+python tools/test_ctx_act.py           # ctx v3 + act v2 回归（离线，不需要游戏在线）
 python tools/check_skill.py           # skill 规则覆盖断言（阈值/关键词/反模式编号不许丢）
 python streamer.py                    # 主播模式：桌面透明弹幕窗（左键拖 · 右键菜单 · Ctrl+Alt+D 穿透）
 python tools/test_streamer.py         # 主播模式渲染回归（尺寸/透明/换行/帧耗时）

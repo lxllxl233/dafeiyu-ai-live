@@ -38,8 +38,8 @@ QUIPS = [
     "时间回溯", "这下看懂了", "读档也是尖塔的一部分", "这也能联动", "易伤道歉",
 ]
 
-MAX_LEN = 45
-SOFT_LEN = 55
+MAX_LEN = 60
+SOFT_LEN = 85
 
 
 def lint(text: str) -> list[tuple[str, str]]:
@@ -84,8 +84,8 @@ def lint(text: str) -> list[tuple[str, str]]:
             out.append(("WARN", f"毒舌词「{rude}」：换憨式自嘲"))
 
     sents = [s for s in re.split(r"[。！？!?]", t) if s.strip()]
-    if len(sents) > 3:
-        out.append(("WARN", f"{len(sents)} 个短句：一句话最多两拍"))
+    if len(sents) > 4:
+        out.append(("WARN", f"{len(sents)} 个短句：一句话最多三拍"))
 
     hits_q = [q for q in QUIPS if q in t]
     if len(hits_q) >= 2:

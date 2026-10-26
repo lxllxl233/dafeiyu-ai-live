@@ -15,6 +15,7 @@ import re
 import sqlite3
 import sys
 import time
+import threading
 from collections import Counter
 from datetime import datetime
 
@@ -172,17 +173,56 @@ def act(action: str, **params) -> dict:
     return d.get("data", {})
 
 
-def overlay_say(tag: str, thought: str, meme: str, state: dict | None = None):
+_END_PUNCT = "。！？!?…”）)"
+_last_say = {"key": "", "at": 0.0}
+
+
+def _ensure_stop(s: str) -> str:
+    if not s:
+        return s
+    return s if s[-1] in _END_PUNCT else s + "。"
+
+
+def compose_speech(thought: str, meme: str) -> str:
+    """和 overlay/index.html 的 composeSentence 一字不差，预热缓存键才对得上。"""
+    t = re.sub(r"[。\s]+$", "", str(thought or "").strip())
+    m = re.sub(r"^[，,、。；;\s—–-]+", "", str(meme or "").strip())
+    if not t:
+        return _ensure_stop(m)
+    if not m:
+        return _ensure_stop(t)
+    return _ensure_stop(t) + _ensure_stop(m)
+
+
+def _prewarm_tts(sentence: str) -> None:
+    """先合成进 overlay 磁盘缓存：页面拿 /tts 秒回，字幕和配音同时起，不再一前一后。"""
+    if not sentence:
+        return
+    try:
+        requests.get(OVERLAY + "/tts", params={"text": sentence}, timeout=6)
+    except Exception:
+        pass
+
+
+def overlay_say(tag: str, thought: str, meme: str, state: dict | None = None,
+                force: bool = False):
     thought = _clean_speech(thought)
     meme = _clean_speech(meme)
     if not (thought or meme):
         return
-    payload = {"tag": tag, "thought": thought, "meme": meme}
+    sentence = compose_speech(thought, meme)
+    now = time.time()
+    # 同一句话 2.5 秒内只播一次：多动作回合以前会给每个动作都推一条，配音叠着响、越听越不齐。
+    if not force and sentence == _last_say["key"] and now - _last_say["at"] < 2.5:
+        return
+    _last_say["key"] = sentence
+    _last_say["at"] = now
+    payload = {"tag": tag, "thought": thought, "meme": meme, "speech": sentence}
     if state:
         run = state.get("run") or {}
         payload.update(
             {
-                "character": "铁甲战士",
+                "character": run.get("character_name") or run.get("character_id") or "铁甲战士",
                 "ascension": run.get("ascension", 10),
                 "floor": run.get("floor", 0),
                 "hp": run.get("hp", run.get("current_hp")),
@@ -191,6 +231,7 @@ def overlay_say(tag: str, thought: str, meme: str, state: dict | None = None):
                 "screen": state.get("screen", ""),
             }
         )
+    _prewarm_tts(sentence)
     try:
         requests.post(OVERLAY + "/comment", json=payload, timeout=1.5)
     except Exception:
@@ -598,6 +639,24 @@ def potion_at(state: dict, index: int):
     return None
 
 
+def _hp_gate_line(s):
+    """血闸提醒：出口是 Boss/精英但血不够时，直接喊出来（57 局死在 48 血进 Boss）。"""
+    run = s.get("run") or {}
+    mx = _int(run.get("max_hp"), 0)
+    hp = _int(run.get("current_hp", run.get("hp")), 0)
+    if not mx:
+        return None
+    avail = [n for n in ((s.get("map") or {}).get("nodes") or []) if n.get("is_available")]
+    kinds = {str(n.get("node_type") or "").lower() for n in avail}
+    pct = 100.0 * hp / mx
+    if "boss" in kinds and pct < 70:
+        return (f"BOSS_GATE HP {hp}/{mx}（{pct:.0f}%）< 70%：先回血再进 Boss —— "
+                f"57 局就是这么死的（48 血打 183 血）")
+    if "elite" in kinds and pct < 60:
+        return f"ELITE_GATE HP {hp}/{mx}（{pct:.0f}%）< 60%：这个精英会把你打死，绕或先睡"
+    return None
+
+
 def map_ascii(m: dict) -> str:
     sym = {
         "Monster": "M",
@@ -636,6 +695,12 @@ def map_ascii(m: dict) -> str:
         out.append(
             f"  opt{i}: {n.get('node_type')} row={n.get('row')} col={n.get('col')} -> {ch}"
         )
+    if avail:
+        kinds = {str(n.get("node_type") or "").lower() for n in avail}
+        if "boss" in kinds:
+            out.append("BOSS_NEXT 出口是 Boss：HP 不到 70% 就别硬上，先找营火把血睡回来。")
+        if "elite" in kinds:
+            out.append("ELITE_NEXT 出口有精英：60% 血 + 8 甲×2 + AOE + 药，缺一样就别进。")
     return "\n".join(out)
 
 
@@ -1027,70 +1092,82 @@ def _recent_meme_gap(limit: int = 4) -> int:
 # 不设硬上限：梗按“有没有节目效果”决定，只保留密度提示。
 # 密度目标 25%（每 4 个动作至少 1 条梗）；低于目标就提示，连续 2 个动作没梗就催。
 MEME_PACE_AFTER = 12
-MEME_TARGET_RATIO = 0.25
+MEME_TARGET_RATIO = 0.45
 
 
-def _meme_stats(limit: int = 4):
-    """Return (gap_since_last_meme, total_memes_this_session, actions_this_session)."""
-    # Read the current session pointer without creating a new log (pure read).
+def _meme_stats(limit: int = 3):
+    """按「回合」而不是「单张牌」统计说话密度。
+
+    返回 (gap_turns_without_speech, turns_with_speech, turns)：
+    一个回合 = 同一秒内连续写入的若干条动作（batch 打出来的 3–5 刀算 1 回合）。
+    旧口径按动作行数算，batch 打法下一条台词被 4 刀摊薄成 25%，永远在报警。
+    """
     if not os.path.exists(SESSION_PTR):
-        return 0, 0
+        return 0, 0, 0
     try:
         with open(SESSION_PTR, encoding="utf-8") as f:
             path = json.load(f).get("path")
     except Exception:
-        return 0, 0
+        return 0, 0, 0
     if not path or not os.path.exists(path):
-        return 0, 0
+        return 0, 0, 0
     tail = []
-    total = 0
     try:
         with open(path, encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
-                if not line:
-                    continue
-                tail.append(line)
-                if '"meme": "' in line and not line.rstrip().endswith('"meme": ""}'):
-                    total += 1
+                if line:
+                    tail.append(line)
     except OSError:
-        return 0, 0
+        return 0, 0, 0
     if not tail:
-        return 0, 0
-    gap = 0
-    for line in reversed(tail[-limit:]):
+        return 0, 0, 0
+
+    turns = []  # [(ts_key, has_speech)]
+    for line in tail:
         try:
             e = json.loads(line)
         except Exception:
             continue
-        if str(e.get("meme") or "").strip():
+        key = str(e.get("ts") or "")[:19]
+        spoke = bool(str(e.get("meme") or "").strip() or str(e.get("thought") or "").strip())
+        if not turns or turns[-1][0] != key:
+            turns.append([key, spoke])
+        elif spoke:
+            turns[-1][1] = True
+    if not turns:
+        return 0, 0, 0
+    total = sum(1 for _, spoke in turns if spoke)
+    gap = 0
+    for _, spoke in reversed(turns[-limit:]):
+        if spoke:
             break
         gap += 1
-    return gap, total, len(tail)
+    return gap, total, len(turns)
 
 
 def _meme_hint():
-    gap, total, actions = _meme_stats()
-    if actions <= 0:
+    gap, total, turns = _meme_stats()
+    if turns <= 0:
         return
-    pct = 100.0 * total / actions
-    print(f"MEME_BAR {total}/{actions} {pct:.0f}% (≥{MEME_TARGET_RATIO:.0%})")
-    if gap >= 4:
+    pct = 100.0 * total / turns
+    print(f"MEME_BAR {total}/{turns} 回合 {pct:.0f}% (≥{MEME_TARGET_RATIO:.0%})")
+    if gap >= 3:
         print(
-            f"MUST_MEME 连着 {gap} 个动作没梗了（本局 {total} 条 / {pct:.0f}%）。"
-            f"下一条动作必须配梗：python tools/memedb.py suggest --situation quips"
+            f"MUST_MEME 连着 {gap} 个回合没说话（本局 {total} 个回合有词 / {pct:.0f}%）。"
+            f"下一回合必须开口：python tools/memedb.py suggest --situation quips"
         )
         return
     if gap >= 2:
         print(
-            f"SUGGEST_MEME 最近 {gap} 个动作没有 meme（本局 {total} 条 / {pct:.0f}%）；"
-            f"挑一条贴上（memedb.py suggest --situation quips），没有合适的就跳过。"
+            f"SUGGEST_MEME 最近 {gap} 个回合没说话（本局 {total} 个回合有词 / {pct:.0f}%）；"
+            f"挑一句贴上，或者用 quip 一次埋 3 句。"
         )
         return
-    if actions >= MEME_PACE_AFTER and total < actions * MEME_TARGET_RATIO:
+    if turns >= MEME_PACE_AFTER and total < turns * MEME_TARGET_RATIO:
         print(
-            f"MEME_PACE 密度偏低（{pct:.0f}% < 目标 {MEME_TARGET_RATIO:.0%}）："
-            f"这条动作用一条轻梗把节奏拉回来（python tools/memedb.py suggest --situation quips）"
+            f"MEME_PACE 回合密度偏低（{pct:.0f}% < 目标 {MEME_TARGET_RATIO:.0%}）："
+            f"用 quip 一次埋 3–4 句最省（python tools/memedb.py suggest --situation quips）"
         )
 
 
@@ -1329,6 +1406,9 @@ def cmd_route(commit=None, note=""):
     gate.append("AOE≥1? " + ("是" if deck_stats.get("aoe", 0) >= 1 else "否"))
     gate.append("药水≥1? " + ("是" if potion_count >= 1 else "否"))
     print("ELITE_GATE " + " / ".join(gate) + " ← 三项全「是」也只当备选：非必要不精英")
+    line = _hp_gate_line(s)
+    if line:
+        print(line)
     ranked = []
     for i, start in enumerate(avail):
         paths = walk(start)
@@ -1414,6 +1494,9 @@ def cmd_plan(clear=False, note=""):
         return
     snap = _snapshot(s)
     print("SELF " + _fmt_snap(snap))
+    line = _hp_gate_line(s)
+    if line:
+        print(line)
     if clear:
         try:
             os.remove(PLAN_PATH)
@@ -1952,27 +2035,31 @@ def wait_legal(action: str, timeout: float = 5.0):
     return last
 
 
-def wait_new_turn_hand(prev_hand_len: int, timeout: float = 2.5) -> dict:
-    """end_turn 之后手牌可能是「还没抽牌」的过渡快照：等手牌数稳定再交给调用方决策。
+def wait_new_turn_hand(prev_hand_len: int, timeout: float = 4.0) -> dict:
+    """end_turn 之后手牌可能是「还没抽牌」的过渡快照：等可操作且状态稳定再交给调用方。
 
-    run30 的坑：结束回合后立刻用返回快照做决策，看到的手牌是空的（或只有 1 张），
-    于是漏掉了当回合本来能打的斩杀牌。
+    run30 的坑：结束回合后立刻用返回快照做决策，看到的手牌是空的（或只有 1 张）。
+    v20 加两条硬条件：`play_card/end_turn` 已经出现在 available_actions，且整份
+    状态指纹连续 2 次不变、至少过了 0.6 秒——抽牌动画/状态推送没落地就不返回。
     """
-    end = time.time() + timeout
-    last = get_state()
+    start = time.time()
+    end = start + timeout
+    last_fp = None
     stable = 0
+    last = get_state()
     while time.time() < end:
         s = get_state()
-        hand = ((s.get("combat") or {}).get("hand") or [])
-        n = len(hand)
         if s.get("screen") != "COMBAT":
             return s
-        if n == len(((last.get("combat") or {}).get("hand") or [])) and n > 0:
+        acts = set(s.get("available_actions") or [])
+        fp = _fingerprint(s)
+        if fp == last_fp:
             stable += 1
         else:
             stable = 0
+            last_fp = fp
         last = s
-        if stable >= 2 and n >= 1:
+        if ({"play_card", "end_turn"} & acts) and stable >= 2 and time.time() - start >= 0.6:
             return s
         time.sleep(0.12)
     return last
@@ -2225,6 +2312,10 @@ def cmd_do(action, card=None, target=None, option=None, thought="", meme="", opt
         params["target_index"] = target
     if option is not None:
         params["option_index"] = option
+    # 台词先出、再落地动作：观众看到/听到这句的同时，操作才发生。
+    # 放在动作之后就变成「操作完半天才更新对话」，观感很差。
+    if thought or meme:
+        overlay_say(tag_for(before.get("screen", "")), thought, meme, before, force=True)
     resp = None
     last_err = None
     for attempt in range(2):
@@ -2296,7 +2387,6 @@ def cmd_do(action, card=None, target=None, option=None, thought="", meme="", opt
         if ah == 0 and bh > 1 and ae >= be:
             print("WARNING suspicious post-card state (hand emptied but energy did not drop); re-read before ending turn.")
     tag = tag_for(after.get("screen", ""))
-    overlay_say(tag, thought, meme, after)
     log(action, params, before, after, resp or {}, thought, meme)
     if action == "select_deck_card" and after.get("screen") == "CARD_SELECTION":
         cnt, mn, mx, _in = _sel_progress(after)
@@ -2402,6 +2492,8 @@ def cmd_batch(spec: str):
     except json.JSONDecodeError as e:
         print(f"BATCH_BAD_JSON {e}")
         sys.exit(2)
+    # act.py 已经逐步模拟过费用（回能/变费也能算），这里可跳过「整手预扣」的粗检。
+    skip_budget = bool(items.get("skip_budget")) if isinstance(items, dict) else False
     if isinstance(items, dict):
         items = items.get("actions", [])
     if not items:
@@ -2413,7 +2505,7 @@ def cmd_batch(spec: str):
         sys.exit(2)
 
     start = get_state()
-    if start.get("screen") == "COMBAT":
+    if start.get("screen") == "COMBAT" and not skip_budget:
         energy, need = _plan_cost(start, items)
         if need > energy:
             print(
@@ -2425,6 +2517,12 @@ def cmd_batch(spec: str):
 
     ended = False
     after = start
+    # 一个回合只说一句话，而且要在出牌之前说：先预热 TTS 再推字幕，
+    # 话音和第一张牌几乎同时起。放到回合末尾说，就成了「画面走完了才开口」。
+    _th = next((str(x.get("thought") or "") for x in items if x.get("thought")), "")
+    _mm = next((str(x.get("meme") or "") for x in items if x.get("meme")), "")
+    if _th or _mm:
+        overlay_say(tag_for(start.get("screen", "")), _th, _mm, start, force=True)
     for i, it in enumerate(items):
         a = it.get("action")
         if not a:
@@ -2481,12 +2579,12 @@ def cmd_batch(spec: str):
             hand = (before.get("combat") or {}).get("hand") or []
             alive = [e for e in ((before.get("combat") or {}).get("enemies") or [])
                      if isinstance(e, dict) and _int(e.get("hp"), 1) > 0]
-            idx = next(
-                (k for k, c in enumerate(hand)
-                 if isinstance(c, dict) and str(c.get("card_id")) == str(cid)
-                 and c.get("playable", True) is not False),
-                None,
-            )
+            cands = [k for k, c in enumerate(hand)
+                     if isinstance(c, dict) and str(c.get("card_id")) == str(cid)
+                     and c.get("playable", True) is not False]
+            # 同名多张（被变费/升级过）优先打「当下最便宜」的那张，避免 0 费牌没打掉。
+            idx = min(cands, key=lambda k: (_int(hand[k].get("energy_cost", hand[k].get("cost")), 99),
+                                            -_int(hand[k].get("upgraded"), 0))) if cands else None
             if idx is None:
                 print(f"BATCH STOP at {i}: 手里没有可打的 {cid}（牌序已变）")
                 print(compact(before))
@@ -2515,7 +2613,6 @@ def cmd_batch(spec: str):
                     break
                 time.sleep(0.12)
                 after = get_state()
-        overlay_say(tag_for(after.get("screen", "")), thought, meme, after)
         log(a, params, before, after, resp or {}, thought, meme)
         print(f"[{i}] {a} {params.get('card_index', params)} -> {resp.get('status')} | {_delta_line(before, after)}")
     if ended:
@@ -2524,6 +2621,39 @@ def cmd_batch(spec: str):
     else:
         print(compact(get_state(), brief=True))
     _meme_hint()
+
+
+def wait_stable(need_player=False, timeout=25):
+    """等一个「真能操作」的快照再打印：过滤动画过渡帧（LEGAL 只有 save_and_quit）。
+
+    batch --wait player 用它省掉「打完再看一眼」的第二次工具调用；
+    连读两次都稳定才算稳，避免把过渡帧当回合开始。
+    """
+    end = time.time() + timeout
+    last = None
+    while time.time() < end:
+        s = get_state()
+        acts = set(s.get("available_actions") or [])
+        screen = s.get("screen") or ""
+        busy = not acts or acts <= {"save_and_quit", "discard_potion"}
+        if busy:
+            last = None
+            time.sleep(0.2)
+            continue
+        if need_player and screen == "COMBAT" and not ({"play_card", "end_turn"} & acts):
+            last = None
+            time.sleep(0.2)
+            continue
+        key = (screen, tuple(sorted(acts)), ((s.get("combat") or {}).get("hand") or []) and
+               len(((s.get("combat") or {}).get("hand") or [])), (s.get("run") or {}).get("current_hp"))
+        if key == last:
+            print(compact(s))
+            return s
+        last = key
+        time.sleep(0.15)
+    print("WAIT_TIMEOUT")
+    print(compact(get_state(), brief=True))
+    return None
 
 
 def cmd_wait(screen=None, player_turn=False, timeout=30):
@@ -2558,6 +2688,29 @@ def cmd_say(thought, meme):
     overlay_say(tag_for(s.get("screen", "")), thought, meme, s)
     print("ok")
     _meme_hint()
+
+
+def cmd_quip(lines):
+    """一次推多句台词（省 token）：先并行预热 TTS，再按顺序推给页面排队播。"""
+    s = get_state()
+    tag = tag_for(s.get("screen", ""))
+    cleaned = []
+    for ln in lines:
+        t = str(ln or "").strip()
+        if t:
+            cleaned.append(t)
+    if not cleaned:
+        return
+    threads = []
+    for ln in cleaned:
+        th = threading.Thread(target=_prewarm_tts, args=(_ensure_stop(ln),), daemon=True)
+        th.start()
+        threads.append(th)
+    for th in threads:
+        th.join(timeout=25)
+    for ln in cleaned:
+        overlay_say(tag, ln, "", s, force=True)
+    print(f"ok {len(cleaned)} 句")
 
 
 # ---------------------------------------------------------------- memory
@@ -2796,7 +2949,10 @@ def main():
     p.add_argument("--meme", default="")
     p.add_argument("--full", action="store_true", help="动作后打完整 state")
     p = sub.add_parser("batch", help="一次调用打完整个回合（推荐）：actions 列表 + 可选 end_turn")
-    p.add_argument("spec", help='JSON：{"actions":[{"action":"play_card","card_id":"BASH","target_index":0},...,{"action":"end_turn"}]}')
+    p.add_argument("spec", nargs="?", help='JSON：{"actions":[{"action":"play_card","card_id":"BASH","target_index":0},...,{"action":"end_turn"}]}')
+    p.add_argument("--file", help="从 UTF-8 文件读 spec（省掉 PowerShell 引号转义，中文更稳）")
+    p.add_argument("--wait", choices=["player", "any"], help="打完直接等下一个可操作快照：player=等自己回合，any=等任意稳定界面（省一次工具调用）")
+    p.add_argument("--timeout", type=int, default=25)
     p = sub.add_parser("wait")
     p.add_argument("--screen")
     p.add_argument("--player-turn", action="store_true")
@@ -2804,6 +2960,8 @@ def main():
     p = sub.add_parser("say")
     p.add_argument("--thought", default="")
     p.add_argument("--meme", default="")
+    p = sub.add_parser("quip", help="一次推多句台词（省 token）：quip \"句1\" \"句2\" \"句3\"")
+    p.add_argument("lines", nargs="+")
     p = sub.add_parser("memory")
     p.add_argument("--write", action="store_true", help="同时写 logs/run_memory.md（新 session 恢复用）")
     p = sub.add_parser("journal")
@@ -2830,11 +2988,22 @@ def main():
         cmd_do(args.action, args.card, args.target, args.option, args.thought, args.meme, options,
                getattr(args, "full", False))
     elif args.cmd == "batch":
-        cmd_batch(args.spec)
+        spec = args.spec
+        if args.file:
+            with open(args.file, encoding="utf-8-sig") as f:
+                spec = f.read().strip()
+        if not spec:
+            print("BATCH_EMPTY 没有 spec：传 JSON，或用 --file 指一个 UTF-8 文件")
+            sys.exit(2)
+        cmd_batch(spec)
+        if args.wait:
+            wait_stable(need_player=(args.wait == "player"), timeout=args.timeout)
     elif args.cmd == "wait":
         cmd_wait(args.screen, args.player_turn, args.timeout)
     elif args.cmd == "say":
         cmd_say(args.thought, args.meme)
+    elif args.cmd == "quip":
+        cmd_quip(args.lines)
     elif args.cmd == "memory":
         cmd_memory(args.write)
     elif args.cmd == "journal":

@@ -297,6 +297,85 @@ def animalese_wav(text: str, volume: float = 0.55, rate: int = SPEAK_RATE) -> by
     return out.getvalue()
 
 
+# ---------------------------------------------------------------- 曼波配音（MamboTTS / GPT-SoVITS）
+# 引擎默认地址 127.0.0.1:9880（见 MamboTTS engine_contract.py），POST / + JSON。
+# 环境变量：STS2_TTS_URL 覆盖地址；STS2_TTS_REF 覆盖参考音频路径；STS2_TTS_PROMPT 覆盖参考文本。
+MAMBO_URL = os.environ.get("STS2_TTS_URL", "http://127.0.0.1:9880")
+MAMBO_REF = os.environ.get("STS2_TTS_REF", "")
+MAMBO_PROMPT = os.environ.get(
+    "STS2_TTS_PROMPT", "大家好，欢迎来到我的频道，今天给大家分享一个有趣的内容"
+)
+MAMBO_CUT = "，。？！；：、…,.;?!"
+
+
+def _wav_gain(data: bytes, volume: float) -> bytes:
+    """把 WAV 的 16bit 样本按 volume 缩放；只处理标准 PCM，失败就原样返回。"""
+    try:
+        with wave.open(io.BytesIO(data), "rb") as w:
+            if w.getsampwidth() != 2:
+                return data
+            params = w.getparams()
+            frames = w.readframes(w.getnframes())
+    except Exception:
+        return data
+    k = min(1.5, max(0.0, volume))
+    if abs(k - 1.0) < 0.01:
+        return data
+    out = bytearray(len(frames))
+    for i in range(0, len(frames) - 1, 2):
+        s = int.from_bytes(frames[i:i + 2], "little", signed=True)
+        s = max(-32768, min(32767, int(s * k)))
+        out[i:i + 2] = s.to_bytes(2, "little", signed=True)
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setparams(params)
+        w.writeframes(bytes(out))
+    return buf.getvalue()
+
+
+def mambo_wav(text: str, volume: float = 0.55, timeout: float = 30.0) -> bytes | None:
+    """调用本地 MamboTTS（GPT-SoVITS）合成一句配音，返回 WAV；引擎不在线返回 None。"""
+    text = (text or "").strip()
+    if not text:
+        return None
+    payload = {
+        "text": text,
+        "text_language": "zh",
+        "speed": float(os.environ.get("STS2_TTS_SPEED", "1.0")),
+        "cut_punc": MAMBO_CUT,
+    }
+    if MAMBO_REF:
+        payload["refer_wav_path"] = MAMBO_REF
+        payload["prompt_text"] = MAMBO_PROMPT
+        payload["prompt_language"] = "zh"
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    req = urllib.request.Request(
+        MAMBO_URL.rstrip("/") + "/",
+        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with opener.open(req, timeout=timeout) as r:
+            data = r.read()
+    except Exception:
+        return None
+    if len(data) < 44 or data[:4] != b"RIFF" or data[8:12] != b"WAVE":
+        return None
+    return _wav_gain(data, volume)
+
+
+def mambo_online(timeout: float = 1.5) -> bool:
+    """引擎是否在线（GET /control 返回 JSON 即视为在线）。"""
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    try:
+        with opener.open(MAMBO_URL.rstrip("/") + "/control", timeout=timeout) as r:
+            r.read(64)
+        return True
+    except Exception:
+        return False
+
+
 class Speaker:
     """异步播放：合成放后台线程，别卡住 30fps 的重绘。
 
@@ -305,27 +384,74 @@ class Speaker:
     用 SND_FILENAME|SND_ASYNC 播；两个文件轮着用，避免覆盖正在播的那个。
     """
 
-    def __init__(self, volume: float = 0.55, enabled: bool = True):
+    def __init__(self, volume: float = 0.55, enabled: bool = True, voice: str = "mambo"):
         self.volume = volume
         self.enabled = enabled
+        self.voice = (voice or "mambo").lower()
+        self._offline_warned = False
         self._lock = threading.Lock()
         self._slot = 0
         self._paths = [os.path.join(tempfile.gettempdir(), f"sts2_voice_{i}.wav") for i in (0, 1)]
         self._ok = True
+        # 直播间页面（直播姬里那个 browser_source）本来就在本地出声；
+        # 窗口再播一遍就是同一句说两次。默认让页面当唯一喇叭，窗口只在没页面时补位。
+        self.delegate = os.environ.get("STS2_VOICE_DELEGATE", "1").lower() not in ("0", "false", "no")
+        self._live_ts = 0.0
+        self._live_val = False
         try:
             import winsound  # noqa: F401
             self._winsound = winsound
         except Exception:
             self._ok = False
 
+    def _live_page_present(self) -> bool:
+        """直播姬里那个页面最近真的在出声吗？
+
+        只在「有 live 页面 且 90 秒内它真的播过音」时才让位——页面连上了却没在渲染
+        （被直播姬暂停、或服务端重启后游标卡住）时，窗口照常自己播，不能一起哑掉。
+        """
+        now = time.time()
+        if now - self._live_ts < 5.0:
+            return self._live_val
+        self._live_ts = now
+        self._live_val = False
+        try:
+            url = os.environ.get("STS2_OVERLAY_URL", "http://127.0.0.1:8730") + "/health"
+            with urllib.request.urlopen(url, timeout=0.35) as r:
+                d = json.load(r)
+            live = int((d.get("roles") or {}).get("live", 0))
+            ts = float((d.get("audio_ts") or {}).get("live", 0) or 0)
+            self._live_val = live > 0 and (now - ts) < 90.0
+        except Exception:
+            self._live_val = False
+        return self._live_val
+
     def speak(self, text: str):
         if not (self.enabled and self._ok and text):
             return
-        threading.Thread(target=self._play, args=(text,), daemon=True).start()
+        if self.delegate and self._live_page_present():
+            return
+        threading.Thread(target=self._play_delegated, args=(text,), daemon=True).start()
+
+    def _play_delegated(self, text: str):
+        # 给页面 0.9 秒先起音：它真响了就不重复播；它哑着（页面暂停/游标卡住）才由窗口补位。
+        if self.delegate:
+            time.sleep(0.9)
+            self._live_ts = 0.0
+            if self._live_page_present():
+                return
+        self._play(text)
 
     def _play(self, text: str):
         try:
-            wav = animalese_wav(text, self.volume)
+            wav = None
+            if self.voice == "mambo":
+                wav = mambo_wav(text, self.volume)
+                if wav is None and not self._offline_warned:
+                    self._offline_warned = True
+                    print("曼波配音：本地引擎没响应（127.0.0.1:9880），先静音；启动 MamboTTS 后自动恢复")
+            elif self.voice == "animalese":
+                wav = animalese_wav(text, self.volume)
             if not wav:
                 return
             with self._lock:
@@ -336,6 +462,11 @@ class Speaker:
             self._winsound.PlaySound(
                 path, self._winsound.SND_FILENAME | self._winsound.SND_ASYNC | self._winsound.SND_NODEFAULT
             )
+            try:  # 自报一声，日志里能看清「这一句到底谁在响」
+                url = os.environ.get("STS2_OVERLAY_URL", "http://127.0.0.1:8730") + "/mark?ev=audio&role=window"
+                urllib.request.urlopen(url, timeout=0.5).read()
+            except Exception:
+                pass
         except Exception as e:
             print("音效播放失败：", e)
 
@@ -677,6 +808,12 @@ def _init_winapi():
     u.GetWindowDisplayAffinity.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
     u.GetSystemMetrics.argtypes = [ctypes.c_int]
     u.GetSystemMetrics.restype = ctypes.c_int
+    u.EnumDisplayMonitors.argtypes = [wintypes.HDC, ctypes.c_void_p, ctypes.c_void_p, wintypes.LPARAM]
+    u.EnumDisplayMonitors.restype = ctypes.c_bool
+    u.GetMonitorInfoW.argtypes = [wintypes.HMONITOR, ctypes.c_void_p]
+    u.GetMonitorInfoW.restype = ctypes.c_bool
+    u.FindWindowW.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR]
+    u.FindWindowW.restype = wintypes.HWND
     u.ReleaseCapture.argtypes = []
     u.SetCapture.argtypes = [wintypes.HWND]
     u.SetCapture.restype = wintypes.HWND
@@ -741,12 +878,13 @@ _enable_dpi_awareness()
 class StreamerWindow:
     def __init__(self, scale: float = 0.0, pos: tuple[int, int] | None = None,
                  click_through: bool = False, topmost: bool = True, toolwindow: bool = True,
-                 volume: float = 0.55, muted: bool = False, exclude_capture: bool = True):
+                 volume: float = 0.55, muted: bool = False, exclude_capture: bool = True,
+                 voice: str = "mambo"):
         self.toolwindow = toolwindow
         self.topmost = topmost
         self.click_through = click_through
         self.exclude_capture = exclude_capture
-        self.speaker = Speaker(volume, enabled=not muted)
+        self.speaker = Speaker(volume, enabled=not muted, voice=voice)
         self.text = ""
         self.status = {}
         self.talk_until = 0.0
@@ -764,16 +902,32 @@ class StreamerWindow:
         # 尺寸优先级：命令行 --scale > 上次拖出来的 > 系统 DPI
         saved = self._load_state()
         self.scale = self._clamp_scale(scale or float(saved.get("scale") or dpi_scale()))
+        _w, _h = int(BASE_W * self.scale), int(420 * self.scale)
         if pos:
-            self.pos = self._clamp(*pos)
+            self.pos = self._clamp(*pos, _w, _h)
         elif saved.get("x") is not None:
-            self.pos = self._clamp(int(saved["x"]), int(saved["y"]))
+            self.pos = self._clamp(int(saved["x"]), int(saved["y"]), _w, _h)
         else:
-            sw = user32.GetSystemMetrics(0)
-            self.pos = self._clamp((sw - int(BASE_W * self.scale)) // 2, int(60 * self.scale))
+            # 没存档就跟着游戏窗口所在的显示器放（副屏打游戏时弹幕窗也在副屏）
+            gx, gy = self._game_window_center()
+            self.pos = self._clamp(gx - _w // 2, gy - int(120 * self.scale), _w, _h)
         self._cls = f"StS2Streamer{os.getpid()}"
         self._register()
         self._create()
+
+    @staticmethod
+    def _game_window_center() -> tuple[int, int]:
+        """游戏窗口中心（物理像素）；找不到就退回主屏中心。"""
+        try:
+            h = user32.FindWindowW(None, "Slay the Spire 2")
+            if h:
+                r = wintypes.RECT()
+                user32.GetWindowRect(h, ctypes.byref(r))
+                return (r.left + r.right) // 2, (r.top + r.bottom) // 2
+        except Exception:
+            pass
+        sw, sh = user32.GetSystemMetrics(0), user32.GetSystemMetrics(1)
+        return sw // 2, sh // 3
 
     # ---- 窗口生命周期
     def _register(self):
@@ -803,6 +957,13 @@ class StreamerWindow:
         )
         if not self._hwnd:
             raise OSError("CreateWindowExW failed")
+        # CreateWindowExW 的坐标偶尔会被系统按虚拟屏/DPI 再挪一次（x≈2564 的旧存档
+        # 能把窗口 creat 到主屏外面，弹幕一条都看不见），所以显式再钉一次位置。
+        user32.SetWindowPos(self._hwnd, 0, x, y, 0, 0, 0x0001 | 0x0004)  # SWP_NOSIZE|SWP_NOZORDER
+        if os.environ.get("STS2_STREAMER_DEBUG"):
+            _r = wintypes.RECT()
+            user32.GetWindowRect(self._hwnd, ctypes.byref(_r))
+            print(f"_create want=({x},{y}) got=({_r.left},{_r.top},{_r.right},{_r.bottom})")
         user32.ShowWindow(self._hwnd, 8)  # SW_SHOWNA
         if self.exclude_capture:
             self.apply_capture_exclusion(True)
@@ -1079,13 +1240,52 @@ class StreamerWindow:
             return {}
 
     @staticmethod
-    def _clamp(x: int, y: int) -> tuple[int, int]:
-        """上次记住的位置可能在已拔掉的副屏上：夹回可见区域，别让窗口消失。"""
-        vx, vy = user32.GetSystemMetrics(76), user32.GetSystemMetrics(77)
-        vw, vh = user32.GetSystemMetrics(78), user32.GetSystemMetrics(79)
-        x = max(vx, min(x, vx + vw - 200))
-        y = max(vy, min(y, vy + vh - 80))
-        return x, y
+    def _monitors() -> list[tuple[int, int, int, int]]:
+        """所有显示器的物理像素矩形（可能不在 (0,0) 起）。"""
+        class MONITORINFO(ctypes.Structure):
+            _fields_ = [("cbSize", wintypes.DWORD), ("rcMonitor", wintypes.RECT),
+                        ("rcWork", wintypes.RECT), ("dwFlags", wintypes.DWORD)]
+        out = []
+
+        @ctypes.WINFUNCTYPE(ctypes.c_bool, wintypes.HMONITOR, wintypes.HDC, ctypes.POINTER(wintypes.RECT), wintypes.LPARAM)
+        def cb(hmon, hdc, lprc, lparam):
+            mi = MONITORINFO()
+            mi.cbSize = ctypes.sizeof(MONITORINFO)
+            if user32.GetMonitorInfoW(hmon, ctypes.byref(mi)):
+                m = mi.rcMonitor
+                out.append((m.left, m.top, m.right, m.bottom))
+            return True
+
+        user32.EnumDisplayMonitors(0, 0, cb, 0)
+        return out or [(0, 0) + (int(user32.GetSystemMetrics(0)), int(user32.GetSystemMetrics(1)))]
+
+    @classmethod
+    def _clamp(cls, x: int, y: int, w: int = 0, h: int = 0) -> tuple[int, int]:
+        """把窗口夹到「至少有一部分在某块显示器上」。
+
+        游戏在副屏时弹幕窗也必须能待在副屏——这里只防「完全跑到所有显示器之外」，
+        绝不把窗口从副屏拽回主屏。窗口比显示器还宽/高时，贴齐显示器左上角。
+        """
+        w = int(w or 200)
+        h = int(h or 80)
+        best = None          # (overlap_area, rect)
+        nearest = None       # (dist, rect)
+        for (l, t, r, b) in cls._monitors():
+            ov_w = min(x + w, r) - max(x, l)
+            ov_h = min(y + h, b) - max(y, t)
+            area = max(0, ov_w) * max(0, ov_h)
+            dist = 0 if area else min(abs(x - l), abs(x - r)) + min(abs(y - t), abs(y - b))
+            if ov_w >= min(w, 120) and ov_h >= 40:          # 已经可见
+                return (x, y)
+            if best is None or area > best[0]:
+                best = (area, (l, t, r, b))
+            if nearest is None or dist < nearest[0]:
+                nearest = (dist, (l, t, r, b))
+        target = (best[1] if best and best[0] > 0 else (nearest[1] if nearest else (0, 0, 1920, 1080)))
+        l, t, r, b = target
+        nx = max(l, min(x, r - min(w, r - l)))
+        ny = max(t, min(y, b - min(h, b - t)))
+        return (nx, ny)
 
     def _save_pos(self):
         try:
@@ -1097,17 +1297,35 @@ class StreamerWindow:
         except Exception:
             pass
 
+    def _ensure_on_screen(self):
+        """主循环每 2s 兜一次：窗口如果在主屏工作区外（旧存档/系统挪动），挪回来。"""
+        try:
+            rect = wintypes.RECT()
+            user32.GetWindowRect(self._hwnd, ctypes.byref(rect))
+            w, h = rect.right - rect.left, rect.bottom - rect.top
+            nx, ny = self._clamp(rect.left, rect.top, w, h)
+            if (nx, ny) != (rect.left, rect.top):
+                user32.SetWindowPos(self._hwnd, 0, nx, ny, 0, 0, 0x0001 | 0x0004)
+                self.pos = (nx, ny)
+                self._save_pos()
+        except Exception:
+            pass
+
     def run(self):
         print("主播模式已启动：左键拖 · 右下角拖=缩放 · 滚轮=缩放 · 右键菜单 · "
               "Ctrl+Alt+D 穿透 · Ctrl+Alt+S 声音 · Ctrl+Alt+H 隐藏 · Ctrl+Alt+Q 退出")
         print("（默认不出现在录屏里：WDA_EXCLUDEFROMCAPTURE，要拍就加 --capture）")
         last = 0.0
+        last_guard = 0.0
         while self.running:
             msg = wintypes.MSG()
             while user32.PeekMessageW(ctypes.byref(msg), None, 0, 0, 1):
                 user32.TranslateMessage(ctypes.byref(msg))
                 user32.DispatchMessageW(ctypes.byref(msg))
             now = time.perf_counter()
+            if now - last_guard > 2.0:
+                last_guard = now
+                self._ensure_on_screen()
             animating = now < max(self.talk_until, self.enter_at + 0.32)
             if self.dirty or animating:
                 if animating or now - last > 0.05:
@@ -1128,6 +1346,8 @@ def fetch_state(port: int, after: int) -> dict:
 
 def poll_loop(win: StreamerWindow, port: int, stop: threading.Event, demo: bool):
     last_id = 0
+    fails = 0
+    beat_at = 0.0
     if demo:
         win.push("这一手先算账：它 21，我最多挡 15。", "差 6，嗨呀。",
                  {"character": "铁甲战士", "ascension": 10, "floor": 8, "hp": 23, "max_hp": 80, "gold": 20})
@@ -1135,16 +1355,34 @@ def poll_loop(win: StreamerWindow, port: int, stop: threading.Event, demo: bool)
         try:
             d = fetch_state(port, last_id)
         except Exception:
+            fails += 1
+            if fails == 5:
+                print(f"主播窗：拿不到 /state（连续 {fails} 次），后台继续重试…")
             stop.wait(1.0)
             continue
-        if isinstance(d.get("seq"), int) and d["seq"] < last_id:
-            last_id = 0
-        win.update_status(d.get("status") or {})
-        for c in d.get("comments") or []:
-            last_id = max(last_id, int(c.get("id", 0)))
-        if d.get("comments"):
-            latest = d["comments"][-1]
-            win.push(latest.get("thought", ""), latest.get("meme", ""), d.get("status") or {})
+        if fails >= 5:
+            print("主播窗：数据恢复")
+        fails = 0
+        try:
+            if isinstance(d.get("seq"), int) and d["seq"] < last_id:
+                last_id = 0
+            win.update_status(d.get("status") or {})
+            for c in d.get("comments") or []:
+                last_id = max(last_id, int(c.get("id", 0)))
+            if d.get("comments"):
+                latest = d["comments"][-1]
+                win.push(latest.get("thought", ""), latest.get("meme", ""), d.get("status") or {})
+        except Exception as e:  # 单帧画崩不许带走整个轮询循环
+            print(f"主播窗：这一帧没画出来（{type(e).__name__}: {e}），继续轮询")
+        now = time.time()
+        if now - beat_at > 2.0:
+            beat_at = now
+            try:  # 心跳：tools/live.py check 靠它判断「窗口还活着吗」
+                os.makedirs(os.path.join(ROOT, "logs"), exist_ok=True)
+                with open(os.path.join(ROOT, "logs", "streamer_heartbeat.json"), "w", encoding="utf-8") as f:
+                    json.dump({"ts": now, "seq": last_id, "pid": os.getpid()}, f)
+            except Exception:
+                pass
         stop.wait(0.35)
 
 
@@ -1184,17 +1422,34 @@ def main() -> int:
     ap.add_argument("--click-through", action="store_true", help="启动即点击穿透")
     ap.add_argument("--demo", action="store_true", help="先放一条示例弹幕（不接游戏也能试位置）")
     ap.add_argument("--taskbar", action="store_true", help="在任务栏/Alt-Tab 里显示（OBS 窗口采集找不到时用）")
-    ap.add_argument("--mute", action="store_true", help="不出声（默认和页面同款动物语）")
+    ap.add_argument("--mute", action="store_true", help="不出声")
+    ap.add_argument("--voice", default="mambo", choices=["mambo", "animalese", "off"],
+                    help="配音：mambo=本地 MamboTTS 曼波音色（默认）；animalese=旧动物语；off=静音")
     ap.add_argument("--vol", type=float, default=0.55, help="音量 0~1.5（默认 0.55，和页面一致）")
     ap.add_argument("--capture", action="store_true", help="允许录屏拍到它（默认对采集隐藏）")
     ap.add_argument("--preview", help="只渲染一张 PNG 就退出（验收/截图用）")
     a = ap.parse_args()
 
-    # 预览图的缩放：命令行优先，否则跟 DPI，屏宽装不下就自动缩
+    # 预览图的缩放：命令行优先，否则跟 DPI；装不下就自动缩（按目标显示器宽度算）
     scale = a.scale or dpi_scale()
-    screen_w = user32.GetSystemMetrics(0)
-    if PANEL_W * scale > screen_w * 0.78:
-        scale = screen_w * 0.78 / PANEL_W
+
+    def _target_screen_w() -> int:
+        try:
+            g = user32.FindWindowW(None, "Slay the Spire 2")
+            if g:
+                r = wintypes.RECT()
+                user32.GetWindowRect(g, ctypes.byref(r))
+                cx = (r.left + r.right) // 2
+                for (l, t, rr, b) in StreamerWindow._monitors():
+                    if l <= cx <= rr:
+                        return rr - l
+        except Exception:
+            pass
+        return user32.GetSystemMetrics(0)
+
+    screen_w = _target_screen_w()
+    if PANEL_W * scale > screen_w * 0.9:
+        scale = screen_w * 0.9 / PANEL_W
         print(f"窗口比屏幕宽，缩到 {scale:.2f}×")
 
     if a.preview:
@@ -1217,7 +1472,7 @@ def main() -> int:
 
     win = StreamerWindow(scale=a.scale, pos=pos, click_through=a.click_through,
                          toolwindow=not a.taskbar, volume=a.vol, muted=a.mute,
-                         exclude_capture=not a.capture)
+                         exclude_capture=not a.capture, voice=a.voice)
     stop = threading.Event()
     th = threading.Thread(target=poll_loop, args=(win, a.port, stop, a.demo), daemon=True)
     th.start()

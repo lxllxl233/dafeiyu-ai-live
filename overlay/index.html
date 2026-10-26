@@ -281,6 +281,7 @@
   window.animalese = Animalese;
 
   let lastId = 0;
+  let hydrated = false;   // 收到过首包没有（首包只补字幕，之后每条都出声）
   let talkTimer = null;
   const panel = document.getElementById('panel');
   const feed = document.getElementById('feed');
@@ -290,6 +291,13 @@
   // 单行截断：超长内容宁可省略，也不让气泡铺满屏幕（全文仍在战报里）。
   const MAX_THOUGHT = 120;
   const MAX_MEME = 70;
+  // 浏览器源的音频进 OBS 比画面晚一截（实测：post → OBS 电平 120–189ms，均值 150ms；
+  // 页面拿到 wav 并起播只要 ~60ms）。所以弹窗延后 ~100ms 再出，字幕和声音就是同一刻。
+  // 可加 ?lead=120 这种参数现场调。
+  const SPEAK_LEAD_MS = (function () {
+    const v = parseInt(new URLSearchParams(location.search).get('lead') || '', 10);
+    return Number.isFinite(v) ? v : 100;
+  })();
 
   function fmtStatus(s) {
     if (!s) return '';
@@ -320,10 +328,20 @@
     return t.slice(0, n - 1).replace(/[\s，,、]+$/, '') + '…';
   }
 
+  // 抖动时长 = 这一句的真实音频长度（由 mamboSay 量出来），说完才停，不再按字数估。
   function startTalking(ms) {
     avatar.classList.add('talking');
     if (talkTimer) clearTimeout(talkTimer);
-    talkTimer = setTimeout(() => avatar.classList.remove('talking'), ms);
+    talkTimer = setTimeout(() => {
+      talkTimer = null;
+      avatar.classList.remove('talking');
+    }, Math.max(400, ms));
+  }
+
+  function stopTalking() {
+    if (talkTimer) clearTimeout(talkTimer);
+    talkTimer = null;
+    avatar.classList.remove('talking');
   }
 
   // 正常说话：各句自己收尾，中间只补标点，不加破折号/标签之类的固定句式。
@@ -340,49 +358,184 @@
     return /[。！？!?…”）)]$/.test(s) ? s : s + '。';
   }
 
-  function showComment(c) {
-    const thought = clip(cleanSpeech(c.thought), MAX_THOUGHT);
-    const memeText = clip(cleanSpeech(c.meme), MAX_MEME);
-    if (!thought && !memeText) return;
-
-    const sentence = composeSentence(thought, memeText);
-    if (!sentence) return;
-
+  function renderBubble(sentence, durMs) {
     const total = sentence.length;
     feed.dataset.len = total > 170 ? 'xlong' : total > 110 ? 'long' : 'short';
-
     const div = document.createElement('div');
     div.className = 'comment enter';
     // 整句同色同字重：一句话就是一个语气，不做「正文 + 注释」的分裂
     div.innerHTML = `<span class="text">${esc(sentence)}</span>`;
     // 关键：整块替换，永远只有一条对话。
     feed.replaceChildren(div);
+    // 自报渲染时刻，用来量「弹窗 vs 声音」的真实差（服务端只记一行日志）
+    try { fetch('/mark?ev=bubble&role=' + encodeURIComponent(ROLE), { cache: 'no-store' }); } catch (e) {}
     panel.classList.remove('empty');
-    // 动森式动物语：说的就是气泡里这一句
-    Animalese.speak(sentence);
-    startTalking(Math.max(2400, Math.min(8500, 1500 + total * 70)));
+    // 有真实音频长度就按它抖（说多久抖多久），没有才退回按字数估
+    startTalking(durMs > 0 ? durMs : Math.max(2400, Math.min(8500, 1500 + total * 70)));
   }
 
-  async function poll() {
+  // 说一句就排队：一次推来 2–4 句也能依次说完，不互相盖掉、也不叠着响。
+  const sayQueue = [];
+  let saying = false;
+  const spokenIds = new Set();   // 同一条台词只播一次（SSE 和兜底轮询可能同时送到）
+  const qs0 = new URLSearchParams(location.search);
+  const ROLE = (qs0.get('role') || (qs0.get('live') ? 'live' : 'record')).toLowerCase();
+
+  function enqueueSay(c, silent) {
+    if (c && typeof c.id === 'number') {
+      if (spokenIds.has(c.id)) return;
+      spokenIds.add(c.id);
+      if (spokenIds.size > 200) spokenIds.delete(spokenIds.values().next().value);
+    }
+    sayQueue.push({ c, silent });
+    pumpSay();
+  }
+
+  async function pumpSay() {
+    if (saying) return;
+    saying = true;
     try {
-      const r = await fetch('/state?after=' + lastId, { cache: 'no-store' });
-      const d = await r.json();
-      if (typeof d.seq === 'number' && d.seq < lastId) lastId = 0;
-      statusEl.innerHTML = fmtStatus(d.status);
-      const list = d.comments || [];
-      if (list.length) {
-        // 断线重连时可能一次拿到多条：只显示最后一条。
-        const latest = list[list.length - 1];
-        lastId = Math.max(lastId, latest.id);
-        showComment(latest);
+      while (sayQueue.length) {
+        const { c, silent } = sayQueue.shift();
+        await sayOne(c, silent);
       }
-    } catch (e) {
-      // keep the last frame; don't blank the overlay
     } finally {
-      setTimeout(poll, 350);
+      saying = false;
     }
   }
-  poll();
+
+  async function sayOne(c, silent) {
+    const thought = clip(cleanSpeech(c.thought), MAX_THOUGHT);
+    const memeText = clip(cleanSpeech(c.meme), MAX_MEME);
+    if (!thought && !memeText) return;
+
+    // 台词由 sts2.py 先合成好再推过来（/tts 已预热），字幕和配音拿到的是同一句
+    const sentence = (c.speech && String(c.speech).trim()) || composeSentence(thought, memeText);
+    if (!sentence) return;
+
+    // 刷新/重连时只补字幕，不重放上一句
+    if (silent) { renderBubble(sentence, 0); return; }
+    // 先把声音起出来，等它真的从浏览器音频缓冲里出来，再让弹窗和头像抖动一起出。
+    // 实测：post → OBS 拿到声音要 ~256ms，而画面几乎立刻可见 —— 差的就是这一段缓冲。
+    const said = await mamboSay(sentence);
+    if (said.ok) await sleep(SPEAK_LEAD_MS);
+    renderBubble(sentence, said.durMs);
+    // 一句说完再上下一条，队列里的话不会被吃掉
+    if (said.ok) await sleep(said.durMs + 120);
+  }
+
+  function showComment(c, silent) {
+    enqueueSay(c, silent);
+  }
+
+  function sleep(ms) {
+    return new Promise((r) => setTimeout(r, Math.max(0, ms)));
+  }
+
+  // 曼波配音：优先走本地 MamboTTS（overlay_server /tts → 127.0.0.1:9880）。
+  // OBS 的浏览器源会把这个 Audio 的元素声音一起录进去，所以录像自带配音。
+  // 曼波配音：一句一条，走 AudioContext。解码完立刻起播，比 <audio> 少了每次重新初始化的延迟。
+  const mamboCache = new Map();
+  let actx = null;
+  let mamboSource = null;
+  function audioCtx() {
+    if (!actx) {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return null;
+      actx = new AC({ latencyHint: 'interactive' });
+    }
+    if (actx.state === 'suspended') { try { actx.resume(); } catch (e) {} }
+    return actx;
+  }
+  function stopMambo() {
+    if (mamboSource) {
+      try { mamboSource.stop(); } catch (e) {}
+      mamboSource = null;
+    }
+    stopTalking();
+  }
+  async function mamboLoad(sentence) {
+    let buf = mamboCache.get(sentence);
+    if (buf) return buf;
+    const r = await fetch('/tts?text=' + encodeURIComponent(sentence), { cache: 'no-store' });
+    if (!r.ok) return null;
+    const ab = await r.arrayBuffer();
+    if (!ab.byteLength) return null;
+    const ctx = audioCtx();
+    if (!ctx) return null;
+    buf = await ctx.decodeAudioData(ab);
+    mamboCache.set(sentence, buf);
+    if (mamboCache.size > 24) mamboCache.delete(mamboCache.keys().next().value);
+    return buf;
+  }
+  // 返回 true = 声音真的起了（字幕就跟这一刻一起放）
+  // 返回 {ok, durMs}：durMs 就是这一句的真实音频长度，气泡抖多久由它说了算
+  async function mamboSay(sentence) {
+    if (!sentence) return { ok: false, durMs: 0 };
+    try {
+      const buf = await mamboLoad(sentence);
+      if (!buf) return { ok: false, durMs: 0 };
+      const ctx = audioCtx();
+      if (!ctx) return { ok: false, durMs: 0 };
+      stopMambo();  // 一句一条：绝不两句叠着响
+      const src = ctx.createBufferSource();
+      src.buffer = buf;
+      src.connect(ctx.destination);
+      mamboSource = src;
+      src.onended = () => {
+        if (mamboSource === src) { mamboSource = null; stopTalking(); }
+      };
+      src.start();
+      try { fetch('/mark?ev=audio&role=' + encodeURIComponent(ROLE), { cache: 'no-store' }); } catch (e) {}
+      return { ok: true, durMs: buf.duration * 1000 };
+    } catch (e) {
+      return { ok: false, durMs: 0 };
+    }
+  }
+
+  function applyState(d) {
+    if (!d) return;
+    if (d.status) statusEl.innerHTML = fmtStatus(d.status);
+    // 服务端重启过（seq 回退）：把自己的游标也归零，否则后面所有台词都被当成旧的，彻底不响
+    if (typeof d.seq === 'number' && d.seq < lastId) lastId = 0;
+    const list = d.comments || [];
+    if (!list.length) return;
+    const fresh = list.filter((c) => typeof c.id !== 'number' || c.id > lastId);
+    if (!fresh.length) { hydrated = true; return; }
+    // 首包（SSE init 或第一次轮询）只补字幕，避免刷新页面时把上一句重放一遍；
+    // 之后来的每一条都要出声。不能用 lastId===0 判断：服务端刚重启、首包为空时，
+    // 第一条真正的新台词会被误当成「历史记录」，只挂字幕不出声。
+    const silent = !hydrated || !!d.init || d.audio === false;
+    hydrated = true;
+    lastId = Math.max(lastId, ...fresh.map((c) => c.id));
+    if (silent) {
+      try { fetch('/mark?ev=silent&role=' + encodeURIComponent(ROLE), { cache: 'no-store' }); } catch (e) {}
+      showComment(fresh[fresh.length - 1], true);
+      return;
+    }
+    // 一次来多条（一条命令塞 2–4 句）：按顺序排队播，别只留最后一句
+    for (const c of fresh) showComment(c, false);
+  }
+
+  // 主通道：SSE 推送。台词一产生就到，不用等下一次轮询
+  // （轮询最慢会晚 1 秒，字幕就落到出牌之后，观众看到的是「牌打完了才开口」）。
+  try {
+    const es = new EventSource('/events?role=' + encodeURIComponent(ROLE));
+    es.onmessage = (ev) => {
+      try { applyState(JSON.parse(ev.data)); } catch (e) {}
+    };
+    es.onerror = () => { /* EventSource 自己会重连 */ };
+  } catch (e) {}
+
+  // 兜底：SSE 没连上时，还有慢速轮询补状态
+  setInterval(async () => {
+    try {
+      const r = await fetch('/state?after=' + lastId, { cache: 'no-store' });
+      applyState(await r.json());
+    } catch (e) {
+      // keep the last frame; don't blank the overlay
+    }
+  }, 2000);
 </script>
 
 <script>
