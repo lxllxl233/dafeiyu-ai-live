@@ -27,6 +27,10 @@ OBS 里的浏览器源能吃到透明通道，**普通窗口不行**（Chromium 
 `streamer.py` 自己开一个 Win32 分层窗口，用 Pillow 按 `index.html` 的配色/字号/圆角/阴影现画，
 数据仍走 `overlay_server.py` 的 `/state`——**和 OBS 里那条气泡同一份数据、同一套设计**。
 
+![主播模式：透明弹幕窗叠在游戏画面上](docs/streamer_mode.png)
+
+*（真窗口截图：圆角外能看到游戏原画，说明是真的逐像素透明，不是贴图。）*
+
 ```powershell
 python streamer.py                 # 起窗（overlay server 没跑会自动拉起）
 python streamer.py --demo          # 不接游戏，先放一条示例试位置
