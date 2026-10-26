@@ -33,3 +33,7 @@ logs/*.js
 logs/*.log
 logs/tts_cache/
 *.wav
+tmp_*.txt
+tmp_*.json
+tmp_*.py
+tmp_notes*.md
