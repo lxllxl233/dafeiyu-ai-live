@@ -69,6 +69,7 @@ def main():
     first = sts2.compact(build_state())
     second = sts2.compact(build_state())
     third = sts2.compact(build_state(potions=[{"potion_id": "FLEX_POTION", "occupied": True}]))
+    brief = sts2.compact(build_state(), brief=True)
 
     checks = [
         ("首读含完整卡面", "造成8点伤害" in first),
@@ -81,6 +82,10 @@ def main():
         ("二读卡片走短格式", "DISMANTLE c1" in second),
         ("换药水后重新提示", "POTION FX" in third),
         ("HUD 常驻槽位", "HUD potions 0:BLOOD_POTION" in first),
+        ("brief 不再打 EFF/ORDER", "EFF " not in brief and "ORDER " not in brief),
+        ("brief 保留手牌与敌人", "HAND 5:" in brief and "PHROG_PARASITE" in brief),
+        ("brief 卡名去后缀", "DISMANTLE(1)" in brief and "_IRONCLAD" not in brief),
+        ("brief 显著更短", len(brief.encode("utf-8")) < len(first.encode("utf-8")) * 0.45),
     ]
     ok = True
     for name, passed in checks:
@@ -88,7 +93,9 @@ def main():
         ok = ok and passed
 
     print(f"bytes: first={len(first.encode('utf-8'))} second={len(second.encode('utf-8'))} "
-          f"save={(1 - len(second) / max(1, len(first))) * 100:.0f}%")
+          f"brief={len(brief.encode('utf-8'))} "
+          f"save={(1 - len(second) / max(1, len(first))) * 100:.0f}% "
+          f"brief_save={(1 - len(brief) / max(1, len(first))) * 100:.0f}%")
     if len(second) >= len(first) * 0.75:
         print("FAIL 二读没有明显变短")
         ok = False

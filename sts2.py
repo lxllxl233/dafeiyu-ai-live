@@ -690,7 +690,7 @@ def _short_card_line(i: int, c: dict) -> str:
     return f"[{i}] {cid}{up} c{cost} {tgt}{vt}{unplay}"
 
 
-def compact(state: dict, full: bool = False) -> str:
+def compact(state: dict, full: bool = False, brief: bool = False) -> str:
     screen = state.get("screen", "?")
     run = state.get("run") or {}
     combat = state.get("combat") or {}
@@ -710,6 +710,37 @@ def compact(state: dict, full: bool = False) -> str:
     lines.append(
         f"SCREEN {screen} | {char} A{asc} | act {act} floor {floor} | HP {hp}/{mhp} gold {gold} deck {len(deck)}"
     )
+    if brief and screen == "COMBAT":
+        # 出牌后的极简回显：只留「还能打什么、打谁、差多少」。
+        c = combat
+        player = c.get("player") or {}
+        energy = player.get("energy", "?")
+        block = player.get("block", 0)
+        incoming = combat_incoming(state)
+        hand = c.get("hand") or []
+        ids = []
+        for card in hand:
+            if not isinstance(card, dict):
+                continue
+            cid = str(card.get("card_id") or card.get("id") or "?").replace("_IRONCLAD", "")
+            cost = card.get("energy_cost", card.get("cost", "?"))
+            if isinstance(cost, float) and cost.is_integer():
+                cost = int(cost)
+            dead = "x" if (card.get("playable") is False or card.get("can_play") is False) else ""
+            ids.append(f"{cid}{dead}({cost})")
+        lines.append(f"TURN {c.get('turn_number', '?')} | E{energy} blk{block} 入伤{incoming}")
+        lines.append(f"HAND {len(hand)}: " + " ".join(ids))
+        for i, e in enumerate(c.get("enemies") or []):
+            if isinstance(e, dict):
+                lines.append(" " + _enemy_line(i, e))
+        if incoming > 0:
+            pool, parts = hand_block_pool(hand)
+            if pool:
+                lines.append(f"BLOCK_POOL {pool}（{' + '.join(parts)}）")
+        acts = state.get("available_actions") or []
+        lines.append("LEGAL " + ",".join(str(x) for x in acts))
+        return "\n".join(lines)
+
     cache = _cache_load()
     dirty = False
 
@@ -1824,7 +1855,7 @@ def _card_strength(c: dict):
 
 
 def cmd_play(card_id: str, target: int | None = None, thought: str = "", meme: str = "",
-             card: int | None = None):
+             card: int | None = None, full: bool = False):
     """Play a card by card_id. Same-name copies (Strike vs Strike+) resolve to the strongest."""
     s = get_state()
     hand = ((s.get("combat") or {}).get("hand") or [])
@@ -1879,7 +1910,7 @@ def cmd_play(card_id: str, target: int | None = None, thought: str = "", meme: s
     }
     if q in pure_def and combat_incoming(s) == 0:
         print("WARNING no incoming attack: pure defense may be wasted; attack/engine first unless setting up Body Slam/Barricade/retain.")
-    cmd_do("play_card", card=idx, target=target, thought=thought, meme=meme)
+    cmd_do("play_card", card=idx, target=target, thought=thought, meme=meme, full=full)
 
 
 def _fingerprint(s: dict):
@@ -2107,7 +2138,7 @@ def _pick_cards_once(picks, thought="", meme=""):
     return cur
 
 
-def cmd_do(action, card=None, target=None, option=None, thought="", meme="", options=None):
+def cmd_do(action, card=None, target=None, option=None, thought="", meme="", options=None, full=False):
     if options:
         if action != "select_deck_card":
             print(f"WARN --options 只用于 select_deck_card（收到 {action}），已忽略")
@@ -2274,10 +2305,20 @@ def cmd_do(action, card=None, target=None, option=None, thought="", meme="", opt
                 f"MULTI_SELECT 已选 {cnt}/{mn}：还要再点 {mn - cnt} 张（同一张再点会取消）。"
                 f"下次可一次点完：do select_deck_card --options 0,2"
             )
-    anchor = combat_anchor(after)
-    if anchor:
-        print(anchor)
-    print(compact(after))
+    in_combat_play = (
+        not full
+        and action in ("play_card", "use_potion")
+        and before.get("screen") == "COMBAT"
+        and after.get("screen") == "COMBAT"
+    )
+    if in_combat_play:
+        print(_delta_line(before, after))
+        print(compact(after, brief=True))
+    else:
+        anchor = combat_anchor(after)
+        if anchor:
+            print(anchor)
+        print(compact(after))
     print(f"ACTION {action} {params} -> {resp.get('status')} {resp.get('message')}")
     _meme_hint()
 
@@ -2364,7 +2405,7 @@ def cmd_batch(spec: str):
         overlay_say(tag_for(after.get("screen", "")), thought, meme, after)
         log(a, params, before, after, resp or {}, thought, meme)
         print(f"[{i}] {a} {params.get('card_index', params)} -> {resp.get('status')} | {_delta_line(before, after)}")
-    print(compact(get_state()))
+    print(compact(get_state(), brief=True))
 
 
 def cmd_wait(screen=None, player_turn=False, timeout=30):
@@ -2450,6 +2491,7 @@ def main():
     p.add_argument("--card", type=int, help="force hand index when several copies exist")
     p.add_argument("--thought", default="")
     p.add_argument("--meme", default="")
+    p.add_argument("--full", action="store_true", help="出牌后仍打完整 state（默认只打一行增量 + 手牌/敌人）")
     p = sub.add_parser("do")
     p.add_argument("action")
     p.add_argument("--card", type=int)
@@ -2458,6 +2500,7 @@ def main():
     p.add_argument("--options", help="多选界面一次点完：逗号分隔下标，如 --options 0,3,5（自动确认）")
     p.add_argument("--thought", default="")
     p.add_argument("--meme", default="")
+    p.add_argument("--full", action="store_true", help="动作后打完整 state")
     p = sub.add_parser("batch")
     p.add_argument("spec")
     p = sub.add_parser("wait")
@@ -2480,12 +2523,13 @@ def main():
     elif args.cmd == "plan":
         cmd_plan(args.clear, args.note)
     elif args.cmd == "play":
-        cmd_play(args.card_id, args.target, args.thought, args.meme, args.card)
+        cmd_play(args.card_id, args.target, args.thought, args.meme, args.card, args.full)
     elif args.cmd == "do":
         options = None
         if getattr(args, "options", None):
             options = [int(x) for x in str(args.options).replace(" ", "").split(",") if x != ""]
-        cmd_do(args.action, args.card, args.target, args.option, args.thought, args.meme, options)
+        cmd_do(args.action, args.card, args.target, args.option, args.thought, args.meme, options,
+               getattr(args, "full", False))
     elif args.cmd == "batch":
         cmd_batch(args.spec)
     elif args.cmd == "wait":
