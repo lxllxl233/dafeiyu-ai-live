@@ -157,6 +157,19 @@ out, err = guard_err(st, [{"c": "DEFEND_IRONCLAD"}, {"c": "DEFEND_IRONCLAD"},
                           {"c": "STRIKE_IRONCLAD", "t": 0}, {"end": 1}])
 check("带甲斩杀放行", out.get("ok"), True)
 
+# 11) 漏甲不该罚「已经打过防御」的手：run73 实测的误判
+st = combat([card("DEFEND_IRONCLAD", 1, blk=5), card("STRIKE_IRONCLAD", 1, dmg=6),
+             card("STRIKE_IRONCLAD", 1, dmg=6)], energy=3, incoming=10, ehp=60)
+out, err = guard_err(st, [{"c": "DEFEND_IRONCLAD"}, {"c": "STRIKE_IRONCLAD", "t": 0},
+                          {"c": "STRIKE_IRONCLAD", "t": 0}, {"end": 1}])
+check("打过的防御不再算漏甲", "漏甲" in err, False)
+
+# 12) 同名多张：只打过 1 张，还剩 1 张没打，仍要拦
+st = combat([card("DEFEND_IRONCLAD", 1, blk=5), card("DEFEND_IRONCLAD", 1, blk=5)],
+            energy=1, incoming=12, ehp=60)
+out, err = guard_err(st, [{"c": "DEFEND_IRONCLAD"}, {"end": 1}])
+check("还剩同名牌没打仍要拦", "漏甲" in err, True)
+
 print()
 print("ALL OK" if ok else "SOME CHECKS FAILED")
 sys.exit(0 if ok else 1)

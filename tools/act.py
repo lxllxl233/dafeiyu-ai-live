@@ -440,7 +440,23 @@ def _free_block_cards(base, require_value: bool = True) -> list:
     return out
 
 
-def _guard_take(st: dict, sm, allow: dict) -> tuple[str | None, str | None]:
+def _played_counts(st: dict, seq: list) -> dict:
+    """这一手已经打出的牌（id → 张数）。
+
+    漏甲护栏必须扣掉「已经打过的防御」：run73 实测，出完两张防御再 end 仍被拦，
+    因为护栏看的是**回合起手**的手牌，等于罚已经做了正确动作的人。
+    """
+    out: dict = {}
+    for step in seq or []:
+        if not isinstance(step, dict) or "c" not in step:
+            continue
+        cid = str(step.get("c") or "")
+        if cid:
+            out[cid] = out.get(cid, 0) + 1
+    return out
+
+
+def _guard_take(st: dict, sm, allow: dict, played: dict | None = None):
     """有甲可起却裸吃伤害：这一手结束要掉血，起手有便宜防御却一张没打。
 
     小刮擦（<6 点）只提醒不拦；真要换血写 allow_take。
@@ -454,17 +470,28 @@ def _guard_take(st: dict, sm, allow: dict) -> tuple[str | None, str | None]:
         return None, None
     base = sim.Sim.from_state(st)
     blocks = _free_block_cards(base)
+    # 扣掉这一手已经打出去的甲牌（含同名多张）
+    left = dict(played or {})
+    rest = []
+    for c, cost in blocks:
+        cid = str(c.get("id") or "")
+        if left.get(cid, 0) > 0:
+            left[cid] -= 1
+            continue
+        rest.append((c, cost))
+    blocks = rest
     if not blocks:
         return None, None
     best = max(sts2._int(c.get("blk"), 0) for c, _k in blocks)
     bn = "、".join(f"{c['id']}({cost}费)" for c, cost in blocks[:4])
     if taken < 6 or best < 4:
-        return None, (f"这小伤可省：净挨 {taken} 点，起手有 {bn} 能起甲（拦阈值 6 点/4 甲）")
-    return (f"护栏·漏甲：这一手结束要净挨 {taken} 点，起手有 {bn} 能起甲却没用。"
+        return None, (f"这小伤可省：净挨 {taken} 点，手上还有 {bn} 能起甲（拦阈值 6 点/4 甲）")
+    return (f"护栏·漏甲：这一手结束要净挨 {taken} 点，手上还有 {bn} 能起甲却没用。"
             f"要么把甲叠起来，要么写 {{\"allow_take\":1}} 说明为什么换血"), None
 
 
-def _guards(st: dict, sm, ended: bool, allow: dict) -> tuple[str | None, dict]:
+def _guards(st: dict, sm, ended: bool, allow: dict,
+            played: dict | None = None) -> tuple[str | None, dict]:
     """返回 (拒绝原因, 附加信息)。只在「这一手会结束回合」时查漏斩/漏费/漏甲。
 
     顺序按「亏多少」排：漏斩最贵（白送一回合挨打），其次漏费，最后漏甲。
@@ -486,7 +513,7 @@ def _guards(st: dict, sm, ended: bool, allow: dict) -> tuple[str | None, dict]:
     extra.update(meta)
     if err:
         return err, extra
-    err, warn = _guard_take(st, sm, allow)
+    err, warn = _guard_take(st, sm, allow, played)
     if warn:
         extra["warn"] = [warn]
     return err, extra
@@ -517,7 +544,8 @@ def _execute(st: dict, seq: list, lines: list, fx: dict,
                       retargets=getattr(sm, "retargets", None))
         return out
 
-    guard_err, guard_meta = _guards(st, sm, ended, allow or {})
+    guard_err, guard_meta = _guards(st, sm, ended, allow or {},
+                                    played=_played_counts(st, seq))
     if guard_err:
         out = {"ok": False, "err": guard_err, "fx": want,
                "ctx": ctxmod.build_with_mem(st, ctxmod._load_mem())}
