@@ -107,3 +107,20 @@ run73 打同族（THE_KIN）时把这条规律看得最清楚——满血 80 进
 **牌组和引擎都对了，差的是「防御的复利」和「更薄的牌组」。** 今晚两局都死在同一个数字上：
 21 张牌、2 张抽牌、每回合 18–28 的线性格挡，对上第二幕 Boss 平均 24–38 的伤害。
 把牌组压到 16、抽牌加到 3 张、抢到壁垒或金属化，第二幕就能过；第三幕需要双 Boss 连战的资源规划。
+
+---
+
+## 9. 早上起来怎么继续（run74 正在跑）
+
+```powershell
+cd D:\aigame\sljt\sljt
+python sts2.py state              # 看现在在哪
+python tools\ctx.py               # 战斗内：读局面包
+python tools\act.py --file tmp_plan.json   # 执行 say+seq
+```
+
+- 最新一局：`logs/run74_notes.md`；总报告：`docs/NIGHT_REPORT_2026-10-27.md`；条令：`docs/RUN_DOCTRINE.md`。
+- 三份 Boss 档案：`docs/boss_act1_dossier.md` / `boss_act2_dossier.md` / `boss_act3_dossier.md`。
+- 录像在 `recordings/`，按 run 命名；OBS 用 `python obsctl.py start|stop` 控制。
+- 测试：`python tools\test_act_guards.py`（12 项）、`python tools\audit_guards.py`（用 199 条历史决策重放护栏）。
+- 代码状态：`tools/act.py` 今晚新增「遗言告警」+「漏甲扣已打牌」+「fx 报错带答案」，均已 commit & push。
