@@ -21,6 +21,29 @@
 - 截图验收：`python tools/verify_overlay_speech.py`（发 4 条不同句式的评论并逐条截图）/ `tools/verify_overlay_single.py`（确认只显示最新一条）。
 - 写 `--thought` / `--meme` 时的配合：thought 说“在算什么、打算怎么打”，meme 接着往下说人话；两句都能独立成句，别为拼接硬凑语气。
 
+## 主播模式（桌面透明弹幕窗，2026-10-26）
+
+OBS 里的浏览器源能吃到透明通道，**普通窗口不行**（Chromium 窗口不支持逐像素 alpha）。所以
+`streamer.py` 自己开一个 Win32 分层窗口，用 Pillow 按 `index.html` 的配色/字号/圆角/阴影现画，
+数据仍走 `overlay_server.py` 的 `/state`——**和 OBS 里那条气泡同一份数据、同一套设计**。
+
+```powershell
+python streamer.py                 # 起窗（overlay server 没跑会自动拉起）
+python streamer.py --demo          # 不接游戏，先放一条示例试位置
+python streamer.py --click-through # 开局就点击穿透（打游戏时鼠标直接穿过去）
+python streamer.py --preview out.png  # 只渲一张图，验收用
+```
+
+- **左键拖动**挪位置，松手自动记到 `logs/streamer_window.json`；换显示器/拔副屏也不会跑丢（会夹回可见区）。
+- **右键菜单**：置顶 / 点击穿透 / 重新显示示例 / 关闭。
+- **热键**：`Ctrl+Alt+D` 点击穿透（穿透后点不到窗口，用它切回来）· `Ctrl+Alt+H` 隐藏 · `Ctrl+Alt+Q` 退出。
+- 透明是真的逐像素 alpha：圆角、投影、面板 0.95/0.88 的半透明都保留，桌面和游戏都能透出来。
+- 说话时头像会轻轻跳一下（对应页面里的 bounce），新弹幕滑入 + 渐显，长句自动换行并降字号。
+- **只画不发声**：动森式音效仍在 OBS 的浏览器源里（`AI Commentary`），这个窗是纯视觉预览。
+- **直播怎么接**：显示器采集时它就在画面里（推荐，最省事）；OBS 的**窗口采集**对分层窗口可能丢掉 alpha，
+  要透明干净就继续用原来的 `AI Commentary` 浏览器源，这个窗只当自己盯着看的预览。
+- 回归：`python tools/test_streamer.py`（渲染尺寸/透明/换行/裁字/帧耗时）。
+
 ## 技术方案
 
 ```
@@ -29,7 +52,7 @@
         ↑ /state、/actions/available、/action
   sts2.py（压缩状态、动作、等待、JSONL 战报）
   overlay_server.py :8730 + overlay/index.html
-        ↑ 浏览器源（透明弹幕）
+        ↑ 浏览器源（透明弹幕）        ↑ streamer.py（桌面透明弹幕窗，主播模式）
   OBS 32.2.2（场景 StS2：显示器采集裁切 + 浏览器源；NVENC 1080p60）
         └─ recordings/*.mp4
 ```
@@ -127,6 +150,8 @@ python tools/test_batch.py           # batch 回归（等快照/按 card_id/超�
 python tools/audit_tokens.py          # token 账本：请求数/上下文/各命令回显（读 DSH 日志）
 python tools/compare_turn_protocol.py # 旧协议 vs v18 一回合一条 batch 的回显/请求对比
 python tools/check_skill.py           # skill 规则覆盖断言（阈值/关键词/反模式编号不许丢）
+python streamer.py                    # 主播模式：桌面透明弹幕窗（左键拖 · 右键菜单 · Ctrl+Alt+D 穿透）
+python tools/test_streamer.py         # 主播模式渲染回归（尺寸/透明/换行/帧耗时）
 python obsctl.py free           # 切窗口/游戏采集（切到 B 站也继续录游戏画面）
 python obsctl.py free window    # 游戏采集不工作时，退回窗口采集（WGC）
 python obsctl.py health         # 录制自检：有没有画面/声音、游戏窗口是否最小化
@@ -262,6 +287,7 @@ python sts2.py route
 - `sts2.py`：API 客户端 / 状态压缩 / 动作 / 战报
 - `obsctl.py`：OBS WebSocket 控制
 - `overlay_server.py`、`overlay/index.html`：弹幕服务与页面
+- `streamer.py`：主播模式——桌面透明弹幕窗（Win32 分层窗口 + Pillow，逐像素 alpha）
 - `tools/data/eng/`：v0.8.0 自带英文卡牌/遗物/怪物数据（用于可读状态）
 - `logs/`：JSONL 与 Markdown 战报
 - `recordings/`：成片；`recordings/_tests/`：测试片

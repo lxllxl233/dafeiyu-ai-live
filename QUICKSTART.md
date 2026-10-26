@@ -65,7 +65,14 @@ python obsctl.py start
 - 决策：`sts2-ironclad-ironclad`
 - 说话：`sts2-caster`
 
-把 [NEXT_PROMPT.txt](NEXT_PROMPT.txt) 丢给 agent 就能开局。收尾：
+把 [NEXT_PROMPT.txt](NEXT_PROMPT.txt) 丢给 agent 就能开局。想在自己屏幕上盯着那条弹幕看，
+另开一个终端跑 **主播模式**（可拖动的透明弹幕窗，和 OBS 里同款）：
+
+```powershell
+python streamer.py --demo     # 先看效果；左键拖位置，右键菜单，Ctrl+Alt+D 点击穿透
+```
+
+收尾：
 
 ```powershell
 python obsctl.py stop        # 录像在 recordings/
