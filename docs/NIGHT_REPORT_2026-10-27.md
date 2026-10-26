@@ -22,6 +22,10 @@
 | **run71** | 卒 act2 f33 | ✅ **仪式兽 262**（9 回合，77→31 血） | ❌ 帝皇蟹 428（44/80 进战） | 进 Boss 血量太低、牌组 21 张稀释 |
 | **run72** | 卒 act2 f33 | ✅ **瀑布巨兽 250**（10 回合，81→56 血，缓冲吃掉 44 点遗言） | ❌ 帝皇蟹 428（79/101 进战） | 格挡密度不够（7 张甲牌/21 张）+ 引擎来得晚 |
 | **run73** | 卒 act1 f17 | ❌ **同族 199+63+62**（满血 80 进，祭司打到 104/199） | — | 甲牌 7 张追不上「每回合加力量」的成长型入伤（9 回合从 14 涨到 37） |
+| **run74** | 卒 act1 f11 | ❌ **没到 Boss**（地精佣兵） | — | 过度执行「只拿甲」→ 13 张牌只有 5 张攻击，一回合 18 伤，被 53 血杂怪磨死 |
+| run75 | 06:45 开跑 | 进行中 | — | — |
+
+> 六局下来真正的分水岭：**run71/run72 能过第一幕，是因为牌组里有引擎 + 20 张牌的输出；run73/run74 反而更差，是因为把「牌薄」和「只拿甲」执行过头，伤害地板掉了。**
 
 两场第一幕 Boss 都是「先算阈值线 → 用遗言/爆炸账决定斩杀时点」赢下来的，执行层面已经稳定。
 
@@ -62,18 +66,35 @@ run73 打同族（THE_KIN）时把这条规律看得最清楚——满血 80 进
    - 清场且 0 甲时给 `warn: 遗言警告`（run72 瀑布巨兽的 44 点 DeathBlow 就是这类，靠这条以后不会再漏算）；
    - 能斩杀但斩杀线 0 甲且敌人有遗言时，`护栏·漏斩` 会要求换「带甲的斩杀线」。
 
-### 4.2 `.dsh/skills/sts2-ironclad-ironclad/SKILL.md`
-新增 5 条实战规则（全部今晚实测）：
+### 4.2 `tools/gates.py`（新工具）
+把三条门槛做成可执行检查，不靠自觉：
+```powershell
+python tools/gates.py --act 2
+# PASS 第2幕 牌组张数 = 15 （要求 <=16）
+# PASS 第2幕 甲牌占比 = 47% （要求 >=0.45）
+# FAIL 第2幕 抽牌张数 = 2 （要求 >=3）
+```
+配套 `tools/test_gates.py`（8 项，全绿）。这是今晚最实用的产出：以后每次拿牌就能自查，不用等死。
+
+### 4.3 `tools/act.py` 之二：漏甲误判
+`护栏·漏甲` 原来用「回合起手手牌」判断，导致**已经打出两张防御再 end 仍被拦**（run73 实测，等于罚做对了的人）。
+现在 `_played_counts()` 会扣掉这一手已经打出的甲牌（同名多张按张数扣），测试从 10 项扩到 **12 项**。
+
+### 4.4 `.dsh/skills/sts2-ironclad-ironclad/SKILL.md`
+新增 8 条实战规则（全部今晚实测）：
 - **SL 不改变抽牌顺序**（`save_and_quit` → continue 后开局手牌完全一样）→ SL 只能修操作，不能刷牌序；
 - **商店每店只能删 1 张牌**；
 - **药水栏满时 `claim_reward` 静默成功但不给药水**（run72 白丢一瓶明耀酊剂）；
 - **遗言敌人斩杀不等于安全**（见上）；
-- **`fx` 报错会带答案**，照抄重发。
+- **`fx` 报错会带答案**，照抄重发；
+- **`贪婪` 是永恒诅咒，商店删不掉**（诅咒珍珠的隐藏代价）；
+- **「从牌组移除 N 张」的多选界面点不动**（blocker，`docs/TODO_mod_deck_remove.md`，绕过：别选 + `save_and_quit`/`continue_run` 回滚）；
+- **只堆甲会死于消耗战**，甲牌 ≥45% 必须配「非基础高伤攻击 ≥2」。
 
-### 4.3 测试
-`tools/test_act_guards.py` 从 8 项扩到 **10 项**，新增「遗言 + 0 甲斩杀 → 告警」「带甲斩杀 → 放行」，全绿。
-`tools/test_ctx_act.py`、`test_draw_boundary.py`、`test_execution_safety.py`、`test_turn_hand_wait.py`、
-`test_plan_visibility.py`、`test_combat_math.py`、`test_state_compact.py`、`test_batch.py` 全部 ALL OK。
+### 4.5 测试
+`tools/test_act_guards.py` 8 → **12 项**；`tools/test_gates.py` **8 项**（新增）；
+`test_ctx_act / test_draw_boundary / test_execution_safety / test_turn_hand_wait / test_plan_visibility /
+test_combat_math / test_state_compact / test_batch` 全部 ALL OK。
 
 ---
 
