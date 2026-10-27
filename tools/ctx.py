@@ -618,6 +618,19 @@ def _combat(state: dict, mem: dict) -> dict:
         plan_out.append(p_out)
     out["plans"] = plan_out
 
+    # 单体局面：直接给出「这张牌打出去实际掉多少血」（已扣敌方格挡、含易伤），
+    # 免得把 hand[].dmg（卡面）或 plans[].d（整套合计）当成单卡伤害。
+    if len(en_out) == 1:
+        e0 = en_out[0]
+        eblk = e0.get("blk", 0) or 0
+        vuln0 = any("易伤" in str(b) for b in (e0.get("b") or []))
+        for c in out["hand"]:
+            if c.get("t") != "A" or not c.get("dmg"):
+                continue
+            per = int(c["dmg"] * (1.5 if vuln0 else 1.0))
+            hits = max(1, _int(c.get("hits"), 1))
+            c["eff"] = max(0, per - eblk) * hits
+
     # 本回合最大伤害 / 还需几回合 / 下回合入伤 / 下回合手牌
     dmax = max([p["dmg"] for p in plans] + [0])
     calc["dmg"] = dmax

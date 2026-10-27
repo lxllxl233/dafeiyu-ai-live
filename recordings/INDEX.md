@@ -17,3 +17,4 @@
 | P? | sts2_ironclad_a10_runs77-79_bosses.mp4 | 第一幕 Boss 集锦 | 4.9 GB |
 
 新的一局：`python tools/rec_episode.py start`；结束：`python tools/rec_episode.py finish --run 82 --result win_a10`（会自动改名 + 写本表）。
+| P81 | sts2_ironclad_a10_run81_lose_act2elite.mp4 | lose_act2elite | 7.2 GB |

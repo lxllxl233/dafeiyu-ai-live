@@ -36,9 +36,12 @@ def main():
     print("start screen:", sc)
 
     if sc == "GAME_OVER":
-        acts = [a.get("name") for a in (st.get("available_actions") or [])]
+        raw = st.get("available_actions") or []
+        acts = [a if isinstance(a, str) else str(a.get("name") or "")
+                for a in raw]
         print("game_over actions:", acts)
-        for name in ("return_to_menu", "proceed", "continue_after_defeat", "open_main_menu"):
+        for name in ("return_to_main_menu", "return_to_menu", "proceed",
+                     "continue_after_defeat", "open_main_menu", "main_menu"):
             if name in acts:
                 print("-> do", name)
                 if not dry:
