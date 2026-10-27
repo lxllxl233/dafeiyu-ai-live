@@ -3127,7 +3127,15 @@ def cmd_rewards(take=None, potion="skip", thought="", meme="", full=False,
     handled: set[int] = set()
     prof: list[tuple[str, float]] = []
     t_all = time.time()
+    with perf.stage("rewards") as _st:
+        return _rewards_body(take, potion, thought, meme, full, pick, quiet,
+                             steps, handled, prof, t_all, _st)
+
+
+def _rewards_body(take, potion, thought, meme, full, pick, quiet,
+                  steps, handled, prof, t_all, _st):
     after = get_state()
+    _st.poll()
     prof.append(("read_state", time.time() - t_all))
     if thought or meme:
         t_say = time.time()
@@ -3136,6 +3144,7 @@ def cmd_rewards(take=None, potion="skip", thought="", meme="", full=False,
     t_loop = time.time()
     for _round in range(8):
         st = get_state()
+        _st.poll()
         screen = st.get("screen")
         if screen == "CARD_SELECTION":
             # 已经站在选牌界面上（上一轮 claim 打开了卡牌奖励）
