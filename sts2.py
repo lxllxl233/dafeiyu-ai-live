@@ -2844,12 +2844,21 @@ def cmd_batch(spec: str):
         if i > 0:
             st = _player_turn_state()
             if st is None:
+                # 药水/连打后引擎偶尔会短暂没有玩家回合快照（动画/重绘）。
+                # 以前这里直接 exit 3，结果「一半动作执行了、一半没执行」，很坑。
+                for _ in range(10):
+                    time.sleep(0.25)
+                    st = _player_turn_state()
+                    if st is not None:
+                        break
+            if st is None:
                 if a == "end_turn":
                     # 上一刀已经打完战斗/进选牌：没有玩家回合可结束，别把 end_turn 发出去。
                     print(f"[{i}] end_turn 跳过：战斗已经结束（没有玩家回合）")
                     ended = True
                     break
                 print(f"BATCH STOP at {i} {a}: 没有玩家回合快照（战斗结束/进了选牌/敌人回合）")
+                print(f"BATCH PARTIAL {i}/{len(items)}：前 {i} 步已执行，下一步请先 python tools/ctx.py 看真实状态再续，别重发整批")
                 print(compact(get_state()))
                 sys.exit(3)
         before = get_state()

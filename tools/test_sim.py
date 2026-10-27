@@ -141,5 +141,27 @@ plan = sim.search(s)[0]
 check("黏液不再计 3 伤", plan["taken"], 10)
 
 print()
+print("=== 9) 狂怒：每打一张攻击牌 +3 格挡（实测） ===")
+s = state([card("RAGE", 0), card("STRIKE_IRONCLAD", 1, dmg=6), card("STRIKE_IRONCLAD", 1, dmg=6)],
+          [enemy("A", 60, 9)])
+plan = sim.search(s)[0]
+check("两张攻击 = 6 层甲（9 伤只吃 3）", plan["taken"], 3)
+
+print("=== 10) 横冲直撞：跌破阈值那一下攻击取消 ===")
+e = enemy("BEAST", 160, 26)
+e["stun_at"] = 160
+s = state([card("STRIKE_IRONCLAD", 1, dmg=6)], [e])
+plan = sim.search(s)[0]
+check("跨过阈值不吃伤害", plan["taken"], 0)
+
+print()
+print("=== 11) 狂怒 + 横冲直撞 组合 ===")
+e = enemy("BEAST", 160, 26)
+e["stun_at"] = 160
+s = state([card("RAGE", 0), card("BASH", 2, dmg=10)], [e])
+plan = sim.search(s)[0]
+check("痛击跌破阈值：零伤", plan["taken"], 0)
+
+print()
 print("ALL OK" if ok else "SOME CHECKS FAILED")
 sys.exit(0 if ok else 1)

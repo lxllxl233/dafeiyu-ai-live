@@ -141,6 +141,10 @@ def parse_card(card: dict, idx: int | None = None) -> dict:
     if text:
         out["ltx"] = text
 
+    # 狂怒 RAGE：卡面数字在 DB 里是变量占位符（"获得点格挡"），引擎实测 3 点/攻击。
+    if str(cid).upper().startswith("RAGE"):
+        out["rage"] = 5 if out["up"] else 3
+
     prof = sts2._attack_profile(card)
     if prof:
         per, fixed, cond = prof
@@ -272,6 +276,26 @@ def _power_ids(powers) -> dict:
     return out
 
 
+def _stun_threshold(e: dict) -> int:
+    """「横冲直撞 N」：血量第一次 ≤ N 时这回合的攻击直接取消。
+
+    仪式兽实测阈值是 buff 里写的 160（机制文案写 150 是错的），所以从
+    powers 的「横冲直撞NNN」里取数字，取不到就当没有这个机制。
+    """
+    for p in e.get("powers") or []:
+        if not isinstance(p, dict):
+            continue
+        blob = f"{p.get('name') or ''}{p.get('power_id') or ''}{p.get('description') or ''}"
+        if "横冲直撞" not in blob:
+            continue
+        m = re.search(r"横冲直撞\s*(\d+)", blob) or re.search(r"(\d+)", blob)
+        if m:
+            n = sts2._int(m.group(1), 0)
+            if 0 < n < 10000:
+                return n
+    return 0
+
+
 def enemy_state(e: dict, idx: int | None = None) -> dict:
     pid = _power_ids(e.get("powers"))
     pm = sts2._power_map(e.get("powers"))
@@ -297,6 +321,8 @@ def enemy_state(e: dict, idx: int | None = None) -> dict:
         "minion": "MINION_POWER" in pid,
         "dead": not (e.get("is_alive", True) and sts2._int(e.get("current_hp", e.get("hp")), 1) > 0),
         "stunned": False, "str": sts2._int(pm.get("str"), 0),
+        "stun_at": _stun_threshold(e) or sts2._int(e.get("stun_at"), 0),
+        "_stun_done": False,
     }
 
 
@@ -329,6 +355,7 @@ class Sim:
         self.barricade = False
         self.metallicize = 0
         self.plating = 0
+        self.rage = 0
         self.fnp = 0
         self.dark_embrace = 0
         self.rupture = 0
@@ -483,6 +510,11 @@ class Sim:
                 e["dead"] = True
                 self._on_death(e)
                 break
+        # 横冲直撞：第一次跌破阈值 → 这只怪本回合的攻击取消（不算「击晕」状态，只跳这一下）
+        at = e.get("stun_at") or 0
+        if at and not e.get("_stun_done") and e["hp"] <= at and e["hp"] > 0:
+            e["stunned"] = True
+            e["_stun_done"] = True
         return dealt
 
     def _on_death(self, dead: dict):
@@ -570,6 +602,12 @@ class Sim:
                 gain = int(gain * 0.75)  # 脆弱只砍卡牌格挡；药水/覆甲/金属化不砍
             self.block += gain
             step["blk"] = gain
+        # 狂怒：本回合每打一张攻击牌 +N 格挡（引擎实测生效，老版本漏算）
+        if card.get("rage"):
+            self.rage += card["rage"]
+        if self.rage and card.get("t") == "A":
+            self.block += self.rage
+            step["blk"] = step.get("blk", 0) + self.rage
         if card.get("add"):
             step["add"] = card["add"]
         if card.get("pact") and self.exhaust_pile + self.exhausts >= 3 and not card.get("dmg"):
@@ -915,7 +953,8 @@ def max_block(state: dict) -> int:
     for c in cards:
         if s.cost_of(c) <= s.energy:
             s.play(c, None)
-    return s.block + s.metallicize + s.plating
+    return s.block + s.metallicize + s.plating + s.rage * len(
+        [c for c in s.hand if c.get("t") == "A" and c.get("play", True) and not c.get("_played")])
 
 
 def lethal_targets(state: dict) -> list[dict]:

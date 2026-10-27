@@ -658,6 +658,11 @@ def _combat(state: dict, mem: dict) -> dict:
         warns.append(f"status_tax({calc['tax']})")
     if piles and piles.get("draw", {}).get("n", 99) <= 2:
         warns.append("draw_low")
+    hand_n = len((state.get("combat") or {}).get("hand") or [])
+    if hand_n >= 10:
+        warns.append("HAND_FULL 手牌 10/10：抽牌/加牌/生成的牌会静默消失（run80 血债），先把牌打掉再抽")
+    elif hand_n == 9:
+        warns.append("hand_near_full(9/10)：再抽就溢出")
     if warns:
         out["warn"] = warns
     return out
