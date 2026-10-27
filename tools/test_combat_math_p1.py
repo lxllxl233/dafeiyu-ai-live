@@ -103,14 +103,18 @@ step = sm.play(sm.hand[0], 0)
 check("出牌路径 (6+2)*1.5=12", step.get("d"), 12)
 
 print()
-print("=== 4) Frail 只砍卡牌格挡，max_block 也同步 ===")
-st = state([card("DEFEND_IRONCLAD", 1, blk=5)], [enemy(atk=10)], player_powers=FRAIL1)
+print("=== 4) Frail：引擎给的 Block 已经是打折后的值，模型不再二次打折 ===")
+# run87：账本里脆弱回合的防御牌一律显示 3（没脆弱时 5），说明引擎侧已经砍过。
+# 所以这里给「引擎会给的 3」，并断言 max_block/入伤/血量都按 3 算（旧版会把 3 再乘 0.75）。
+st = state([card("DEFEND_IRONCLAD", 1, blk=3)], [enemy(atk=10)], player_powers=FRAIL1)
 sm = sim.Sim.from_state(st)
-check("max_block 5→3", sim.max_block(st), 3)
+check("max_block 按引擎值 3", sim.max_block(st), 3)
 sm.play(sm.hand[0], None)
 res = sm.end_turn()
 check("Frail 后净掉 7", res["taken"], 7)
 check("Frail 后血 43", res["hp_after"], 43)
+st = state([card("DEFEND_IRONCLAD", 1, blk=5)], [enemy(atk=10)], player_powers=FRAIL1)
+check("脆弱不二次打折：给 5 就是 5", sim.max_block(st), 5)
 
 print()
 print("=== 5) 荆棘反伤进 taken，且不重复扣血 ===")
@@ -171,10 +175,17 @@ st = state([card("DEFEND_IRONCLAD", 1, blk=5), card("INFECTION", -1)], [enemy()]
 calc = ctx._combat(st, {})["calc"]
 check("5 甲挡 3 税 → full", (calc.get("net"), calc.get("full")), (0, True))
 
+st = state([card("DEFEND_IRONCLAD", 1, blk=3)], [enemy(atk=5, hits=2, total=10)],
+           player_powers=FRAIL1)
+calc = ctx._combat(st, {})["calc"]
+# run87：引擎的 dynamic_values.Block 已经是砍过脆弱的值（防御 5→3），所以这里给 3；
+# ctx 只把这 3 点算进格挡池，不能再打一次折（旧实现会算成 2、net 8）。
+check("ctx 也吃 Frail：blk3/net7", (calc.get("blk"), calc.get("net")), (3, 7))
+
 st = state([card("DEFEND_IRONCLAD", 1, blk=5)], [enemy(atk=5, hits=2, total=10)],
            player_powers=FRAIL1)
 calc = ctx._combat(st, {})["calc"]
-check("ctx 也吃 Frail：blk3/net7", (calc.get("blk"), calc.get("net")), (3, 7))
+check("脆弱不二次打折：引擎给 5 就按 5 算", (calc.get("blk"), calc.get("net")), (5, 5))
 
 st = state([card("SLIMED", 1, draw=1, playable=True, text="抽1张牌。消耗。")],
            [enemy(atk=5, hits=2, total=10)])

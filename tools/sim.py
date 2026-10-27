@@ -573,6 +573,27 @@ class Sim:
         self.thorns_taken = 0
         self.steps: list[dict] = []
         self.exhaust_pile = 0
+        # 这一手里「第几步打完就把敌人全清了」（0 基步号）；None=没清场。
+        # 清场之后战斗立刻结束，引擎不再接受出牌 —— 调用方据此拒绝「清场后补牌」（P14）。
+        self.cleared_at: int | None = None
+
+    def _dex_block(self) -> int:
+        """批内新加的敏捷（快照里的敏捷已经在 card["blk"] 里了）。脆弱对这部分同样生效。"""
+        if not self.dex_bonus:
+            return 0
+        if self.player_frail:
+            return int(self.dex_bonus * 0.75)
+        return self.dex_bonus
+
+    def _mark_cleared(self, n: int) -> None:
+        """第 n 步（0 基）打完场上没怪了 → 记下（幻象 reviving 的怪不算清场）。"""
+        if self.cleared_at is not None:
+            return
+        if self.alive():
+            return
+        if any(e.get("revive") for e in self.enemies):
+            return
+        self.cleared_at = n
 
     @classmethod
     def from_state(cls, state: dict) -> "Sim":
@@ -879,9 +900,12 @@ class Sim:
                          and x.get("t") != "A"])
                 gain = max(0, card["blk"] * n)
             else:
-                gain = max(0, card["blk"] + self.dex_bonus)
-            if self.player_frail:
-                gain = int(gain * 0.75)  # 脆弱只砍卡牌格挡；药水/覆甲/金属化不砍
+                # card["blk"] 是引擎 dynamic_values 的当前值，**已经含快照时点的脆弱/力量**：
+                # 全账本按 (牌, 升没升, 有没有脆弱) 分组，防御 5→3、耸肩 8→6、血墙 16→12、
+                # 嘲讽 7→5、坚毅 7→5 —— 一律 0.75 向下取整，说明引擎侧已经砍过了（P15）。
+                # 所以这里只补**批内新加**的敏捷，不能再乘一次 0.75（run86 f12t2 就是这么把
+                # 4 点入伤预测成 6 点的）。
+                gain = max(0, card["blk"] + self._dex_block())
             self.block += gain
             step["blk"] = gain
         # 狂怒：本回合每打一张攻击牌 +N 格挡（引擎实测生效，老版本漏算）
@@ -1430,6 +1454,7 @@ def validate(state: dict, seq: list) -> tuple[bool, str, Sim, list]:
             if not p2:
                 return False, f"第{n + 1}步：{p['n']} 用不了", sim, steps
             steps.append(p2)
+            sim._mark_cleared(n)
             continue
         cid = raw.get("c", raw.get("id", raw.get("card_id")))
         card = resolve_card(sim, str(cid or ""), used)
@@ -1461,4 +1486,5 @@ def validate(state: dict, seq: list) -> tuple[bool, str, Sim, list]:
             return False, f"第{n + 1}步：{card['id']} 打不出去", sim, steps
         used.add(card["i"])
         steps.append(step)
+        sim._mark_cleared(n)
     return True, "", sim, steps

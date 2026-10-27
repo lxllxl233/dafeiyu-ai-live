@@ -278,13 +278,20 @@ check("R15 不当成清场", fc.get("clear"), None)
 # ---------------------------------------------------------------- R16 领奖不能绕过牌组上限
 # run85：collect_rewards_and_proceed 静默把卡牌奖励领走，牌组 16→20，
 # 而 DECK_CAP 只在 choose_reward_card 上生效。
+# run87：`act_id` 是 0 基（1 = 第二幕，上限 18），所以「满编」要用 18 张的牌组来验；
+# 旧用例拿 16 张在第二幕当满编，其实是被 deck_cap 的一基/零基混用挡住的（P10c）。
 deck16 = [{"card_id": "STRIKE_IRONCLAD", "name": "打击"} for _ in range(16)]
+deck18 = [{"card_id": "STRIKE_IRONCLAD", "name": "打击"} for _ in range(18)]
 rw = {"screen": "REWARD",
       "run": {"act_id": 1, "floor": 10, "deck": deck16},
       "reward": {"rewards": [{"reward_type": "Card", "description": "将一张牌添加到你的牌组。"},
                              {"reward_type": "Gold", "description": "8金币"}]}}
 check("R16 认出还有卡牌奖励", sts2.pending_card_reward(rw), True)
-check("R16 满编时给 DECK_CAP", "DECK_CAP" in (sts2.deck_cap_guard(rw) or ""), True)
+rw18 = {"screen": "REWARD",
+        "run": {"act_id": 1, "floor": 10, "deck": deck18},
+        "reward": {"rewards": [{"reward_type": "Card", "description": "将一张牌添加到你的牌组。"}]}}
+check("R16 满编时给 DECK_CAP", "DECK_CAP" in (sts2.deck_cap_guard(rw18) or ""), True)
+check("R16 第二幕 16 张不算满编（上限 18）", sts2.deck_cap_guard(rw), None)
 rw2 = {"screen": "REWARD", "run": {"act_id": 1, "floor": 10, "deck": deck16},
        "reward": {"rewards": [{"reward_type": "Gold", "description": "8金币"}]}}
 check("R16 没有卡牌奖励就不拦（纯金币/遗物照收）", sts2.pending_card_reward(rw2), False)
@@ -375,5 +382,149 @@ check("R20 ctx 也标 unmodeled", [x["id"] for x in cout.get("unmodeled") or []]
       ["PLATING_POWER", "GORGET"])
 check("R20 ctx 说明为什么不精确", bool(cout.get("unmodeled_why")), True)
 
+# ---------------------------------------------------------------- R21 脆弱不重复打折（P15）
+# 引擎 dynamic_values 里的 Block **已经**按脆弱砍过：全账本按 (牌, 升没升, 脆弱) 分组，
+# 防御 5→3、耸肩 8→6、血墙 16→12、嘲讽 7→5、坚毅 7→5（一律 ×0.75 向下取整）。
+# 旧 sim 又乘一次 0.75 → 入伤多算（run86 f12t2 预测 6、实际 4）。
+FRAIL = [{"name": "Frail", "amount": 2}]
+st_f = state([card("DEFEND_IRONCLAD", 1, blk=3, dyn={"Block": 3})], energy=3, hp=40,
+             powers=FRAIL, enemies=[enemy(atk=9)])
+ok_f, err_f, sm_f, steps_f = sim.validate(st_f, [{"c": "DEFEND_IRONCLAD"}, {"end": 1}])
+check("R21 脆弱回合：引擎给 3 就起 3 甲", steps_f[0].get("blk"), 3)
+check("R21 脆弱回合：入伤 9-3=6（不再 9-2=7）", sm_f.end_turn()["taken"], 6)
+st_nf = state([card("DEFEND_IRONCLAD", 1, blk=5, dyn={"Block": 5})], energy=3, hp=40,
+              enemies=[enemy(atk=9)])
+ok_nf, err_nf, sm_nf, steps_nf = sim.validate(st_nf, [{"c": "DEFEND_IRONCLAD"}, {"end": 1}])
+check("R21 无脆弱：引擎给 5 就起 5 甲", steps_nf[0].get("blk"), 5)
+check("R21 无脆弱：入伤 9-5=4", sm_nf.end_turn()["taken"], 4)
+# 批内新加的敏捷要补（快照值不含它），脆弱对这部分仍然生效
+sm_dex = sim.Sim.from_state(st_f)
+sm_dex.dex_bonus = 4
+check("R21 批内敏捷照加（脆弱砍这部分：+3）", sm_dex._dex_block(), 3)
+check("R21 没批内敏捷时不乱加", sim.Sim.from_state(st_nf)._dex_block(), 0)
+
+# ---------------------------------------------------------------- R22 牌组上限 / 待选牌（P10）
+import sts2  # noqa: E402
+
+check("R22 act 是 1 基", sts2.run_act({"act": "1", "act_id": "0"}), 1)
+check("R22 act_id 是 0 基 → 第二幕", sts2.run_act({"act": "2", "act_id": "1"}), 2)
+check("R22 只有 act_id 也能对（run86 就缺 act）", sts2.run_act({"act_id": "1"}), 2)
+check("R22 没有幕信息退回第一幕", sts2.run_act({}), 1)
+check("R22 第二幕上限 18（旧代码按 16 算）", sts2.deck_cap(sts2.run_act({"act_id": "1"})), 18)
+check("R22 第三幕上限 20（旧代码按 18 算）", sts2.deck_cap(sts2.run_act({"act_id": "2"})), 20)
+check("R22 第一幕上限 16", sts2.deck_cap(sts2.run_act({"act_id": "0"})), 16)
+# run86 f21/f22 的原始形状：skip 之后 rewards 里那张 Card 依然 claimable
+SKIPPED = {"screen": "REWARD", "reward": {
+    "pending_card_choice": False, "can_reward": True,
+    "rewards": [{"reward_type": "Card", "claimable": True, "is_claimed": False}]}}
+check("R22 skip 之后不再算「在等选牌」（旧判据死锁的根因）",
+      sts2.pending_card_reward(SKIPPED), False)
+check("R22 真在选牌时仍要拦",
+      sts2.pending_card_reward({"screen": "REWARD",
+                                "reward": {"pending_card_choice": True}}), True)
+check("R22 字段缺失 + 有 card_options → 拦",
+      sts2.pending_card_reward({"reward": {"card_options": [{"id": 1}]}}), True)
+check("R22 字段缺失时退回旧判据（还有没领的 Card → 保守拦）",
+      sts2.pending_card_reward({"reward": {"rewards": [{"reward_type": "Card",
+                                                        "claimable": True}]}}), True)
+check("R22 字符串 false 也当假",
+      sts2.pending_card_reward({"reward": {"pending_card_choice": "false"}}), False)
+check("R22 deck_size 优先数牌组列表",
+      sts2.deck_size({"run": {"deck": [1, 2, 3], "deck_size": 9}}), 3)
+check("R22 deck_size 没有列表时退回 deck_size",
+      sts2.deck_size({"run": {"deck_size": 9}}), 9)
+check("R22 字段缺失时报出真实字段名（run87 首个奖励界面要验）",
+      "REWARD_KEYS" in sts2.reward_field_hint({"reward": {"rewards": [], "can_reward": True}}), True)
+check("R22 字段在时不吵",
+      sts2.reward_field_hint({"reward": {"pending_card_choice": False}}), "")
+
+# ---------------------------------------------------------------- R23 清场后不许再排牌（P14）
+# run86 f21t4：嘲讽→雷击→打击斩杀→焚身，第 4 步时引擎已在奖励界面，batch 只能 3/5 退出。
+st_cl = state([card("STRIKE_IRONCLAD", 1, dmg=6, dyn={"Damage": 6}),
+               card("DEFEND_IRONCLAD", 1, blk=5, dyn={"Block": 5})],
+              energy=3, hp=40, enemies=[enemy(hp=5, atk=9)])
+ok_c, err_c, sm_c, steps_c = sim.validate(st_cl, [{"c": "STRIKE_IRONCLAD"},
+                                                  {"c": "DEFEND_IRONCLAD"}])
+check("R23 记下「第 1 步清场」", sm_c.cleared_at, 0)
+check("R23 清场后补牌 → 报 CLEAR_OVERFLOW",
+      (act.clear_overflow_error(steps_c, sm_c.cleared_at) or "").startswith("CLEAR_OVERFLOW"), True)
+ok_c2, err_c2, sm_c2, steps_c2 = sim.validate(st_cl, [{"c": "STRIKE_IRONCLAD"}, {"end": 1}])
+check("R23 清场 + 尾部 end 不算越界", act.clear_overflow_error(steps_c2, sm_c2.cleared_at), None)
+ok_c3, err_c3, sm_c3, steps_c3 = sim.validate(st_cl, [{"c": "DEFEND_IRONCLAD"}, {"end": 1}])
+check("R23 没清场时不插手", act.clear_overflow_error(steps_c3, sm_c3.cleared_at), None)
+check("R23 没清场时 cleared_at 为空", sm_c3.cleared_at, None)
+dry = act._dry(st_cl, [{"c": "STRIKE_IRONCLAD"}, {"c": "DEFEND_IRONCLAD"}], {})
+check("R23 --dry 也能提前看到越界", bool(dry.get("clear_overflow")), True)
+
+# ---------------------------------------------------------------- R24 斩杀按 enemy_id 计数配对（P12）
+import accuracy  # noqa: E402
+
+
+def en(i, eid, hp=10, **kw):
+    d = {"i": i, "id": eid, "n": eid, "hp": hp, "max": hp, "blk": 0}
+    d.update(kw)
+    return d
+
+
+def krec(kill, before, after, clear=None, screen="COMBAT"):
+    fc = {"kill": list(kill)}
+    if clear:
+        fc["clear"] = clear
+    return {"floor": 9, "turn": 1, "outcome": "executed", "ended": 1,
+            "forecast": fc,
+            "before": {"enemies": before, "me": {"hp": 50}},
+            "after": {"enemies": after, "me": {"hp": 40}, "screen": screen}}
+
+
+# run86 f22t2 的形状：两只同 id 的蛋，杀一只 → 幸存者重新编号成 0
+c1 = accuracy.kill_cases(krec([0], [en(0, "BOWLBUG_EGG"), en(1, "BOWLBUG_EGG")],
+                              [en(0, "BOWLBUG_EGG")]))
+check("R24 同种怪杀一只 → 计数确认", [x["verdict"] for x in c1], ["confirmed"])
+check("R24 旧口径按下标会误报假斩杀", [x["old"] for x in c1], ["false"])
+c2 = accuracy.kill_cases(krec([0, 1], [en(0, "RAT"), en(1, "RAT")], [en(0, "RAT")]))
+check("R24 两只里只死一只：第二条是真假斩杀", [x["verdict"] for x in c2], ["confirmed", "false"])
+c3 = accuracy.kill_cases(krec([0], [en(0, "A"), en(1, "B")], [en(0, "A")]))
+check("R24 打错了 id → 假斩杀", [x["verdict"] for x in c3], ["false"])
+c4 = accuracy.kill_cases(krec([0], [en(0, "A")], [], clear=1, screen="REWARD"))
+check("R24 清场 + 战斗结束 → 确认", [x["verdict"] for x in c4], ["confirmed"])
+c5 = accuracy.kill_cases({"floor": 9, "turn": 5, "outcome": "executed", "ended": 1,
+                          "forecast": {"kill": [0]},
+                          "before": {"enemies": [en(0, "THIEVING_HOPPER")], "me": {"hp": 50}},
+                          "after": {"screen": "REWARD", "me": {"hp": 61}}})
+check("R24 逃跑（无清场证据）→ 无法判定，不硬凑", [x["verdict"] for x in c5], ["undecidable"])
+c6 = accuracy.missed_cases(krec([], [en(0, "MINION_SLIME", b=[{"id": "MINION_POWER"}]),
+                                    en(1, "BOSS")], [en(0, "BOSS")]))
+check("R24 爪牙随主人撤场不算漏杀", c6["minion"], [("MINION_SLIME", 1)])
+c7 = accuracy.missed_cases(krec([], [en(0, "A")], [en(0, "B")]))
+check("R24 少了一只却没预测 → 未预测死亡", c7["miss"], [("A", 1)])
+c8 = accuracy.missed_cases(krec([], [en(0, "A")], [], screen="REWARD"))
+check("R24 战斗结束造成的消失不算漏杀", c8["ended"], True)
+
+# ---------------------------------------------------------------- R25 入伤口径边界（P13）
+def trec(pred_take, b_hp, a_hp, screen="COMBAT", self_hp=None, clear=None, pred_hp=None):
+    fc = {"take": pred_take, "hp": a_hp if pred_hp is None else pred_hp}
+    if self_hp is not None:
+        fc["self"] = self_hp
+    if clear:
+        fc["clear"] = 1
+    return {"floor": 1, "turn": 1, "outcome": "executed", "ended": 1,
+            "forecast": fc,
+            "before": {"me": {"hp": b_hp}},
+            "after": {"me": {"hp": a_hp}, "screen": screen}}
+
+
+MIX = [trec(4, 64, 60),                       # 战斗内正常对账
+       trec(0, 43, 49, screen="REWARD"),      # 清场后燃烧之血 +6
+       trec(0, 55, 61, screen="REWARD"),      # 逃跑 + 战后回血（run86 f19t5）
+       trec(29, 7, 0, screen="GAME_OVER"),    # 死亡夹到 0（run86 f23t5）
+       trec(0, 72, 70, self_hp=2)]            # 血墙自扣 2（run86 f14t4）
+inc, excl = accuracy.incoming_rows(MIX)
+check("R25 只统计战斗内记录", len(inc), 2)
+check("R25 战斗结束的 3 条进排除桶、不丢", sum(excl.values()), 3)
+check("R25 自扣血减掉后入伤为 0", [x[2] for x in inc if x[3] == 2], [0])
+hps, hexcl = accuracy.hp_rows(MIX)
+check("R25 血量用同一批记录", len(hps), 2)
+check("R25 血墙自扣血已经在 forecast.hp 里（不再二次补偿）",
+      [x[1] - x[2] for x in hps if x[0]["forecast"].get("self") == 2], [0])
 print()
 print("ALL OK" if ok else "SOME CHECKS FAILED")

@@ -1035,7 +1035,7 @@ def compact(state: dict, full: bool = False, brief: bool = False) -> str:
         cache["curses"] = curses
         dirty = True
     _deck = run.get("deck") or []
-    _cap = deck_cap(run.get("act_id", run.get("act")))
+    _cap = deck_cap(run_act(run))
     if len(_deck) > _cap and (full or cache.get("decksize") != len(_deck)):
         lines.append(
             f"DECK_FAT 牌组 {len(_deck)} 张 > 上限 {_cap}：引擎/甲牌/小刀全被稀释，"
@@ -2200,7 +2200,13 @@ def combat_anchor(state: dict) -> str:
 
 
 def hand_block_pool(hand, frail: int = 0) -> tuple:
-    """手牌里可直接提供的格挡合计（含覆甲/坚毅这类基础格挡牌）。"""
+    """手牌里可直接提供的格挡合计（含覆甲/坚毅这类基础格挡牌）。
+
+    `frail` 只作兼容参数保留、不再参与计算：引擎 `dynamic_values.Block` 已经是
+    **砍过脆弱之后**的值（全账本分组：防御 5→3、耸肩 8→6、血墙 16→12、嘲讽 7→5，
+    一律 ×0.75 向下取整）。这里再乘一次就是重复打折，会把「手牌够挡」算成不够
+    （run86 f12t2 因此把 4 点入伤估成 6 点）。
+    """
     total = 0
     parts = []
     for c in hand:
@@ -2213,10 +2219,6 @@ def hand_block_pool(hand, frail: int = 0) -> tuple:
                 continue
             if str(v.get("name", "")).strip().lower() == "block":
                 block = _int(v.get("current_value", v.get("value")), 0)
-        if block <= 0:
-            continue
-        if frail:
-            block = int(block * 0.75)
         if block <= 0:
             continue
         total += block
@@ -2541,8 +2543,26 @@ def _pick_cards_once(picks, thought="", meme=""):
     return cur
 
 
+def run_act(run: dict) -> int:
+    """当前幕数，统一成**1 基**。
+
+    run86 的账本里 `run.act` 是 1 基（"1"/"2"），`run.act_id` 是 0 基（"0"/"1"），
+    而 deck_cap 一直读 `act_id` 当 1 基用 —— 第二幕按 16 张算（该 18）、第三幕按 18（该 20），
+    提前两张锁死拿牌。这里按字段各自的基准换算，别再混用。
+    """
+    for key, plus in (("act", 0), ("act_id", 1)):
+        raw = (run or {}).get(key)
+        if raw is None:
+            continue
+        try:
+            return max(1, int(str(raw).strip()) + plus)
+        except (TypeError, ValueError):
+            continue
+    return 1
+
+
 def deck_cap(act) -> int:
-    """A10 牌组张数上限：牌组越厚，引擎/甲牌/小刀的抽牌密度越低（13 局血债）。"""
+    """A10 牌组张数上限（`act` 必须是 1 基）：牌组越厚，引擎/甲牌/小刀的抽牌密度越低。"""
     try:
         a = int(str(act).strip())
     except (TypeError, ValueError):
@@ -2558,16 +2578,13 @@ def deck_cap_guard(before: dict) -> str | None:
     """抽到奖励牌之前先量牌组：超上限就返回一段拦停文案。"""
     run = before.get("run") or {}
     deck = run.get("deck") or []
-    act = run.get("act_id", run.get("act"))
+    act = run_act(run)
     cap = deck_cap(act)
     names = [str(c.get("name") or c.get("id") or "?") for c in deck if isinstance(c, dict)]
     # 拿牌节奏：上限只是"别超"，但 run83 在 f10 就把 12 张涨到 16 张，
     # 结果整幕都是"半成品牌组"。前 1/3 幕的预算更紧。
     floor = _int(run.get("floor"), 0)
-    try:
-        a = int(str(act).strip())
-    except (TypeError, ValueError):
-        a = 1
+    a = act
     pace_cap = {1: 14, 2: 17}.get(a, cap)
     if len(deck) < cap and a in (1, 2) and floor and floor <= (8 if a == 1 else 12) \
             and len(deck) >= pace_cap:
@@ -2588,9 +2605,29 @@ def deck_cap_guard(before: dict) -> str | None:
     )
 
 
+def _truthy(v) -> bool:
+    if isinstance(v, str):
+        return v.strip().lower() not in ("", "0", "false", "no", "none")
+    return bool(v)
+
+
 def pending_card_reward(state: dict) -> bool:
-    """奖励界面还有没领的卡牌奖励（collect/resolve 会把它一并塞进牌组）。"""
+    """奖励界面是不是**正在等玩家选牌**（选了才会进牌组）。
+
+    只认引擎的权威字段，不再用「rewards 里还有一张没领的 Card」去推断：
+    run86 f21/f22 里 skip 掉卡牌奖励之后，`rewards` 里那张 Card 依然是
+    `claimable`，旧判据一直返回 True → `collect_rewards_and_proceed` 被
+    DECK_CAP 永久拦住，奖励收不掉、也进不了下一层（P10 死锁）。
+    引擎在等选牌时给 `reward.pending_card_choice = true`，skip 之后是 false。
+    字段缺失（老引擎）时才退回旧判据：有 card_options 或还有没领的 Card 就一律拦 ——
+    宁可多拦一手（提示先 skip 再收），也不能静默领牌把牌组撑爆。
+    """
     rew = state.get("reward") or {}
+    if not isinstance(rew, dict):
+        rew = {}
+    for blob in (rew, state):
+        if isinstance(blob, dict) and "pending_card_choice" in blob:
+            return _truthy(blob.get("pending_card_choice"))
     if rew.get("card_options"):
         return True
     for r in rew.get("rewards") or []:
@@ -2600,6 +2637,31 @@ def pending_card_reward(state: dict) -> bool:
         if "card" in t and not (r.get("is_claimed") or r.get("claimed")):
             return True
     return False
+
+
+def reward_field_hint(state: dict) -> str:
+    """奖励对象里到底有没有 `pending_card_choice`？没有就报一次字段名。
+
+    run87 的 P10 修复依赖这个字段（见 `pending_card_reward`）。账本里没有 REWARD 记录，
+    所以第一次真到奖励界面时要把真实字段打出来，别让「引擎改了字段名」变成新的死锁。
+    """
+    rew = state.get("reward") or {}
+    if not isinstance(rew, dict):
+        return ""
+    if "pending_card_choice" in rew or "pending_card_choice" in state:
+        return ""
+    return ("REWARD_KEYS 奖励对象没有 pending_card_choice，只有："
+            + ", ".join(sorted(rew))
+            + " —— 这次回落到旧判据（可能误拦）。把这行贴进 docs/RUN87_FIXES.md §10。")
+
+
+def deck_size(state: dict) -> int:
+    run = (state or {}).get("run") or {}
+    for key in ("deck",):
+        v = run.get(key)
+        if isinstance(v, list):
+            return len(v)
+    return _int(run.get("deck_size"), 0)
 
 
 def cmd_do(action, card=None, target=None, option=None, thought="", meme="", options=None, full=False, force=False):
@@ -2625,9 +2687,11 @@ def cmd_do(action, card=None, target=None, option=None, thought="", meme="", opt
         if before.get("screen") == "REWARD" and pending_card_reward(before):
             msg = deck_cap_guard(before)
             if msg:
+                hint = reward_field_hint(before)
                 print(msg.replace(
                     "  真要拿（必须能说出踢掉谁）：python sts2.py do choose_reward_card --option N --force",
-                    "  要空收奖励（跳过卡牌）：python sts2.py do skip_reward_cards，再 collect_rewards_and_proceed"))
+                    "  要空收奖励（跳过卡牌）：python sts2.py do skip_reward_cards，再 collect_rewards_and_proceed")
+                      + (("\n" + hint) if hint else ""))
                 sys.exit(3)
     if action in ("play_card", "end_turn") and before.get("screen") == "COMBAT":
         acts = before.get("available_actions") or []
@@ -2777,6 +2841,16 @@ def cmd_do(action, card=None, target=None, option=None, thought="", meme="", opt
             except Exception as e:
                 print(f"POTION_RETRY_FAILED {e}（按没生效重算，别把药水算进计划）")
     after = wait_stable_player_state()
+    # P10：牌组已经到/超上限时，收奖励不该再涨牌。真涨了就是「静默领牌」又回来了，
+    # 必须喊出来（不吞证据、不改判定；动作已经发生，只能留痕 + 提示怎么补救）。
+    if action in ("collect_rewards_and_proceed", "resolve_rewards"):
+        n0, n1 = deck_size(before), deck_size(after)
+        if n1 > n0:
+            run = before.get("run") or {}
+            cap = deck_cap(run_act(run))
+            print(f"DECK_GREW 牌组 {n0}→{n1}（上限 {cap}）：这个动作本来不该带牌进组。"
+                  " 先 python tools/ctx.py 看牌组，多了哪张就在这里说清楚；"
+                  " 下次先 skip_reward_cards 再 collect_rewards_and_proceed。")
     # 结束回合后的快照可能还没抽牌；等一下再抓，并把「手牌为空但还能出牌」的过渡态标出来。
     if action == "end_turn" and after.get("screen") == "COMBAT":
         prev_len = len(((before.get("combat") or {}).get("hand") or []))

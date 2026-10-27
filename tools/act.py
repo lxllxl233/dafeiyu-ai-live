@@ -555,6 +555,26 @@ def _guards(st: dict, sm, ended: bool, allow: dict,
 
 
 # ---------------------------------------------------------------- 执行
+def clear_overflow_error(steps: list, cleared) -> str | None:
+    """清场之后还排了牌 → 这条计划执行到一半必然断（P14）。
+
+    run86 f21t4：嘲讽→雷击→打击斩杀→焚身，第 4 步时引擎已经在奖励界面，
+    sts2 的 batch 只能 BATCH PARTIAL 3/5 退出 —— 前 3 步落地、后 2 步丢失，
+    这一回合的账本 truth 和「计划」就永久错位了。执行前拒绝更划算。
+    尾部的 end 不算越界：sts2 的 batch 会跳过它（11 条清场记录都是这个形状）。
+    """
+    if cleared is None:
+        return None
+    tail = [s for s in steps[cleared + 1:] if s.get("k") != "end"]
+    if not tail:
+        return None
+    names = ", ".join(str(s.get("id") or s.get("k")) for s in tail)
+    killer = steps[cleared].get("id") or steps[cleared].get("k")
+    return (f"CLEAR_OVERFLOW 第{cleared + 1}步（{killer}）已经清场，后面还有 "
+            f"{len(tail)} 步：{names}。清场后战斗立刻结束，引擎不再接受出牌。\n"
+            "  去掉清场之后的牌重发（清场那一刀 + 可选的 end 就够）；要补的牌留给下一个目标。")
+
+
 def _execute(st: dict, seq: list, lines: list, fx: dict,
              allow: dict | None = None) -> dict:
     lines = [{"t": x, "m": ""} if isinstance(x, str) else x for x in (lines or []) if x]
@@ -570,6 +590,15 @@ def _execute(st: dict, seq: list, lines: list, fx: dict,
         return out
 
     want = forecast(st, sm, steps, ended)
+    # P14：清场之后还排了牌 → 执行前拒绝整批（不截断前半手，见 clear_overflow_error）。
+    err = clear_overflow_error(steps, getattr(sm, "cleared_at", None))
+    if err:
+        out = {"ok": False, "err": err, "fx": want,
+               "ctx": ctxmod.build_with_mem(st, ctxmod._load_mem())}
+        _log_decision(st, seq, lines, fx, outcome="rejected_clear_overflow", err=err,
+                      steps=steps, forecast=want, plans=plans,
+                      retargets=getattr(sm, "retargets", None))
+        return out
     bad = fx_error(fx or {}, want)
     if bad:
         out = {"ok": False, "err": bad, "fx": want,
@@ -692,6 +721,9 @@ def _dry(st: dict, seq: list, fx: dict, allow: dict | None = None) -> dict:
     guard_err, guard_meta = _guards(st, sm, ended, allow or {},
                                     played=_played_counts(st, seq))
     out = {"ok": True, "dry": 1, "fx": want, "ended": bool(ended)}
+    ovf = clear_overflow_error(steps, getattr(sm, "cleared_at", None))
+    if ovf:
+        out["clear_overflow"] = ovf
     if bad:
         out["fx_err"] = bad
     if guard_err:
