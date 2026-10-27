@@ -257,6 +257,16 @@ def parse_potion(p: dict) -> dict | None:
             out[key] = int(m.group(1))
     if "所有敌人" in text:
         out["aoe"] = True
+    # 固化药水这类「把格挡变成 N 倍」：卡面没有数字，不认就会在 fx.hp 上算错
+    # （run82 打猎人杀手时被这条坑过一次）。
+    m = re.search(r"格挡(?:变为|变成|增加至|翻)(?:\D{0,3})([二三两1-3])倍", text)
+    if m:
+        mul = {"二": 2, "两": 2, "三": 3}.get(m.group(1), 0)
+        if not mul and m.group(1).isdigit():
+            mul = int(m.group(1))
+        if mul:
+            out["blk_mul"] = mul
+            out["use"] = bool(p.get("can_use"))
     # 药水也标一下「这一瓶能不能喂下一轮」：力量/敏捷/易伤/虚弱都是跨回合的
     nxt = {k: out[k] for k in ("vuln", "weak", "str", "dex") if out.get(k)}
     if nxt:
@@ -393,6 +403,12 @@ class Sim:
         self.player_vuln = 0
         self.player_frail = 0
         self.player_weak = 0
+        # run82/83 的四个机制：柔嫩（每打一张牌 -1 力 -1 敏）、缩小（攻伤×0.7）、
+        # 缠结（攻击牌 +1 费）、失衡（攻击被完全格挡则眩晕）。
+        self.tender = 0
+        self.shrink = 0
+        self.tangled = 0
+        self.imbalanced = 0
         self.status_tax = 0
         self.thorns_taken = 0
         self.steps: list[dict] = []
@@ -423,6 +439,10 @@ class Sim:
         s.player_vuln = sts2._int(pm.get("vuln"), 0)
         s.player_frail = sts2._int(pm.get("frail"), 0)
         s.player_weak = sts2._int(pm.get("weak"), 0)
+        s.tender = sts2._int(pm.get("tender"), 0)
+        s.shrink = sts2._int(pm.get("shrink"), 0)
+        s.tangled = sts2._int(pm.get("tangled"), 0)
+        s.imbalanced = sts2._int(pm.get("imbalanced"), 0)
         s.metallicize = sts2._int(pm.get("metallicize"), 0)
         s.barricade = bool(pm.get("barricade"))
         s.plating = sts2._int(pm.get("plating"), 0)
@@ -614,6 +634,17 @@ class Sim:
         self.energy -= cost
         self.played += 1
         card["_played"] = True
+        # 柔嫩 TENDER：本回合你每打出一张牌就失去 1 点力量和 1 点敏捷。
+        # 牌面 Damage 已经含力量，所以等价于「手上剩下的牌各 -1 伤 / -1 甲」。
+        # 实测：先打大锤再打小刀不吃亏；反过来就掉数值 —— 排牌序必须先贵后贱。
+        if self.tender:
+            for _x in self.hand:
+                if _x is card or _x.get("_played"):
+                    continue
+                if _x.get("dmg"):
+                    _x["dmg"] = max(0, int(_x["dmg"]) - self.tender)
+                if _x.get("blk"):
+                    _x["blk"] = max(0, int(_x["blk"]) - self.tender)
         if card.get("t") == "A":
             self.attacks += 1
         if card.get("t") == "S":
@@ -783,9 +814,15 @@ class Sim:
             self.str_bonus += p["str"]
         if p.get("dex"):
             self.dex_bonus += p["dex"]
+        if p.get("blk_mul"):
+            # 固化药水：把「当前」格挡变 N 倍；之后再起的甲不再翻倍。
+            before = self.block
+            self.block = int(self.block * p["blk_mul"])
+            step["blk"] = self.block - before
+            step["blk_mul"] = p["blk_mul"]
         if p.get("blk"):
             self.block += p["blk"] + self.dex_bonus
-            step["blk"] = p["blk"]
+            step["blk"] = p.get("blk")
         if p.get("dmg"):
             targets = self.alive() if p.get("aoe") else ([self.by_index(target)] if target is not None else [])
             dealt = 0
@@ -968,7 +1005,8 @@ def search(state: dict, max_cards: int = 6, max_plans: int = 5,
 
     # 药水线：只试「药水先手」，让回能/斩杀药水能进入候选（用一次扣分，不轻易交）
     useful = [p for p in base.potions if p.get("use") and any(
-        p.get(k) for k in ("dmg", "blk", "en", "heal", "vuln", "weak", "str", "dex"))]
+        p.get(k) for k in ("dmg", "blk", "blk_mul", "en", "heal", "vuln", "weak",
+                           "str", "dex"))]
     for p in useful[:2]:
         for policy, focus in _policies(base):
             if timed_out:

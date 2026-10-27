@@ -50,12 +50,13 @@ def enemy(eid, hp, atk, hits=1, powers=None, idx=0):
     return e
 
 
-def state(hand, enemies, hp=60, energy=3, block=0, potions=None):
+def state(hand, enemies, hp=60, energy=3, block=0, potions=None, powers=None):
     return {"screen": "COMBAT", "available_actions": ["play_card", "end_turn"],
             "run": {"current_hp": hp, "max_hp": 80, "max_energy": 3,
                     "potions": potions or []},
             "combat": {"turn": 1, "player": {"current_hp": hp, "max_hp": 80,
-                                             "energy": energy, "block": block, "powers": []},
+                                             "energy": energy, "block": block,
+                                             "powers": powers or []},
                        "hand": hand, "enemies": enemies}}
 
 
@@ -192,6 +193,43 @@ e = enemy("ARTI", 80, 12, powers=[{"power_id": "ARTIFACT_POWER", "name": "AF", "
 s = state([card("BASH", 2, dmg=8, vuln=2)], [e])
 plan = sim.search(s)[0]
 check("2 层易伤被 1 层人工制品全挡", plan["dmg"], 8)
+
+print()
+print("=== 16) 柔嫩：每打一张牌，剩下的牌 -1 伤 / -1 甲 ===")
+pw = [{"power_id": "TENDER_POWER", "name": "柔嫩", "amount": 1}]
+s = state([card("BLUDGEON", 3, dmg=42), card("STRIKE_IRONCLAD", 1, dmg=9),
+           card("DEFEND_IRONCLAD", 1, blk=5)],
+          [enemy("FOE", 200, 8)], energy=9, powers=pw)
+st = sim.Sim.from_state(s)
+check("柔嫩已解析", st.tender, 1)
+check("先打大锤前的打击", st.hand[1]["dmg"], 9)
+st.play(st.hand[0], 0)
+check("打完大锤后打击 -1", st.hand[1]["dmg"], 8)
+st.play(st.hand[1], 0)
+check("打掉两张后格挡 5→3", st.hand[2]["blk"], 3)
+
+print()
+print("=== 17) 固化药水：现有格挡 ×3 ===")
+pot = {"index": 0, "potion_id": "FIXED_POTION", "name": "固化药水", "occupied": True,
+       "can_use": True, "requires_target": False,
+       "description": "把你的格挡变为三倍。"}
+s = state([card("STRIKE_IRONCLAD", 1, dmg=9)], [enemy("FOE", 60, 12)],
+          block=10, potions=[pot])
+st = sim.Sim.from_state(s)
+check("药水解析出 blk_mul", st.potions[0].get("blk_mul"), 3)
+st.potion(st.potions[0])
+check("10 甲 → 30 甲", st.block, 30)
+
+print()
+print("=== 18) 缩小 / 缠结 / 失衡 也认得出 ===")
+pw = [{"power_id": "SHRINK_POWER", "name": "缩小", "amount": 1},
+      {"power_id": "TANGLED_POWER", "name": "缠结", "amount": 1},
+      {"power_id": "IMBALANCED_POWER", "name": "失衡", "amount": 1}]
+st = sim.Sim.from_state(state([card("STRIKE_IRONCLAD", 1, dmg=9)], [enemy("FOE", 60, 12)],
+                              powers=pw))
+check("缩小", st.shrink, 1)
+check("缠结", st.tangled, 1)
+check("失衡", st.imbalanced, 1)
 
 print()
 print("ALL OK" if ok else "SOME CHECKS FAILED")

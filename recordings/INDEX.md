@@ -18,3 +18,5 @@
 
 新的一局：`python tools/rec_episode.py start`；结束：`python tools/rec_episode.py finish --run 82 --result win_a10`（会自动改名 + 写本表）。
 | P81 | sts2_ironclad_a10_run81_lose_act2elite.mp4 | lose_act2elite | 7.2 GB |
+| P82 | sts2_ironclad_a10_run82_LOSS_SANDWORM_f33.mp4 | LOSS_SANDWORM_f33 | 3.1 GB |
+| P83 | sts2_ironclad_a10_run83_ABANDONED_f10.mp4 | ABANDONED_f10 | 0.5 GB |

@@ -678,8 +678,32 @@ def _combat(state: dict, mem: dict) -> dict:
         warns.append("hand_near_full(9/10)：再抽就溢出")
     if any("BINDING" in str(x.get("id") or "").upper() for x in potions):
         warns.append("缚魂药水实测无效：喝了敌方既没虚弱也没易伤（run81 两次验证），别把它算进伤害")
+    mods = _mods(state, en_out, calc)
+    if mods:
+        out["mods"] = mods
+    if any("失衡" in str(b) for e in en_out for b in (e.get("b") or [])) and calc.get("full"):
+        warns.append("IMBA_STUN 场上有人带「失衡」：完全格挡它的攻击会给它上眩晕，"
+                     "下回合白赚一轮——值得为全挡多花一张牌")
     if warns:
         out["warn"] = warns
+    return out
+
+
+_MODS = {
+    "tender": "柔嫩：本回合你每打出1张牌就 -1 力量 -1 敏捷 → 先打贵的（大锤/高费），"
+              "越往后剩下的牌伤害和格挡逐张 -1",
+    "shrink": "缩小：你的攻击伤害 -30%（hand[].dmg 牌面已扣过，别再手动乘）",
+    "tangled": "缠结：本回合攻击牌 +1 费（hand[].c 已经是实价，别再自己加）",
+}
+
+
+def _mods(state: dict, enemies: list, calc: dict) -> list[str]:
+    """回合内的减伤/加费类 debuff 数值口径：run82 就是因为不知道柔嫩怎么算才踩坑。"""
+    pm = sts2._power_map(((state.get("combat") or {}).get("player") or {}).get("powers"))
+    out = []
+    for key, txt in _MODS.items():
+        if _int(pm.get(key), 0):
+            out.append(txt)
     return out
 
 

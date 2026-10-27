@@ -170,6 +170,28 @@ st = combat([card("DEFEND_IRONCLAD", 1, blk=5), card("DEFEND_IRONCLAD", 1, blk=5
 out, err = guard_err(st, [{"c": "DEFEND_IRONCLAD"}, {"end": 1}])
 check("还剩同名牌没打仍要拦", "漏甲" in err, True)
 
+# 13) --dry：只验算不执行（run82 三次「第四张牌没费了」都是心算错的）
+st = combat([card("STRIKE_IRONCLAD", 1, dmg=6), card("DEFEND_IRONCLAD", 1, blk=5)],
+            energy=1, incoming=12, ehp=60)
+before = ran["n"]
+d = act._dry(st, [{"c": "STRIKE_IRONCLAD", "t": 0}], {}, {})
+check("dry 成功", d.get("ok"), True)
+check("dry 不执行批处理", ran["n"], before)
+check("dry 带每步账", len(d.get("steps") or []), 1)
+check("dry 给最佳线", bool(d.get("best")), True)
+d2 = act._dry(st, [{"c": "STRIKE_IRONCLAD", "t": 0}, {"c": "DEFEND_IRONCLAD"}], {}, {})
+check("dry 也会拦没费的牌", d2.get("ok"), False)
+
+# 14) ctx 要解释「柔嫩/缩小/缠结」怎么算（run82 就是不知道柔嫩才把牌序打反）
+st = combat([card("STRIKE_IRONCLAD", 1, dmg=6)])
+st["combat"]["player"]["powers"] = [{"power_id": "TENDER_POWER", "name": "柔嫩", "amount": 1}]
+d = ctxmod.build_with_mem(st, {})
+check("ctx 给出柔嫩口径", any("柔嫩" in m for m in (d.get("mods") or [])), True)
+check("柔嫩提示告诉先打贵的", any("先打贵的" in m for m in (d.get("mods") or [])), True)
+st["combat"]["player"]["powers"] = [{"power_id": "SHRINK_POWER", "name": "缩小", "amount": 1}]
+check("缩小也说清楚", any("-30%" in m for m in
+                          (ctxmod.build_with_mem(st, {}).get("mods") or [])), True)
+
 print()
 print("ALL OK" if ok else "SOME CHECKS FAILED")
 sys.exit(0 if ok else 1)

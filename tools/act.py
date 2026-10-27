@@ -574,6 +574,17 @@ def _execute(st: dict, seq: list, lines: list, fx: dict,
         tail = [x for x in log if ("STOP" in x or "BUDGET" in x or "TARGET" in x or "FIX" in x)]
         if tail:
             out["log"] = tail[-2:]
+        # 头槌/秘密武器这类牌会在 batch 中途弹 CARD_SELECTION（run82 撞了三次）。
+        # 顺手把选项带回来，省一次「再读 ctx」的往返。
+        try:
+            cur = sts2.get_state()
+        except Exception:  # noqa: BLE001
+            cur = {}
+        if cur.get("screen") == "CARD_SELECTION":
+            brief = _selection_brief(cur)
+            if brief:
+                out["selection"] = brief
+                out["next"] = "select_deck_card --option N"
     elif sm.retargets:
         out["retarget"] = sm.retargets
     if not ended:
@@ -617,6 +628,55 @@ def _execute(st: dict, seq: list, lines: list, fx: dict,
                 sts2.overlay_say("combat", txt, "", st)
             except Exception:
                 pass
+    return out
+
+
+def _selection_brief(state: dict) -> dict:
+    """batch 半路弹出来的选牌界面：只回传「选什么」的最小集。"""
+    try:
+        ch = ctxmod.build_with_mem(state, ctxmod._load_mem()).get("choice") or {}
+    except Exception:  # noqa: BLE001
+        return {}
+    if ch.get("kind") != "select":
+        return {}
+    return {"prompt": ch.get("prompt"), "min": ch.get("min"), "max": ch.get("max"),
+            "cards": [{"i": c.get("i"), "n": c.get("n"), "c": c.get("c"),
+                       "dmg": c.get("dmg"), "blk": c.get("blk")}
+                      for c in (ch.get("cards") or [])]}
+
+
+def _dry(st: dict, seq: list, fx: dict, allow: dict | None = None) -> dict:
+    """只验算不执行。run82 里三次「第四张牌没费了」都是自己心算错的，
+    这一手下去就浪费一回合；先 --dry 把能量/伤害/净掉/斩杀核对一遍。"""
+    ok, err, sm, steps, ended = validate_plan(st, seq)
+    if not ok:
+        return {"ok": False, "dry": 1, "err": err,
+                "ctx": ctxmod.build_with_mem(st, ctxmod._load_mem())}
+    want = forecast(st, sm, steps, ended)
+    bad = fx_error(fx or {}, want)
+    guard_err, guard_meta = _guards(st, sm, ended, allow or {},
+                                    played=_played_counts(st, seq))
+    out = {"ok": True, "dry": 1, "fx": want, "ended": bool(ended)}
+    if bad:
+        out["fx_err"] = bad
+    if guard_err:
+        out["guard"] = guard_err
+    if guard_meta.get("warn"):
+        out["warn"] = guard_meta["warn"]
+    # 每步一眼：第几张牌、耗几费、打多少、起多少甲
+    per = []
+    for s in sm.steps:
+        if s.get("k") == "c":
+            per.append({"c": s.get("id"), "e": s.get("e"), "d": s.get("d"), "blk": s.get("blk")})
+        elif s.get("k") == "p":
+            per.append({"p": s.get("id"), "d": s.get("d"), "blk": s.get("blk")})
+    out["steps"] = per
+    try:
+        plans = sim.search(st, max_cards=8, max_plans=3, time_limit=0.6, max_nodes=80_000)
+        out["best"] = [{"s": p["seq"], "d": p["dmg"], "take": p["taken"], "hp": p["hp"]}
+                       for p in plans]
+    except Exception:  # noqa: BLE001
+        pass
     return out
 
 
@@ -677,6 +737,8 @@ def _auto(turns: int, stop_hp: int, lines: list) -> dict:
 def main():
     ap = argparse.ArgumentParser(description="执行结构化计划（seq + say）")
     ap.add_argument("--file", help="计划 JSON 文件（不给则读 stdin）")
+    ap.add_argument("--dry", action="store_true",
+                    help="只验算不执行：返回 fx/护栏/建议线，用来在花掉这一手之前核对算术")
     args = ap.parse_args()
     raw = open(args.file, encoding="utf-8-sig").read() if args.file else sys.stdin.read()
     try:
@@ -710,6 +772,8 @@ def main():
         _log_decision(st, seq, lines, fx, outcome="missing_seq", err=err)
         out = {"ok": False, "err": err,
                "ctx": ctxmod.build_with_mem(st, ctxmod._load_mem())}
+    elif args.dry:
+        out = _dry(st, seq, fx, allow)
     else:
         out = _execute(st, seq, lines, fx, allow)
     # 只有真的执行成功才更新回合记忆；被拒/批处理报错不能把上一手的 mid 清掉。

@@ -1778,6 +1778,11 @@ _POWER_ALIASES = {
     "artifact": ("人工制品", "Artifact"),
     "intangible": ("无实体", "Intangible"),
     "barricade": ("壁垒", "Barricade"),
+    # run82/83 踩过的四个：柔嫩/缩小/缠结/失衡（mod 里的 power_id 与中文名都认）
+    "tender": ("柔嫩", "Tender", "TENDER"),
+    "shrink": ("缩小", "Shrink", "SHRINK"),
+    "tangled": ("缠结", "Tangled", "TANGLED"),
+    "imbalanced": ("失衡", "Imbalanced", "IMBALANCED"),
 }
 
 
@@ -2517,9 +2522,25 @@ def deck_cap_guard(before: dict) -> str | None:
     deck = run.get("deck") or []
     act = run.get("act_id", run.get("act"))
     cap = deck_cap(act)
+    names = [str(c.get("name") or c.get("id") or "?") for c in deck if isinstance(c, dict)]
+    # 拿牌节奏：上限只是"别超"，但 run83 在 f10 就把 12 张涨到 16 张，
+    # 结果整幕都是"半成品牌组"。前 1/3 幕的预算更紧。
+    floor = _int(run.get("floor"), 0)
+    try:
+        a = int(str(act).strip())
+    except (TypeError, ValueError):
+        a = 1
+    pace_cap = {1: 14, 2: 17}.get(a, cap)
+    if len(deck) < cap and a in (1, 2) and floor and floor <= (8 if a == 1 else 12) \
+            and len(deck) >= pace_cap:
+        return (
+            f"DECK_PACE 第{a}幕 f{floor} 牌组已 {len(deck)} 张（这个阶段的预算约 {pace_cap} 张）："
+            f"前半幕拿太多牌，等于用「抽到好牌的期望」换「一张现在未必用得上」的牌。\n"
+            f"  除非这张是甲牌/引擎/收尾牌，一律 python sts2.py do skip_reward_cards\n"
+            f"  当前牌组：{', '.join(names)}"
+        )
     if len(deck) < cap:
         return None
-    names = [str(c.get("name") or c.get("id") or "?") for c in deck if isinstance(c, dict)]
     return (
         f"DECK_CAP 牌组已 {len(deck)} 张（上限 {cap}）：再拿牌会把引擎/甲牌/小刀稀释掉，"
         f"前 13 局全是这么输的。\n"

@@ -21,6 +21,7 @@ import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 REC = os.path.join(ROOT, "recordings")
+_CUR = os.path.join(REC, ".current")   # start --run N 记下「这一段是第几局」
 sys.path.insert(0, ROOT)
 
 import obsctl  # noqa: E402
@@ -73,13 +74,25 @@ def finish(run: int, result: str) -> str:
     return f"{os.path.basename(dst)} ({size_gb:.1f} GB)"
 
 
-def start() -> str:
+def start(run: int | None = None, note: str = "") -> str:
     obs = _obs()
     try:
         obs.start_record()
     finally:
         obs.close()
+    if run is not None:
+        io.open(_CUR, "w", encoding="utf-8").write(
+            json.dumps({"run": run, "note": note, "at": time.strftime("%H:%M:%S")},
+                       ensure_ascii=False))
+        return f"RECORDING run{run}" + (f" ({note})" if note else "")
     return "RECORDING"
+
+
+def _current_run():
+    try:
+        return int(json.loads(io.open(_CUR, encoding="utf-8").read()).get("run"))
+    except Exception:  # noqa: BLE001
+        return None
 
 
 def listing() -> str:
@@ -95,15 +108,27 @@ def main():
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("finish")
-    p.add_argument("--run", type=int, required=True)
+    p.add_argument("--run", type=int, default=None,
+                   help="不给就用 start --run 记下的号")
     p.add_argument("--result", required=True)
-    sub.add_parser("start")
+    q = sub.add_parser("start")
+    q.add_argument("--run", type=int, default=None,
+                   help="这一段是第几局：finish 时忘了写 --run 也能对上号")
+    q.add_argument("--note", default="", help="一句话备注（卡组/遗物/计划）")
     sub.add_parser("list")
     a = ap.parse_args()
     if a.cmd == "finish":
-        print(finish(a.run, a.result))
+        run = a.run if a.run is not None else _current_run()
+        if run is None:
+            print("ERR 需要 --run（start 时没记号码）")
+            return
+        print(finish(run, a.result))
+        try:
+            os.remove(_CUR)
+        except OSError:
+            pass
     elif a.cmd == "start":
-        print(start())
+        print(start(a.run, a.note))
     else:
         print(listing())
 
