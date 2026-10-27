@@ -96,15 +96,25 @@ out, err = (lambda r: (r, r.get("err") or ""))(
 check("allow_leftover 放行", out.get("ok"), True)
 check("放行后确实执行了", ran["n"], 1)
 
-# 3) 漏甲：能量花在攻击上，明明有防御却裸吃 12
+# 3) 换血线：1 费打完一刀、0 费吃 12 点，手上有防御 —— 给提示、不拦
 st = combat([card("STRIKE_IRONCLAD", 1, dmg=6), card("DEFEND_IRONCLAD", 1, blk=5)],
             energy=1, incoming=12, ehp=40)
 out, err = guard_err(st, [{"c": "STRIKE_IRONCLAD", "t": 0}, {"end": 1}])
-check("有甲不叠要拒绝", out.get("ok"), False)
-check("漏甲错误说明可读", "漏甲" in err, True)
+check("费花光的换血不硬拦", out.get("ok"), True)
+check("换血线给提示", any("换血线" in w for w in (out.get("warn") or [])), True)
+check("换血线报出能顶多少", any("能顶" in w for w in (out.get("warn") or [])), True)
+
+# 3b) 留着 1 费不花 = 漏费（这条必须拦，别把护栏全拆了）
+st = combat([card("STRIKE_IRONCLAD", 1, dmg=6), card("DEFEND_IRONCLAD", 1, blk=5)],
+            energy=2, incoming=12, ehp=40)
+out, err = guard_err(st, [{"c": "STRIKE_IRONCLAD", "t": 0}, {"end": 1}])
+check("有费不花仍要拦", out.get("ok"), False)
+check("拦的是漏费", "漏费" in err, True)
 
 out, err = (lambda r: (r, r.get("err") or ""))(
-    act._execute(st, [{"c": "STRIKE_IRONCLAD", "t": 0}, {"end": 1}], [], {},
+    act._execute(combat([card("STRIKE_IRONCLAD", 1, dmg=6), card("DEFEND_IRONCLAD", 1, blk=5)],
+                        energy=1, incoming=12, ehp=40),
+                 [{"c": "STRIKE_IRONCLAD", "t": 0}, {"end": 1}], [], {},
                  {"allow_take": True}))
 check("allow_take 放行换血", out.get("ok"), True)
 
@@ -164,11 +174,12 @@ out, err = guard_err(st, [{"c": "DEFEND_IRONCLAD"}, {"c": "STRIKE_IRONCLAD", "t"
                           {"c": "STRIKE_IRONCLAD", "t": 0}, {"end": 1}])
 check("打过的防御不再算漏甲", "漏甲" in err, False)
 
-# 12) 同名多张：只打过 1 张，还剩 1 张没打，仍要拦
+# 12) 同名多张：只打过 1 张、还剩 1 张没打 —— 同样只提示换血，不硬拦
 st = combat([card("DEFEND_IRONCLAD", 1, blk=5), card("DEFEND_IRONCLAD", 1, blk=5)],
             energy=1, incoming=12, ehp=60)
 out, err = guard_err(st, [{"c": "DEFEND_IRONCLAD"}, {"end": 1}])
-check("还剩同名牌没打仍要拦", "漏甲" in err, True)
+check("还剩同名甲只提示", any("换血线" in w for w in (out.get("warn") or [])), True)
+check("提示里点名那张甲", any("DEFEND_IRONCLAD" in w for w in (out.get("warn") or [])), True)
 
 # 13) --dry：只验算不执行（run82 三次「第四张牌没费了」都是心算错的）
 st = combat([card("STRIKE_IRONCLAD", 1, dmg=6), card("DEFEND_IRONCLAD", 1, blk=5)],

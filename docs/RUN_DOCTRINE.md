@@ -160,5 +160,7 @@ A10 的胜负不在「打得凶」，在**四件事同时成立**：①有复利
 - 战斗中不确定这一手够不够，先用 `python tools/act.py --dry` 验算（不消耗回合）。
 
 ### 9.5 工具动作（每天开局/收尾固定两条）
+- **开工先自检**：`python tools/preflight.py` —— 跑全部离线测试 + 读当前局面 + 量牌组是否超上限 +
+  指出该看的文档。全绿再动手。
 - 开局：`python tools/rec_episode.py start --run NN --note "牌组/遗物"`（会自动记号码）。
 - 收尾：`python tools/rec_episode.py finish --result WIN_A10|LOSS_xxx_fNN`（自动改名 + 写 `recordings/INDEX.md`）。

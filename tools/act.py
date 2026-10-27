@@ -457,9 +457,12 @@ def _played_counts(st: dict, seq: list) -> dict:
 
 
 def _guard_take(st: dict, sm, allow: dict, played: dict | None = None):
-    """有甲可起却裸吃伤害：这一手结束要掉血，起手有便宜防御却一张没打。
+    """换血线提示（原「护栏·漏甲」）。
 
-    小刮擦（<6 点）只提醒不拦；真要换血写 allow_take。
+    为什么不再硬拦：漏费护栏挡在前面，能走到这一步的牌序**必然已经花光能量**。
+    账本 1104 条决策里 40 条历史「漏甲」全部是 e=0 —— 那不是漏甲，是「用一张攻击换一张
+    防御」的换血线，拦下来只会逼着写 allow_take，把护栏变成噪音（run84 复盘结论）。
+    所以这里只算账、给提示：净挨多少、手上哪张甲能顶、要挤掉一张什么。
     """
     if allow.get("allow_take") or allow.get("allow_leftover"):
         return None, None
@@ -482,12 +485,16 @@ def _guard_take(st: dict, sm, allow: dict, played: dict | None = None):
     blocks = rest
     if not blocks:
         return None, None
-    best = max(sts2._int(c.get("blk"), 0) for c, _k in blocks)
     bn = "、".join(f"{c['id']}({cost}费)" for c, cost in blocks[:4])
-    if taken < 6 or best < 4:
-        return None, (f"这小伤可省：净挨 {taken} 点，手上还有 {bn} 能起甲（拦阈值 6 点/4 甲）")
-    return (f"护栏·漏甲：这一手结束要净挨 {taken} 点，手上还有 {bn} 能起甲却没用。"
-            f"要么把甲叠起来，要么写 {{\"allow_take\":1}} 说明为什么换血"), None
+    if taken < 6:
+        return None, None
+    best = max(sts2._int(c.get("blk"), 0) for c, _k in blocks)
+    if best < 4:
+        return None, None
+    left_e = sts2._int(getattr(sm, "energy", 0), 0)
+    saved = min(taken, best)
+    return None, (f"换血线：这一手净挨 {taken} 点，剩 {left_e} 费；手上 {bn} 能顶掉约 {saved} 点，"
+                  f"代价是少打一张输出 —— 要换就换，硬吃就写 {{\"allow_take\":1}}")
 
 
 def _guards(st: dict, sm, ended: bool, allow: dict,

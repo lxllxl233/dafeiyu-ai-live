@@ -155,6 +155,10 @@ def parse_card(card: dict, idx: int | None = None) -> dict:
         out["rage"] = 5 if out["up"] else 3
 
     prof = sts2._attack_profile(card)
+    # 状态/诅咒牌不是攻击牌：引擎也会给它们一个 Damage 字段（毒素 5 点是「回合末自己掉血」），
+    # 直接当攻击伤害喂给 sim 会把 5 点算到敌人头上（run HECC0H1NUR f30 实测差 10 点）。
+    if out["t"] in ("T", "C"):
+        prof = None
     if prof:
         per, fixed, cond = prof
         out["dmg"], out["hits"], out["cond"] = int(per), max(1, fixed), max(0, cond)
@@ -162,6 +166,8 @@ def parse_card(card: dict, idx: int | None = None) -> dict:
         dmg = _dyn(card, "Damage", "CalculatedDamage")
         if dmg is None:
             dmg = sts2._int(db.get("damage"), 0)
+        if dmg and out["t"] in ("T", "C"):
+            dmg = 0  # 状态牌的 "Damage" 是回合末自伤，不是攻击
         if dmg:
             hits = max(1, sts2._int(db.get("hit_count"), 1))
             out["dmg"], out["hits"] = int(dmg), hits
@@ -180,6 +186,12 @@ def parse_card(card: dict, idx: int | None = None) -> dict:
     en = _dyn(card, "Energy")
     if en is None:
         en = sts2._int(db.get("energy_gain"), 0)
+    if en and out["t"] in ("P", "S") and ("回合开始时" in text or "被消耗时" in text):
+        # 延迟给费：薪火之源（回合开始时获得）、战鼓（被消耗时获得）。
+        # 引擎的 Energy 字段照样返回 2，但本回合拿不到 —— 按即时回能算会多算一整回合的费
+        # （run Z6DHD2PJBQ f25 / 6E26GF0HPM f9 实测：预测 5 费，实际 3 费）。
+        out["en_deferred"] = int(en)
+        en = 0
     if en:
         out["en"] = int(en)
     hp = _dyn(card, "HpLoss")
@@ -418,6 +430,9 @@ class Sim:
         self.shrink = 0
         self.tangled = 0
         self.imbalanced = 0
+        # 势不可当：每获得一次格挡就对随机敌人打 N 点。随机 → 模拟按「当前目标/第一只活怪」结算，
+        # 多怪场里误差 ≤N，单怪场完全准确（run Z6DHD2PJBQ 实测漏算 8 点/次）。
+        self.jugg = 0
         self.status_tax = 0
         self.thorns_taken = 0
         self.steps: list[dict] = []
@@ -452,6 +467,7 @@ class Sim:
         s.shrink = sts2._int(pm.get("shrink"), 0)
         s.tangled = sts2._int(pm.get("tangled"), 0)
         s.imbalanced = sts2._int(pm.get("imbalanced"), 0)
+        s.jugg = sts2._int(pid.get("JUGGERNAUT_POWER"), 0)
         s.metallicize = sts2._int(pm.get("metallicize"), 0)
         s.barricade = bool(pm.get("barricade"))
         s.plating = sts2._int(pm.get("plating"), 0)
@@ -659,6 +675,7 @@ class Sim:
         if card.get("t") == "S":
             self.skills += 1
         step = {"k": "c", "id": card["id"], "t": target, "e": cost, "d": 0, "blk": 0}
+        blk0 = self.block
 
         # 自伤 / 回能 / 抽牌 / 加牌
         if card.get("hp"):
@@ -694,6 +711,16 @@ class Sim:
         if self.rage and card.get("t") == "A":
             self.block += self.rage
             step["blk"] = step.get("blk", 0) + self.rage
+        # 势不可当：本张牌每获得一次格挡，就对敌人补 N 点（随机目标 → 取当前目标/第一只活怪）
+        if self.jugg and self.block > blk0:
+            tg = self.by_index(target) if target is not None else None
+            if tg is None:
+                alive = self.alive()
+                tg = alive[0] if alive else None
+            if tg is not None:
+                jd = self.hurt_enemy(tg, self.jugg, 1)
+                step["d"] = step.get("d", 0) + jd
+                step["jugg"] = jd
         if card.get("add"):
             step["add"] = card["add"]
         if card.get("pact") and self.exhaust_pile + self.exhausts >= 3 and not card.get("dmg"):
