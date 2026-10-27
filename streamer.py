@@ -84,6 +84,7 @@ PORTRAIT = 144
 GAP = 18
 HEAD_H = 20
 FEED_GAP = 6
+TEXT_ZOOM = 1.12                # 弹幕正文字号倍率（面板宽度不变，字大一点更好读）
 
 C_PANEL_TOP = (30, 27, 35, 242)      # rgba(30,27,35,.95)
 C_PANEL_BOT = (12, 13, 20, 224)      # rgba(12,13,20,.88)
@@ -608,11 +609,11 @@ def _layout(text: str, scale: float) -> dict:
     f_status = get_font(int(13 * s))
     f_status_b = get_font(int(13 * s), bold=True)
     if len(text) > 170:
-        f_text = get_font(int(16.5 * s))
+        f_text = get_font(int(16.5 * s * TEXT_ZOOM))
     elif len(text) > 110:
-        f_text = get_font(int(18.5 * s))
+        f_text = get_font(int(18.5 * s * TEXT_ZOOM))
     else:
-        f_text = get_font(int(20 * s))
+        f_text = get_font(int(20 * s * TEXT_ZOOM))
 
     probe = ImageDraw.Draw(Image.new("RGBA", (8, 8)))
     text_w = panel_w - pad_l - avatar_col - gap - pad_r
