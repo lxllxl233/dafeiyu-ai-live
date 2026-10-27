@@ -232,5 +232,37 @@ check("缠结", st.tangled, 1)
 check("失衡", st.imbalanced, 1)
 
 print()
+print("=== 19) 硬化外壳 20：整回合最多掉 20，且不给假斩杀（run86 f15 t4 真实局面）===")
+e = enemy("SKULKING_COLONY", 45, 24)
+e["hp_loss_cap"] = 20
+s = state([card("UNRELENTING", 2, dmg=19), card("STRIKE_IRONCLAD", 1, dmg=11),
+           card("THUNDERCLAP", 1, dmg=9, target="AllEnemies")], [e], energy=3)
+st = sim.Sim.from_state(s)
+for c in list(st.hand):
+    st.play(c, 0)
+check("三张 39 伤只掉 20（45→25）", st.by_index(0)["hp"], 25)
+check("没有斩杀线", [x["i"] for x in sim.lethal_targets(s)], [])
+
+print()
+print("=== 20) 硬化外壳：power 解析 + 不误伤真实斩杀 ===")
+pw = [{"power_id": "HARDENED_SHELL_POWER", "name": "硬化外壳", "amount": 20}]
+e = enemy("SKULKING_COLONY", 15, 24, powers=pw)
+check("power 解析出上限 20", sim.Sim.from_state(state([], [e])).enemies[0]["hp_loss_cap"], 20)
+s = state([card("UNRELENTING", 2, dmg=19)], [e], energy=3)
+check("15 血在上限之内，仍可斩杀", [x["i"] for x in sim.lethal_targets(s)], [0])
+
+print()
+print("=== 21) 硬化外壳：预算是整回合累计，不是每张牌重置 ===")
+e = enemy("SHELL", 60, 10)
+e["hp_loss_cap"] = 20
+st = sim.Sim.from_state(state([card("STRIKE_IRONCLAD", 1, dmg=9)] * 3, [e], energy=3))
+dealt = 0
+for c in list(st.hand):
+    dealt += st.hurt_enemy(st.by_index(0), c["dmg"], 1, strength=False, vuln=False)
+check("9+9+9 只累计 20", dealt, 20)
+check("血量 60→40", st.by_index(0)["hp"], 40)
+check("格子里的上限字段保留", st.by_index(0)["hp_loss_cap"], 20)
+
+print()
 print("ALL OK" if ok else "SOME CHECKS FAILED")
 sys.exit(0 if ok else 1)

@@ -458,6 +458,8 @@ def enemy_state(e: dict, idx: int | None = None) -> dict:
         "stun_at": _stun_threshold(e) or sts2._int(e.get("stun_at"), 0),
         "_stun_done": False,
         "hit_cap": _hit_cap(e), "dig": _has_power(e, ("钻洞", "埋地", "DIG")),
+        # 硬化外壳：本回合最多失去 N 点生命（累计），用 _lost_turn 记账
+        "hp_loss_cap": _hp_loss_cap(e), "_lost_turn": 0,
         "_dig_done": False,
     }
 
@@ -479,6 +481,28 @@ def _hit_cap(e: dict) -> int:
             continue
         blob = f"{p.get('name') or ''}{p.get('description') or ''}"
         if "难以杀灭" not in blob and "HARD_TO_KILL" not in blob.upper():
+            continue
+        n = sts2._int(p.get("amount"), 0)
+        if not n:
+            m = re.search(r"(\d+)", blob)
+            n = sts2._int(m.group(1), 0) if m else 0
+        if 0 < n < 1000:
+            return n
+    return 0
+
+
+def _hp_loss_cap(e: dict) -> int:
+    """「硬化外壳 N」：这只怪**每回合**最多失去 N 点生命（run86 f15 鬼祟珊瑚群 45→25）。
+
+    和「难以杀灭 N」（单次封顶）不是一回事：这是**整回合累计**的上限，所以
+    45 血的怪看着能一刀 57 斩杀，实际这一回合最多掉 20 → 不存在斩杀线。
+    """
+    for p in e.get("powers") or []:
+        if not isinstance(p, dict):
+            continue
+        pid = str(p.get("power_id") or p.get("id") or "").upper()
+        blob = f"{p.get('name') or ''}{p.get('description') or ''}"
+        if "HARDENED_SHELL" not in pid and "硬化外壳" not in blob:
             continue
         n = sts2._int(p.get("amount"), 0)
         if not n:
@@ -565,7 +589,7 @@ class Sim:
         s.enemies = [enemy_state(x, i) for i, x in enumerate(c.get("enemies") or []) if isinstance(x, dict)]
         # 允许上游/测试直接注射机制字段（enemy_state 只从 powers 里解析）
         for e, src in zip(s.enemies, [x for x in (c.get("enemies") or []) if isinstance(x, dict)]):
-            for k in ("hit_cap", "dig", "stun_at"):
+            for k in ("hit_cap", "hp_loss_cap", "dig", "stun_at"):
                 v = sts2._int(src.get(k), 0)
                 if v and not e.get(k):
                     e[k] = v
@@ -718,6 +742,16 @@ class Sim:
             cap = e.get("hit_cap") or 0
             if cap and d > cap:
                 d = cap          # 「难以杀灭 N」：单次伤害封顶 N
+            # 「硬化外壳 N」：整回合最多失去 N 点生命。超出预算的伤害不再扣血，
+            # 所以 45 血 + 每回合上限 20 的怪，一刀 57 也死不了（run86 f15 t4 实测 45→25）。
+            budget = e.get("hp_loss_cap") or 0
+            if budget:
+                left = budget - sts2._int(e.get("_lost_turn"), 0)
+                if left <= 0:
+                    break
+                if d > left:
+                    d = left
+                e["_lost_turn"] = sts2._int(e.get("_lost_turn"), 0) + d
             e["hp"] -= d
             dealt += d
             if e["thorns"]:
