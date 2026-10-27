@@ -296,6 +296,88 @@ rw2 = {"screen": "REWARD", "run": {"act_id": 1, "floor": 10, "deck": deck16},
        "reward": {"rewards": [{"reward_type": "Gold", "description": "8金币"}]}}
 check("R16 没有卡牌奖励就不拦（纯金币/遗物照收）", sts2.pending_card_reward(rw2), False)
 
+# --- R16b run89：没打开的卡牌奖励会让 collect 静默选第一张（pending_card_choice=false）
+rw_unopened = {"screen": "REWARD", "run": {"act_id": 0, "floor": 7, "deck": deck16[:-2]},
+               "reward": {"pending_card_choice": False,
+                          "rewards": [{"index": 0, "reward_type": "Gold", "description": "9金币"},
+                                      {"index": 1, "reward_type": "Card",
+                                       "description": "将一张牌添加到你的牌组。"}]}}
+check("R16b 没打开的卡牌奖励也能认出来", sts2.unclaimed_card_reward(rw_unopened), 1)
+check("R16b 但 pending_card_choice 是 false（老护栏会放行）",
+      sts2.pending_card_reward(rw_unopened), False)
+check("R16b 金币在 0 位、卡牌在 1 位：返回 1 不是 0", sts2.unclaimed_card_reward(rw_unopened) != 0, True)
+rw_claimed = {"screen": "REWARD", "reward": {"rewards": [
+    {"index": 0, "reward_type": "Card", "is_claimed": True}]}}
+check("R16b 已领的卡牌不再算未处理", sts2.unclaimed_card_reward(rw_claimed), None)
+rw_gold_only = {"screen": "REWARD", "reward": {"rewards": [
+    {"index": 0, "reward_type": "Gold"}]}}
+check("R16b 纯金币奖励不触发自动 skip", sts2.unclaimed_card_reward(rw_gold_only), None)
+
+
+# --- R16c run91：结算慢的根因是「5 个独立回合 + 每次护栏拒绝都要重试」。
+# `sts2.py rewards` 把整个 REWARD 界面放进一个进程里循环。这里用假引擎锁死两个死循环风险：
+#   1) skip_reward_cards 之后 rewards 里的 Card 条目**仍是未领状态**
+#      → 只看 is_claimed 的实现会一直 claim→skip→claim（run91 f14 实测刷了 6 轮还没 collect）
+#   2) 收干净之后必须真的调 collect，不能停在 REWARD 界面
+def _fake_reward_run(mode, states):
+    """把 sts2 的 get_state/act 换成脚本化假引擎，跑一次 cmd_rewards，返回调用序列。"""
+    calls = []
+    idx = {"st": 0}
+
+    def fake_get_state():
+        return states[min(idx["st"], len(states) - 1)]
+
+    def fake_act(action, **params):
+        calls.append((action, params.get("option_index")))
+        idx["st"] += 1
+        return {"status": "completed", "message": "fake"}
+
+    saved = (sts2.get_state, sts2.act, sts2.wait_stable, sts2.overlay_say, sts2.compact)
+    sts2.get_state, sts2.act = fake_get_state, fake_act
+    sts2.wait_stable = lambda *a, **k: states[min(idx["st"], len(states) - 1)]
+    sts2.overlay_say = lambda *a, **k: None
+    sts2.compact = lambda *a, **k: ""
+    try:
+        import io
+        import contextlib
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            sts2.cmd_rewards(take=mode, potion="skip", thought="", meme="")
+        return calls, buf.getvalue()
+    finally:
+        sts2.get_state, sts2.act, sts2.wait_stable, sts2.overlay_say, sts2.compact = saved
+
+
+def _rw(rewards, pending=False, deck=15, screen="REWARD"):
+    return {"screen": screen, "run": {"act_id": 0, "floor": 14, "deck": [{}] * deck},
+            "reward": {"pending_card_choice": pending, "rewards": rewards}}
+
+
+_gold_card = [{"index": 0, "reward_type": "Gold", "is_claimed": True},
+              {"index": 1, "reward_type": "Card"}]
+_calls, _out = _fake_reward_run(None, [_rw(_gold_card),
+                                       _rw(_gold_card, pending=True, screen="CARD_SELECTION"),
+                                       _rw(_gold_card),
+                                       _rw(_gold_card, screen="MAP")])
+check("R16c 跳过卡牌后仍然会 collect（不会卡在 REWARD）",
+      "collect_rewards_and_proceed" in [c[0] for c in _calls], True)
+check("R16c 同一张卡牌只 claim 一次（skip 后条目仍未领也不能重刷）",
+      [c[0] for c in _calls].count("claim_reward"), 1)
+check("R16c 卡牌走 skip 而不是静默 collect", "skip_reward_cards" in [c[0] for c in _calls], True)
+check("R16c 动作数收敛（≤4 步收完）", len(_calls) <= 4, True)
+_take_calls, _ = _fake_reward_run(0, [_rw([{"index": 0, "reward_type": "Card"}], pending=False),
+                                     _rw([{"index": 0, "reward_type": "Card"}], pending=True,
+                                         screen="CARD_SELECTION"),
+                                     _rw([], pending=False),
+                                     _rw([], screen="MAP")])
+check("R16c --take 路径会调 choose_reward_card",
+      "choose_reward_card" in [c[0] for c in _take_calls], True)
+check("R16c --take 路径不会再去 skip 卡牌",
+      "skip_reward_cards" in [c[0] for c in _take_calls], False)
+check("R16c 药水价值排序：力量药水该留、技能药水可丢",
+      (sts2.potion_rank("STRENGTH_POTION"), sts2.potion_rank("SKILL_POTION")), (0, 2))
+
+
 # ---------------------------------------------------------------- R17 过渡快照别误报
 # run85 f11 t2：手牌打空、能量还剩 1，被判「过渡快照」拒绝 end（账本 2 条 stale_end）。
 def _pre_state(energy, hand_n=0):

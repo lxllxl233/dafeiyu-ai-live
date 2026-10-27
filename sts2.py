@@ -2639,6 +2639,30 @@ def pending_card_reward(state: dict) -> bool:
     return False
 
 
+def unclaimed_card_reward(state: dict) -> int | None:
+    """REWARD 界面里「还没被处理掉的卡牌奖励」在 rewards 列表中的下标。
+
+    run89 A1（重大）：卡牌奖励**没打开**（没 claim）时，`pending_card_choice` 是 false，
+    于是 `collect_rewards_and_proceed` 绕过所有护栏，**静默把奖励里的第一张牌塞进牌组**。
+    本局因此把「耸肩无视」换成了 TREMBLE、把「撕裂」换成了 CINDER —— 两个能救命的引擎
+    全变成无用牌，Boss 战再输一次。所以这里改成按 rewards 列表自己找 Card 条目，
+    收奖励前显式走 claim → skip。
+    """
+    rew = state.get("reward") or {}
+    if not isinstance(rew, dict):
+        return None
+    for r in rew.get("rewards") or []:
+        if not isinstance(r, dict):
+            continue
+        t = str(r.get("reward_type") or r.get("type") or "").lower()
+        if "card" not in t:
+            continue
+        if r.get("is_claimed") or r.get("claimed"):
+            continue
+        return _int(r.get("index"), None)
+    return None
+
+
 def reward_field_hint(state: dict) -> str:
     """奖励对象里到底有没有 `pending_card_choice`？没有就报一次字段名。
 
@@ -2681,6 +2705,40 @@ def cmd_do(action, card=None, target=None, option=None, thought="", meme="", opt
         if msg:
             print(msg)
             sys.exit(3)
+    # run89 A1：REWARD 界面上「还没打开」的卡牌奖励会让 collect 静默选第一张进牌组
+    # （pending_card_choice 这时是 false，所有老护栏都放行）。这里改成显式三步：
+    # claim 打开选牌 → skip 跳过 → 再 collect。想拿牌就先 choose_reward_card。
+    if action in ("collect_rewards_and_proceed", "resolve_rewards") and not force \
+            and before.get("screen") == "CARD_SELECTION":
+        # run90 A2：选牌界面还没选完就 collect，引擎会替你选（第 0 张）。
+        # choose_reward_card 被 DECK_PACE/DECK_CAP 拦下时，正确动作是加 --force 重发，
+        # 不是 collect —— 否则「我要的那张」会变成「列表第一张」。
+        print("CARD_SELECTION_OPEN 还在选牌的界面上，collect 会替你选（通常是第 0 张）：\n"
+              "  要这张：python sts2.py do choose_reward_card --option N --force\n"
+              "  不要牌：python sts2.py do skip_reward_cards\n"
+              "  之后再 collect_rewards_and_proceed。")
+        sys.exit(3)
+    if action in ("collect_rewards_and_proceed", "resolve_rewards") and not force \
+            and before.get("screen") == "REWARD":
+        idx = unclaimed_card_reward(before)
+        if idx is not None and not pending_card_reward(before):
+            print(f"REWARD_CARD_UNOPENED 奖励里还有没打开的卡牌（reward[{idx}]）："
+                  "直接 collect 会替你自动选第一张进牌组 → 改成 claim→skip→collect。"
+                  " 真想拿牌就先 choose_reward_card --option N --force。")
+            try:
+                act("claim_reward", option_index=idx)
+                time.sleep(0.4)
+                st_c = get_state()
+                if st_c.get("screen") == "CARD_SELECTION" or \
+                        "skip_reward_cards" in (st_c.get("available_actions") or []):
+                    act("skip_reward_cards")
+                    time.sleep(0.4)
+                    print("REWARD_CARD_SKIPPED 卡牌奖励已跳过（牌组不变）")
+                else:
+                    print("REWARD_CARD_NOT_OPENED claim 后没进选牌界面，跳过这步")
+            except Exception as e:
+                print(f"REWARD_CARD_SKIP_FAILED {e}（继续 collect，但可能仍会带牌进组）")
+            before = get_state()
     # run85：collect_rewards_and_proceed 会静默把卡牌奖励一起领走，绕过 DECK_CAP
     # （牌组 16→20 张，第二幕就是被这 4 张稀释掉的）。先 skip 再收。
     if action in ("collect_rewards_and_proceed", "resolve_rewards") and not force:
@@ -2895,6 +2953,158 @@ def cmd_do(action, card=None, target=None, option=None, thought="", meme="", opt
             print(anchor)
         print(compact(after))
     print(f"ACTION {action} {params} -> {resp.get('status')} {resp.get('message')}")
+    _meme_hint()
+
+
+POTION_RANK_HIGH = ("STRENGTH", "ENERGY", "DEXTERITY", "FIRE", "BLOOD", "EXPLOSIVE",
+                    "FEAR", "ESSENCE", "AMBROSIA", "FAIRY", "GHOST", "DUPLICATION")
+POTION_RANK_MID = ("WEAK", "VULNERABLE", "FRAIL", "POISON", "BLOCK", "SMOKE", "SWIFT",
+                   "REGEN", "RECOVERY", "ATTACK", "POWER", "FRUIT", "CUNNING", "LIQUID")
+
+
+def potion_rank(pid: str) -> int:
+    """药水价值粗排：0 越高越该留。只为「满格时该丢哪瓶」服务，不参与战斗判断。"""
+    u = str(pid or "").upper()
+    if any(k in u for k in POTION_RANK_HIGH):
+        return 0
+    if any(k in u for k in POTION_RANK_MID):
+        return 1
+    return 2
+
+
+def cmd_rewards(take=None, potion="skip", thought="", meme="", full=False):
+    """一次调用把整个 REWARD 界面收干净（run91 修：结算慢的根因是拆成 5 个回合）。
+
+    根因：原来结算 = claim 金币 → claim 药水 → claim 卡 → choose/skip → collect，
+    每一步一次独立进程 + 一次独立回合（模型延迟 1-2 分钟/回合），外加护栏
+    POTION_SLOTS_FULL / DECK_PACE / CARD_SELECTION_OPEN 各自逼出一次失败重试，
+    于是奖励界面要停 5-10 分钟才「说话」。引擎本身很快（/state 实测 10-40ms），
+    慢的全是**回合往返**。所以整个流程放进一个进程里循环，一轮说完再走。
+
+    用法：
+      python sts2.py rewards                  # 金币/药水照领，卡牌奖励跳过，然后 collect
+      python sts2.py rewards --take 1         # 卡牌奖励拿第 1 张（显式选择，绕 pace 但会报牌组数）
+      python sts2.py rewards --potion swap    # 药水满格时丢最差的一瓶换新
+    """
+    steps = []
+    handled: set[int] = set()
+    after = get_state()
+    if thought or meme:
+        overlay_say(tag_for(after.get("screen", "")), thought, meme, after, force=True)
+    for _round in range(8):
+        st = get_state()
+        screen = st.get("screen")
+        if screen == "CARD_SELECTION":
+            # 已经站在选牌界面上（上一轮 claim 打开了卡牌奖励）
+            if take is not None:
+                try:
+                    act("choose_reward_card", option_index=_int(take, 0))
+                    steps.append(f"choose_reward_card[{take}]")
+                except Exception as e:
+                    steps.append(f"choose_failed:{e}")
+                    try:
+                        act("skip_reward_cards")
+                        steps.append("skip_reward_cards")
+                    except Exception:
+                        pass
+            else:
+                try:
+                    act("skip_reward_cards")
+                    steps.append("skip_reward_cards")
+                except Exception as e:
+                    steps.append(f"skip_failed:{e}")
+            time.sleep(0.3)
+            continue
+        if screen != "REWARD":
+            break
+        rew = st.get("reward") or {}
+        rewards = [r for r in (rew.get("rewards") or []) if isinstance(r, dict)]
+        # 关键：skip_reward_cards 之后，卡牌奖励条目在 rewards 里**仍然是未领状态**，
+        # 只有 pending_card_choice 会变 false（既然这样，就用本地 handled 记账）。
+        todo = [r for r in rewards
+                if not (r.get("is_claimed") or r.get("claimed"))
+                and _int(r.get("index"), 0) not in handled]
+        if not todo:
+            # 全都处理过 → 收画面
+            try:
+                act("collect_rewards_and_proceed")
+                steps.append("collect")
+            except Exception as e:
+                steps.append(f"collect_failed:{e}")
+            time.sleep(0.4)
+            continue
+        progressed = False
+        for r in todo:
+            idx = _int(r.get("index"), 0)
+            t = str(r.get("reward_type") or r.get("type") or "").lower()
+            if "card" in t:
+                handled.add(idx)
+                try:
+                    act("claim_reward", option_index=idx)
+                    steps.append(f"claim_card[{idx}]")
+                    progressed = True
+                except Exception as e:
+                    steps.append(f"claim_card_failed:{e}")
+                break                      # 打开选牌后必须去 CARD_SELECTION 分支处理
+            if "potion" in t:
+                pid = str(r.get("potion_id") or r.get("id") or "")
+                handled.add(idx)
+                if free_potion_slots(st) > 0:
+                    try:
+                        act("claim_reward", option_index=idx)
+                        steps.append(f"claim_potion[{idx}]{pid}")
+                        progressed = True
+                    except Exception as e:
+                        steps.append(f"claim_potion_failed:{e}")
+                else:
+                    slots = [p for p in potion_slots(st) if p.get("potion_id")]
+                    worst = max(slots, key=lambda p: potion_rank(p.get("potion_id")),
+                                default=None) if slots else None
+                    swap_ok = potion == "swap" and worst is not None \
+                        and potion_rank(pid) < potion_rank(worst.get("potion_id"))
+                    if swap_ok:
+                        try:
+                            act("discard_potion", option_index=_int(worst.get("index"), 0))
+                            steps.append(f"discard[{worst.get('index')}]{worst.get('potion_id')}")
+                            time.sleep(0.2)
+                            act("claim_reward", option_index=idx)
+                            steps.append(f"claim_potion[{idx}]{pid}")
+                            progressed = True
+                        except Exception as e:
+                            steps.append(f"swap_failed:{e}")
+                    else:
+                        steps.append(f"potion_left[{idx}]{pid}(满格)")
+                break                      # 药水/金币一次只动一个，避免下标错位
+            # 金币 / 遗物 / 其它：直接领
+            handled.add(idx)
+            try:
+                act("claim_reward", option_index=idx)
+                steps.append(f"claim[{idx}]{t or 'gold'}")
+                progressed = True
+            except Exception as e:
+                steps.append(f"claim_failed:{e}")
+            break
+        if not progressed:
+            # 没有任何能推进的动作 → 直接收画面，别死循环
+            try:
+                act("collect_rewards_and_proceed")
+                steps.append("collect")
+            except Exception as e:
+                steps.append(f"collect_failed:{e}")
+                break
+        time.sleep(0.25)
+    after = wait_stable()
+    print("REWARDS " + (" → ".join(steps) if steps else "(没有可收的奖励)"))
+    n = deck_size(after)
+    run = after.get("run") or {}
+    cap = deck_cap(run_act(run))
+    print(f"REWARDS_RESULT deck={n}（pace {cap}）screen={after.get('screen')}")
+    if n > cap:
+        print(f"REWARDS_DECK_FAT 牌组 {n} 超过这个阶段预算 {cap}：下次别再拿牌，先去商店删一张。")
+    anchor = combat_anchor(after)
+    if anchor:
+        print(anchor)
+    print(compact(after, full=full))
     _meme_hint()
 
 
@@ -3509,6 +3719,13 @@ def main():
     p = sub.add_parser("say")
     p.add_argument("--thought", default="")
     p.add_argument("--meme", default="")
+    p = sub.add_parser("rewards", help="一次收完整个奖励界面（金币/药水/卡牌/collect 全在一个进程里循环）")
+    p.add_argument("--take", type=int, default=None, help="卡牌奖励拿第 N 张（0 起）；不给就跳过")
+    p.add_argument("--potion", choices=["skip", "swap"], default="skip",
+                   help="药水满格时：skip 留空不领 / swap 丢最差一瓶换新")
+    p.add_argument("--thought", default="")
+    p.add_argument("--meme", default="")
+    p.add_argument("--full", action="store_true")
     p = sub.add_parser("quip", help="一次推多句台词（省 token）：quip \"句1\" \"句2\" \"句3\"")
     p.add_argument("lines", nargs="+")
     p = sub.add_parser("memory")
@@ -3536,6 +3753,8 @@ def main():
             options = [int(x) for x in str(args.options).replace(" ", "").split(",") if x != ""]
         cmd_do(args.action, args.card, args.target, args.option, args.thought, args.meme, options,
                getattr(args, "full", False), getattr(args, "force", False))
+    elif args.cmd == "rewards":
+        cmd_rewards(args.take, args.potion, args.thought, args.meme, getattr(args, "full", False))
     elif args.cmd == "batch":
         spec = args.spec
         if args.file:
