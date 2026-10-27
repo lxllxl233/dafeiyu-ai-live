@@ -23,3 +23,5 @@
 | P84 | sts2_ironclad_a10_run84_ABANDONED_saved_f1.mp4 | ABANDONED_saved_f1 | 1.0 GB |
 | P85 | sts2_ironclad_a10_run85_DEFEAT.mp4 | act2 f22 双螨虫（模型验证局） | 1.9 GB |
 | P86 | sts2_ironclad_a10_run86_lose_floor23.mp4 | act2 f23 产卵虫（测量局：中间指标 ±1 82.7% / 假斩杀 5 / batch 1） | 2.5 GB |
+| P94 | sts2_ironclad_a10_run94_lose_f17_act1boss.mp4 | lose_f17_act1boss | 1.0 GB |
+| P95 | sts2_ironclad_a10_run95_abandon_f6_forced_elite.mp4 | abandon_f6_forced_elite | 0.4 GB |
