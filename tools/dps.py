@@ -26,6 +26,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import gates  # noqa: E402
 import sim  # noqa: E402
 import sts2  # noqa: E402
 
@@ -83,6 +84,10 @@ def main(argv: list[str]) -> int:
     print(f"手牌闸 {a['hand_limit']:.1f} 张/回合 · 能量闸 {a['en_limit']:.1f} 张/回合"
           f" · 易伤 ×{a['vuln_mult']:.2f}（{a['vuln']} 层）")
     print(f"--> 估计净输出 {a['dps']:.1f} / 回合")
+    frees = [c for c in deck_of(st) if c and gates.is_free_output(c)]
+    print(f"0费/小刀输出 {len(frees)} 张（{'、'.join(c['n'] for c in frees) or '无'}）："
+          f"上面这个净输出**不含**它们的免费伤害"
+          f"{'　⚠️ 第二幕起要 ≥2 张（doctrine §3.2）' if len(frees) < 2 else ''}")
     print()
     bar = 50.0
     print(f"{'Boss':<10}{'有效血':>7}{'回合':>6}   判定")
