@@ -313,6 +313,8 @@ def enemy_state(e: dict, idx: int | None = None) -> dict:
         "atk_final": final_atk, "atk_raw": raw_atk,
         "types": types,
         "vuln": sts2._int(pm.get("vuln"), 0), "weak": sts2._int(pm.get("weak"), 0),
+        # 虚弱/意图在回合开始时已锁定：本回合新挂的虚弱不改这一回合的攻击伤害（实测）
+        "weak0": sts2._int(pm.get("weak"), 0),
         "timid": sts2._int(pm.get("timid"), 0), "thorns": sts2._int(pm.get("thorns"), 0),
         "slippery": sts2._int(pid.get("SLIPPERY_POWER"), 0),
         "artifact": sts2._int(pm.get("artifact"), 0),
@@ -482,7 +484,8 @@ class Sim:
             total += sts2._int(e.get("atk_final"), 0)
             for per, hits in e.get("atk_raw") or []:
                 d = sts2._int(per, 0)
-                if e["weak"]:
+                # 本回合新挂的虚弱不改这回合已锁定的意图伤害（run82 实测）
+                if e.get("weak0", e["weak"]):
                     d = int(d * 0.75)
                 if self.player_vuln:
                     d = int(d * 1.5)

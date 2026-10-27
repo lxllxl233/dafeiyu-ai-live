@@ -180,5 +180,19 @@ plan = sim.search(s)[0]
 check("剥光格挡零伤", plan["taken"], 0)
 
 print()
+print("=== 14) 本回合新挂的虚弱不改这回合的意图伤害 ===")
+e = enemy("FOE", 80, 12)
+s = state([card("UPPERCUT", 2, dmg=13)], [e])
+plan = sim.search(s)[0]
+check("挂虚弱后仍吃 12", plan["taken"], 12)
+
+print()
+print("=== 15) 人工制品按施加次数吃，不按层数 ===")
+e = enemy("ARTI", 80, 12, powers=[{"power_id": "ARTIFACT_POWER", "name": "AF", "amount": 1}])
+s = state([card("BASH", 2, dmg=8, vuln=2)], [e])
+plan = sim.search(s)[0]
+check("2 层易伤被 1 层人工制品全挡", plan["dmg"], 8)
+
+print()
 print("ALL OK" if ok else "SOME CHECKS FAILED")
 sys.exit(0 if ok else 1)
