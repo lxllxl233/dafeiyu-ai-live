@@ -57,10 +57,18 @@ def audit(state: dict) -> dict:
     ratio = len(atk) / n if n else 0.0
     hand_limit = min(3.2, 5 * ratio)
     en_limit = 3.0 / avg_cost if avg_cost else 0.0
-    dps = min(hand_limit, en_limit) * avg_dmg
+    # 易伤折算：破击/痛击挂上之后，我方几乎所有伤害 ×1.5。只按「有易伤牌」给保守折扣。
+    vuln_layers = max([int(c.get("vuln") or 0) for c in deck] or [0])
+    vuln_mult = 1.0
+    if vuln_layers >= 5:
+        vuln_mult = 1.35
+    elif vuln_layers >= 2:
+        vuln_mult = 1.25
+    dps = min(hand_limit, en_limit) * avg_dmg * vuln_mult
     return {"n": n, "atk": len(atk), "blk": len(blk), "basics": len(basics),
             "ratio": ratio, "avg_dmg": avg_dmg, "avg_cost": avg_cost,
-            "hand_limit": hand_limit, "en_limit": en_limit, "dps": dps}
+            "hand_limit": hand_limit, "en_limit": en_limit,
+            "vuln": vuln_layers, "vuln_mult": vuln_mult, "dps": dps}
 
 
 def main(argv: list[str]) -> int:
@@ -72,7 +80,8 @@ def main(argv: list[str]) -> int:
     n = force_n or a["n"]
     print(f"牌组 {n} 张：攻击 {a['atk']} / 格挡 {a['blk']} / 打击防御 {a['basics']}")
     print(f"攻击占比 {a['ratio']*100:.0f}%  平均伤害 {a['avg_dmg']:.1f}  平均费用 {a['avg_cost']:.2f}")
-    print(f"手牌闸 {a['hand_limit']:.1f} 张/回合 · 能量闸 {a['en_limit']:.1f} 张/回合")
+    print(f"手牌闸 {a['hand_limit']:.1f} 张/回合 · 能量闸 {a['en_limit']:.1f} 张/回合"
+          f" · 易伤 ×{a['vuln_mult']:.2f}（{a['vuln']} 层）")
     print(f"--> 估计净输出 {a['dps']:.1f} / 回合")
     print()
     bar = 50.0
