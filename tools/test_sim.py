@@ -163,5 +163,22 @@ plan = sim.search(s)[0]
 check("痛击跌破阈值：零伤", plan["taken"], 0)
 
 print()
+print("=== 12) 难以杀灭 9：单次伤害封顶 ===")
+e = enemy("EXOSKELETON", 40, 0)
+e["hit_cap"] = 9
+s = state([card("BLUDGEON", 3, dmg=42)], [e], energy=3)
+plan = sim.search(s)[0]
+check("42 只算 9", plan["dmg"], 9)
+
+print()
+print("=== 13) 钻洞：剥光格挡就晕 ===")
+e = enemy("TUNNELER", 92, 21)
+e["block"] = 6
+e["dig"] = 1
+s = state([card("STRIKE_IRONCLAD", 1, dmg=9)], [e])
+plan = sim.search(s)[0]
+check("剥光格挡零伤", plan["taken"], 0)
+
+print()
 print("ALL OK" if ok else "SOME CHECKS FAILED")
 sys.exit(0 if ok else 1)

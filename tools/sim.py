@@ -323,7 +323,36 @@ def enemy_state(e: dict, idx: int | None = None) -> dict:
         "stunned": False, "str": sts2._int(pm.get("str"), 0),
         "stun_at": _stun_threshold(e) or sts2._int(e.get("stun_at"), 0),
         "_stun_done": False,
+        "hit_cap": _hit_cap(e), "dig": _has_power(e, ("钻洞", "埋地", "DIG")),
+        "_dig_done": False,
     }
+
+
+def _has_power(e: dict, keys: tuple) -> int:
+    for p in e.get("powers") or []:
+        if not isinstance(p, dict):
+            continue
+        blob = f"{p.get('name') or ''}{p.get('power_id') or ''}{p.get('description') or ''}".upper()
+        if any(str(k).upper() in blob for k in keys):
+            return 1
+    return 0
+
+
+def _hit_cap(e: dict) -> int:
+    """「难以杀灭 N」：单次伤害封顶 N（破击 30 也只算 9）。"""
+    for p in e.get("powers") or []:
+        if not isinstance(p, dict):
+            continue
+        blob = f"{p.get('name') or ''}{p.get('description') or ''}"
+        if "难以杀灭" not in blob and "HARD_TO_KILL" not in blob.upper():
+            continue
+        n = sts2._int(p.get("amount"), 0)
+        if not n:
+            m = re.search(r"(\d+)", blob)
+            n = sts2._int(m.group(1), 0) if m else 0
+        if 0 < n < 1000:
+            return n
+    return 0
 
 
 class Sim:
@@ -380,6 +409,12 @@ class Sim:
         s.e_max = sts2._int(p.get("max_energy", run.get("max_energy")), s.energy)
         s.hand = [parse_card(x, i) for i, x in enumerate(c.get("hand") or []) if isinstance(x, dict)]
         s.enemies = [enemy_state(x, i) for i, x in enumerate(c.get("enemies") or []) if isinstance(x, dict)]
+        # 允许上游/测试直接注射机制字段（enemy_state 只从 powers 里解析）
+        for e, src in zip(s.enemies, [x for x in (c.get("enemies") or []) if isinstance(x, dict)]):
+            for k in ("hit_cap", "dig", "stun_at"):
+                v = sts2._int(src.get(k), 0)
+                if v and not e.get(k):
+                    e[k] = v
         s.potions = [p for p in (parse_potion(x) for x in (run.get("potions") or [])) if p]
         pid = _power_ids(p.get("powers"))
         pm = sts2._power_map(p.get("powers"))
@@ -485,6 +520,7 @@ class Sim:
         if e["timid"]:
             e["blk"] += e["timid"]
             e["timid"] = 0
+        had_blk = e["blk"] > 0
         dealt = 0
         for _ in range(max(1, hits)):
             if e["blk"] > 0:
@@ -500,6 +536,9 @@ class Sim:
             elif e["slippery"] > 0:
                 d = 1
                 e["slippery"] -= 1
+            cap = e.get("hit_cap") or 0
+            if cap and d > cap:
+                d = cap          # 「难以杀灭 N」：单次伤害封顶 N
             e["hp"] -= d
             dealt += d
             if e["thorns"]:
@@ -515,6 +554,10 @@ class Sim:
         if at and not e.get("_stun_done") and e["hp"] <= at and e["hp"] > 0:
             e["stunned"] = True
             e["_stun_done"] = True
+        # 地道虫「钻洞」：把它堆的格挡一次性剥光 → 当回合眩晕（实测，老版本漏算）
+        if had_blk and e["blk"] <= 0 and e.get("dig") and not e.get("_dig_done") and e["hp"] > 0:
+            e["stunned"] = True
+            e["_dig_done"] = True
         return dealt
 
     def _on_death(self, dead: dict):
