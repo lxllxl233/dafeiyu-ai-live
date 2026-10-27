@@ -191,6 +191,40 @@ def _av_append(row: dict, tsv: str | None = None) -> None:
         pass
 
 
+# ---- 思考状态：producer 明确上报「Agent 正在算这一步」，不许自己编一个计时器
+_thinking = {"on": False, "since": 0.0, "beat": 0.0, "seq": 0, "note": ""}
+
+
+def thinking_state() -> dict:
+    with _lock:
+        return dict(_thinking)
+
+
+def set_thinking(on: bool, note: str = "") -> dict:
+    """上报思考状态（on/off）。`seq` 由服务端发，客户端按序号丢弃迟到事件。
+
+    重复上报同一个状态**不涨 seq**、只续 beat：窗口/页面据此知道「上报方还活着」，
+    但状态本身不变 —— 所以不会出现「没在算却显示思考中」的假状态。
+    """
+    with _lock:
+        now = time.time()
+        changed = bool(on) != _thinking["on"]
+        _thinking["beat"] = now
+        if changed:
+            _thinking["on"] = bool(on)
+            _thinking["since"] = now
+            _thinking["seq"] = int(_thinking["seq"]) + 1
+            _thinking["note"] = str(note or "")[:80]
+        elif note:
+            _thinking["note"] = str(note or "")[:80]
+        snap = {"seq": _seq, "comments": [], "status": dict(_status),
+                "thinking": dict(_thinking)}
+        state = dict(_thinking)
+    if changed:
+        publish(snap)
+    return state
+
+
 def add_comment(payload: dict) -> dict:
     global _seq
     with _lock:
@@ -293,7 +327,8 @@ def route_payload() -> dict:
 def snapshot(after: int = 0) -> dict:
     with _lock:
         items = [c for c in _comments if c["id"] > after]
-        return {"seq": _seq, "comments": items, "status": dict(_status)}
+        return {"seq": _seq, "comments": items, "status": dict(_status),
+                "thinking": dict(_thinking)}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -419,7 +454,8 @@ class Handler(BaseHTTPRequestHandler):
             roles = _role_counts()
             body = {"ok": True, "clients": sum(roles.values()), "roles": roles,
                     "tts": dict(_tts_stat), "guard": dict(_guard),
-                    "seq": _seq, "audio_ts": dict(_audio_ts)}
+                    "seq": _seq, "audio_ts": dict(_audio_ts),
+                    "thinking": dict(_thinking)}
             self._send(200, json.dumps(body, ensure_ascii=False).encode("utf-8"),
                        "application/json; charset=utf-8")
         elif path == "/mark":
@@ -467,6 +503,16 @@ class Handler(BaseHTTPRequestHandler):
                 json.dumps({"ok": True, "comment": c}, ensure_ascii=False).encode("utf-8"),
                 "application/json; charset=utf-8",
             )
+        elif self.path == "/thinking":
+            try:
+                n = int(self.headers.get("Content-Length", "0"))
+                payload = json.loads(self.rfile.read(n) or b"{}")
+            except Exception:
+                self._send(400, b'{"ok":false}', "application/json")
+                return
+            st = set_thinking(bool(payload.get("on")), str(payload.get("note") or ""))
+            self._send(200, json.dumps({"ok": True, "thinking": st}, ensure_ascii=False)
+                       .encode("utf-8"), "application/json; charset=utf-8")
         elif self.path == "/reset":
             # Keep _seq monotonic: browser sources keep their own lastId and
             # would otherwise ignore new comments after a reset.

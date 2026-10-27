@@ -18,10 +18,17 @@
     右下角拖动 → 缩放（等比，0.5×–1.8×；缩放后大小也记住）
     滚轮      → 缩放（同一个比例，懒得找角就用它）
     右键      → 菜单：置顶 / 点击穿透 / 声音 / 录屏里隐藏 / 重新载入示例 / 关闭
-    Ctrl+Alt+D 点击穿透开关（穿透后鼠标点不到窗口，用它切回来）
+    ☰（右下角金钮）→ 穿透模式下也能点：左键拖、右键菜单
+    Ctrl+Alt+D 点击穿透开关（穿透后只有 ☰ 和右下缩放把手可点，其余照常穿过去）
     Ctrl+Alt+H 隐藏/显示
     Ctrl+Alt+S 声音开关
     Ctrl+Alt+Q 退出
+
+主播状态（气泡里显示什么，状态机在 tools/caster_state.py）：
+    说话中  → 台词（喇叭真的开始播才抖，时长用 WAV 实测）
+    思考中  → 「思考中……」（overlay 的 /thinking 由 tools/ctx.py、tools/act.py 上报）
+    空闲    → 保持上一句
+    注意：思考态没有「N 秒后自动消失」这种假逻辑；只有 240s 存活超时（Agent 崩了才回空闲）。
 
 直播时怎么用：OBS 的 `StS2 Game` 是 game_capture（只钩游戏进程），本来就不会录到这个窗；
 另外窗口默认带 WDA_EXCLUDEFROMCAPTURE，就算以后切成显示器采集也拍不到它（要拍就 --capture）。
@@ -54,6 +61,10 @@ except ImportError:  # pragma: no cover
     raise SystemExit(2)
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
+_TOOLS = os.path.join(ROOT, "tools")
+if _TOOLS not in sys.path:
+    sys.path.insert(0, _TOOLS)
+from caster_state import CasterState, THINKING_TEXT  # noqa: E402  (主播三态状态机)
 ASSETS = os.path.join(ROOT, "overlay", "assets")
 STATE_FILE = os.path.join(ROOT, "logs", "streamer_window.json")
 TTS_CACHE = os.path.join(ROOT, "logs", "tts_cache")
@@ -564,6 +575,20 @@ _bg_cache: dict = {}
 _static_cache: dict = {}
 
 
+def chip_rect(W: int, H: int, scale: float) -> tuple[int, int, int, int]:
+    """「菜单钮」矩形，窗口坐标 = 图像坐标（穿透模式下唯一能点的东西）。
+
+    画在面板右下角的内衬里（缩放把手在窗口最角落的透明区，看不见）。
+    尺寸 20*s，两边各留 8*s，正好落在 pad_b/pad_r 的空白上，不压正文。
+    """
+    s = scale
+    m = int(26 * s)
+    g = max(12, int(24 * s))
+    x2 = W - m - int(8 * s)
+    y2 = H - m - int(16 * s) - int(8 * s)
+    return (x2 - g, y2 - g, x2, y2)
+
+
 def _layout(text: str, scale: float) -> dict:
     """算一次版式并缓存：换行很贵（每字一次 textlength），不能每帧重算。"""
     key = (text, round(scale, 3))
@@ -667,16 +692,20 @@ def _background(L: dict) -> Image.Image:
     return canvas
 
 
-def render(text: str, status: dict, scale: float = 1.0, talk: float = 0.0) -> Image.Image:
+def render(text: str, status: dict, scale: float = 1.0, talk: float = 0.0,
+           chip: bool = False, layout_text: str | None = None) -> Image.Image:
     """画一帧：返回带阴影的 RGBA 图（尺寸=窗口尺寸）。
 
     talk: 0~1，说话中头像轻微上下跳（对应页面里的 bounce 动画）。
     talk=0 的帧整张缓存，静止时不重复渲染。
+    chip: 点击穿透开着时画出右下角「菜单钮」，告诉用户这里可以点。
+    layout_text: 用另一段文字的版式（尺寸）来排版，只换显示的内容。
+                 思考中用它保持窗口大小不变——否则每说一句话窗口就缩一次。
     """
-    L = _layout(text, scale)
+    L = _layout(layout_text or text, scale)
     skey = tuple(sorted((k, str(v)) for k, v in (status or {}).items()))
     if talk <= 0:
-        cached = _static_cache.get((text, skey, round(scale, 3)))
+        cached = _static_cache.get((text, skey, round(scale, 3), chip, layout_text))
         if cached is not None:
             return cached
 
@@ -723,18 +752,40 @@ def render(text: str, status: dict, scale: float = 1.0, talk: float = 0.0) -> Im
         cx += draw.textlength(t, font=f)
 
     # ---- 正文：head 以下垂直居中（对应 CSS #feed{align-items:center}）
-    if L["lines"]:
+    lines = L["lines"]
+    text_h = L["text_h"]
+    if layout_text and text != layout_text:
+        # 只换内容不换尺寸：按这段文字的字体/宽度重新折行，但面板高度沿用 layout_text
+        probe2 = ImageDraw.Draw(Image.new("RGBA", (8, 8)))
+        inner_w = L["panel_w"] - L["pad_l"] - L["avatar_col"] - L["gap"] - L["pad_r"]
+        lines = wrap_cjk(text, L["f_text"], inner_w, probe2) if text.strip() else []
+        text_h = L["line_h"] * len(lines)
+    if lines:
         feed_top = py + pad_t + L["head_h"] + L["feed_gap"]
         feed_bottom = py + L["panel_h"] - L["pad_b"]
-        ty = feed_top + max(0, (feed_bottom - feed_top - L["text_h"]) // 2)
-        for i, ln in enumerate(L["lines"]):
+        ty = feed_top + max(0, (feed_bottom - feed_top - text_h) // 2)
+        for i, ln in enumerate(lines):
             draw.text((px + pad_l + L["avatar_col"] + L["gap"], ty + i * L["line_h"]),
                       ln, font=L["f_text"], fill=C_TEXT)
+
+    if chip:
+        # 穿透模式下的唯一可点区：☰ 菜单钮（左键=拖动，右键=菜单，双击=切回不穿透）
+        cl, ct, cr, cb = chip_rect(L["W"], L["H"], s)
+        draw.rounded_rectangle((cl, ct, cr, cb), radius=max(3, int(5 * s)),
+                               fill=(216, 168, 74, 52), outline=(216, 168, 74, 170),
+                               width=max(1, int(1.2 * s)))
+        mid = (ct + cb) // 2
+        bar = max(1, int(1.8 * s))
+        step = max(3, int(5 * s))
+        for i in (-1, 0, 1):
+            yv = mid + i * step
+            draw.line([(cl + int(5 * s), yv), (cr - int(5 * s), yv)],
+                      fill=(244, 201, 104, 240), width=bar)
 
     if talk <= 0:
         if len(_static_cache) > 16:
             _static_cache.clear()
-        _static_cache[(text, skey, round(scale, 3))] = canvas
+        _static_cache[(text, skey, round(scale, 3), chip, layout_text)] = canvas
     return canvas
 
 # ---------------------------------------------------------------- Win32
@@ -945,11 +996,19 @@ class StreamerWindow:
                                on_start=self.start_talking)
         self.text = ""
         self.status = {}
+        self.presence = CasterState()      # 说话/思考/空闲三态（真实信号驱动）
+        self._think_seq = 0
         self.talk_start_at = 0.0
         self.talk_until = 0.0
         self.enter_at = 0.0
         self.dirty = True
         self.running = True
+        # 穿透模式下的「临时可交互」：鼠标贴到 ☰/缩放手把时摘掉 WS_EX_TRANSPARENT，
+        # 离开就恢复。保留整窗穿透（不为了能操作就把穿透关掉）。
+        self._hot = False
+        self._menu_open = False
+        self._transparent = bool(click_through)
+        self._watch_stop = threading.Event()
         self._memdc = None
         self._hbmp = None
         self._dib = None
@@ -1008,7 +1067,8 @@ class StreamerWindow:
             ex |= WS_EX_TOPMOST
         if self.click_through:
             ex |= WS_EX_TRANSPARENT
-        img = render(self.text or PLACEHOLDER, self.status, self.scale)
+        img = render(self.text or PLACEHOLDER, self.status, self.scale,
+                     chip=self.click_through)
         x, y = self.pos
         self._hwnd = user32.CreateWindowExW(
             ex, self._cls, "大肥鱼 · 主播模式", WS_POPUP,
@@ -1029,6 +1089,7 @@ class StreamerWindow:
         for hid, key in ((1, ord("D")), (2, ord("H")), (3, ord("Q")), (4, ord("S"))):
             user32.RegisterHotKey(self._hwnd, hid, MOD_CONTROL | MOD_ALT, key)
         self._paint(img)
+        threading.Thread(target=self._watch_interaction, daemon=True).start()
 
     def apply_capture_exclusion(self, on: bool) -> bool:
         """WDA_EXCLUDEFROMCAPTURE：这个窗对录屏/采集 API 不可见（Win10 2004+）。
@@ -1043,9 +1104,12 @@ class StreamerWindow:
         return ok
 
     def _proc(self, hwnd, msg, wparam, lparam):
+        # 穿透模式下只有「鼠标贴到 ☰/手把」时窗口才临时接收鼠标（见 _watch_interaction）。
+        # 以前这里是 if self.click_through: return 0 —— 穿透开着就永远点不到，弹窗成了死的。
+        blocked = self.click_through and not self._hot
         try:
             if msg == WM_LBUTTONDOWN:
-                if self.click_through:
+                if blocked:
                     return 0
                 if self._hit_test() == HTBOTTOMRIGHT:
                     # 右下角：自己拉，别用系统的 sizing 循环（WS_POPUP 不带边框，SC_SIZE 不生效）
@@ -1076,7 +1140,7 @@ class StreamerWindow:
                     print(f"尺寸：{self.scale:.2f}×")
                 return 0
             if msg == WM_MOUSEWHEEL:
-                if not self.click_through:
+                if not self.click_through or self._hot:
                     delta = ctypes.c_short((wparam >> 16) & 0xFFFF).value
                     self.zoom(1.08 if delta > 0 else 1 / 1.08)
                     self._save_pos()
@@ -1098,7 +1162,7 @@ class StreamerWindow:
                     self.toggle_sound()
                 return 0
             if msg == WM_SETCURSOR:
-                if self.click_through:
+                if blocked:
                     return user32.DefWindowProcW(hwnd, msg, wparam, lparam)
                 if self._hit_test() == HTBOTTOMRIGHT:
                     user32.SetCursor(_sizenwse_cursor())
@@ -1113,6 +1177,10 @@ class StreamerWindow:
         return user32.DefWindowProcW(hwnd, msg, wparam, lparam)
 
     def _menu(self):
+        # 菜单开着的时候必须保持可交互：光标会从 ☰ 移开，若这时恢复穿透，
+        # 菜单点一半就被「点穿」了。
+        self._menu_open = True
+        self.tick_interaction()
         hmenu = user32.CreatePopupMenu()
         user32.AppendMenuW(hmenu, MF_STRING | (MF_CHECKED if self.topmost else 0), 1, "置顶")
         user32.AppendMenuW(hmenu, MF_STRING | (MF_CHECKED if self.click_through else 0), 2, "点击穿透")
@@ -1127,6 +1195,8 @@ class StreamerWindow:
         user32.PostMessageW(self._hwnd, 0x0000, 0, 0)  # WM_NULL
         cmd = user32.TrackPopupMenu(hmenu, TPM_RETURNCMD | TPM_LEFTALIGN, pt.x, pt.y, 0, self._hwnd, None)
         user32.DestroyMenu(hmenu)
+        self._menu_open = False
+        self.tick_interaction()
         if cmd == 1:
             self.topmost = not self.topmost
             user32.SetWindowPos(self._hwnd, -1 if self.topmost else -2, 0, 0, 0, 0,
@@ -1151,10 +1221,64 @@ class StreamerWindow:
 
     def toggle_click_through(self):
         self.click_through = not self.click_through
+        self._hot = False        # 切回来时先按「不在热区」算，交给 _watch_interaction 纠正
+        self._apply_transparent(self.click_through)
+        self.dirty = True
+        print("点击穿透：" + ("开（☰ 或 Ctrl+Alt+D 关）" if self.click_through else "关"))
+
+    def _apply_transparent(self, on: bool):
+        """只改 WS_EX_TRANSPARENT 这一位；状态没变就不碰窗口（SetWindowLongW 会触发重排）。"""
         ex = user32.GetWindowLongW(self._hwnd, -20)
-        ex = (ex | WS_EX_TRANSPARENT) if self.click_through else (ex & ~WS_EX_TRANSPARENT)
-        user32.SetWindowLongW(self._hwnd, -20, ex)
-        print("点击穿透：" + ("开（Ctrl+Alt+D 关）" if self.click_through else "关"))
+        want = (ex | WS_EX_TRANSPARENT) if on else (ex & ~WS_EX_TRANSPARENT)
+        if want != ex:
+            user32.SetWindowLongW(self._hwnd, -20, want)
+        self._transparent = bool(on)
+
+    def _cursor_in_hot_zone(self) -> bool:
+        try:
+            pt = wintypes.POINT()
+            user32.GetCursorPos(ctypes.byref(pt))
+            rect = wintypes.RECT()
+            user32.GetWindowRect(self._hwnd, ctypes.byref(rect))
+            return self._hot_zone_point(pt.x, pt.y, rect, self.scale)
+        except Exception:
+            return False
+
+    @staticmethod
+    def _hot_zone_point(px: int, py: int, rect, scale: float) -> bool:
+        """穿透模式下「临时可交互」的两块区域：☰ 菜单钮 + 右下缩放手把。
+
+        故意只留这两个小块：整块面板都可交互的话，打游戏时鼠标经过弹窗就会
+        被它吃掉点击（这正是「为了能操作而关掉穿透」的坏做法）。
+        """
+        w, h = rect.right - rect.left, rect.bottom - rect.top
+        cl, ct, cr, cb = chip_rect(w, h, scale)
+        if rect.left + cl <= px < rect.left + cr and rect.top + ct <= py < rect.top + cb:
+            return True
+        grip = max(10, int(RESIZE_GRIP * scale))
+        return px >= rect.right - grip and py >= rect.bottom - grip
+
+    def tick_interaction(self) -> bool:
+        """穿透模式下按鼠标位置临时开/关穿透；返回当前是否在热区。"""
+        want = self._cursor_in_hot_zone() if self.click_through else False
+        if self._menu_open:
+            want = True
+        if want != self._hot:
+            self._hot = want
+            self._apply_transparent(self.click_through and not want)
+            self.dirty = True
+            if os.environ.get("STS2_STREAMER_DEBUG"):
+                print(f"穿透交互区：{'进入' if want else '离开'}")
+        return want
+
+    def _watch_interaction(self):
+        """50ms 轮询鼠标位置。只在状态翻转时调 SetWindowLongW，不打热循环。"""
+        while not self._watch_stop.is_set() and self.running:
+            try:
+                self.tick_interaction()
+            except Exception:
+                pass
+            self._watch_stop.wait(0.05)
 
     def toggle_visible(self):
         if user32.IsWindowVisible(self._hwnd):
@@ -1165,6 +1289,7 @@ class StreamerWindow:
     def close(self):
         self._save_pos()
         self.running = False
+        self._watch_stop.set()
         user32.PostMessageW(self._hwnd, WM_DESTROY, 0, 0)
 
     # ---- 画面
@@ -1221,6 +1346,7 @@ class StreamerWindow:
             dur = min(8.5, max(2.4, 1.5 + len(self.text or "") * 0.07))
         self.talk_start_at = now
         self.talk_until = now + min(30.0, max(0.12, dur))
+        self.presence.speech_started(self.talk_until - now)
         self.dirty = True
 
     def push(self, thought: str, meme: str, status: dict | None = None):
@@ -1237,7 +1363,26 @@ class StreamerWindow:
         self.talk_start_at = 0.0
         self.talk_until = 0.0
         self.dirty = True
+        # 台词一到就算「说话状态」：字立刻出现，声音（曼波合成 0.5–2.5s）随后跟上。
+        # 真实起播时 start_talking 会用 WAV 实测时长覆盖这个估计值。
+        self.presence.on_line(text)
         self.speaker.speak(text)   # 和页面一样：说的就是气泡里这一句
+
+    def set_thinking(self, on: bool, seq: int | None = None, note: str = "") -> None:
+        """overlay `/thinking` 的落点：seq 迟到的事件由 CasterState 自己丢掉。"""
+        before = self.presence.state
+        self.presence.set_thinking(bool(on), seq, note)
+        if os.environ.get("STS2_STREAMER_DEBUG"):
+            print(f"思考状态：on={bool(on)} seq={seq} {before}->{self.presence.state}")
+        self.dirty = True
+
+    def display_text(self, mode: str) -> str:
+        """气泡里该显示什么：说话/空闲显示台词，思考中显示「思考中……」。
+        没有待办（IDLE）时保持上一句，跟原来的空闲表现一致。
+        """
+        if mode == "thinking":
+            return THINKING_TEXT
+        return self.text or PLACEHOLDER
 
     def update_status(self, status: dict):
         if status and status != self.status:
@@ -1246,11 +1391,18 @@ class StreamerWindow:
 
     def frame(self) -> Image.Image:
         now = time.perf_counter()
+        mode = self.presence.tick()
+        if self.presence.dirty:
+            self.presence.dirty = False
+            self.dirty = True
         talk = 0.0
         if self.talk_start_at and now < self.talk_until:
             span = max(0.001, self.talk_until - self.talk_start_at)
             talk = min(1.0, max(0.0, (now - self.talk_start_at) / span))
-        img = render(self.text or PLACEHOLDER, self.status, self.scale, talk)
+        text = self.display_text(mode)
+        layout_text = self.text if mode == "thinking" and self.text else None
+        img = render(text, self.status, self.scale, talk, chip=self.click_through,
+                     layout_text=layout_text)
         # 入场：滑 6px + 渐显（对应 CSS slidein .32s）
         dt = now - self.enter_at
         if 0 <= dt < 0.32 and self.text:
@@ -1266,7 +1418,8 @@ class StreamerWindow:
 
     # ---- 尺寸（右下角拖动 / 滚轮）
     def _render_at(self, scale: float) -> Image.Image:
-        return render(self.text or PLACEHOLDER, self.status, scale)
+        return render(self.display_text(self.presence.state), self.status, scale,
+                      chip=self.click_through)
 
     @staticmethod
     def _clamp_scale(scale: float) -> float:
@@ -1391,16 +1544,23 @@ class StreamerWindow:
 
     def run(self):
         print("主播模式已启动：左键拖 · 右下角拖=缩放 · 滚轮=缩放 · 右键菜单 · "
-              "Ctrl+Alt+D 穿透 · Ctrl+Alt+S 声音 · Ctrl+Alt+H 隐藏 · Ctrl+Alt+Q 退出")
+              "穿透时点右下 ☰ · Ctrl+Alt+D 穿透 · Ctrl+Alt+S 声音 · Ctrl+Alt+H 隐藏 · Ctrl+Alt+Q 退出")
         print("（默认不出现在录屏里：WDA_EXCLUDEFROMCAPTURE，要拍就加 --capture）")
         last = 0.0
         last_guard = 0.0
+        last_mode = self.presence.state
         while self.running:
             msg = wintypes.MSG()
             while user32.PeekMessageW(ctypes.byref(msg), None, 0, 0, 1):
                 user32.TranslateMessage(ctypes.byref(msg))
                 user32.DispatchMessageW(ctypes.byref(msg))
             now = time.perf_counter()
+            # 三态的到期结算（说话窗口结束 / 思考超时）必须在主循环里跑：
+            # 只在 frame() 里 tick 的话，静止时根本不会重画，状态永远停在旧值。
+            mode = self.presence.tick()
+            if mode != last_mode:
+                last_mode = mode
+                self.dirty = True
             if now - last_guard > 2.0:
                 last_guard = now
                 self._ensure_on_screen()
@@ -1445,6 +1605,10 @@ def poll_loop(win: StreamerWindow, port: int, stop: threading.Event, demo: bool)
             if isinstance(d.get("seq"), int) and d["seq"] < last_id:
                 last_id = 0
             win.update_status(d.get("status") or {})
+            th = d.get("thinking")
+            if isinstance(th, dict):
+                # seq 单调：轮询偶尔乱序/重连时，旧状态不许把新的盖回去
+                win.set_thinking(bool(th.get("on")), th.get("seq"), str(th.get("note") or ""))
             for c in d.get("comments") or []:
                 last_id = max(last_id, int(c.get("id", 0)))
             if d.get("comments"):
@@ -1506,6 +1670,8 @@ def main() -> int:
     ap.add_argument("--vol", type=float, default=0.55, help="音量 0~1.5（默认 0.55，和页面一致）")
     ap.add_argument("--capture", action="store_true", help="允许录屏拍到它（默认对采集隐藏）")
     ap.add_argument("--preview", help="只渲染一张 PNG 就退出（验收/截图用）")
+    ap.add_argument("--think", action="store_true",
+                    help="和 --preview 一起用：截「思考中……」那一帧")
     a = ap.parse_args()
 
     # 预览图的缩放：命令行优先，否则跟 DPI；装不下就自动缩（按目标显示器宽度算）
@@ -1531,9 +1697,13 @@ def main() -> int:
         print(f"窗口比屏幕宽，缩到 {scale:.2f}×")
 
     if a.preview:
-        img = render("它 21，我最多挡 15。差 6，嗨呀。",
-                     {"character": "铁甲战士", "ascension": 10, "floor": 8,
-                      "hp": 23, "max_hp": 80, "gold": 20}, scale)
+        # --think / --click-through 也能进预览：验收截图要看到「思考中……」和 ☰ 菜单钮
+        mode = "thinking" if a.think else "speaking"
+        text = THINKING_TEXT if a.think else "它 21，我最多挡 15。差 6，嗨呀。"
+        img = render(text, {"character": "铁甲战士", "ascension": 10, "floor": 8,
+                            "hp": 23, "max_hp": 80, "gold": 20}, scale,
+                     chip=a.click_through,
+                     layout_text=None if mode != "thinking" else "它 21，我最多挡 15。差 6，嗨呀。")
         img.save(a.preview)
         print(f"PREVIEW {a.preview} {img.width}x{img.height}")
         return 0
