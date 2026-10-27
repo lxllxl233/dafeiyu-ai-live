@@ -1014,6 +1014,15 @@ def compact(state: dict, full: bool = False, brief: bool = False) -> str:
         lines.append("DECK_BAD 诅咒 " + ",".join(curses) + " ← 商店优先删")
         cache["curses"] = curses
         dirty = True
+    _deck = run.get("deck") or []
+    _cap = deck_cap(run.get("act_id", run.get("act")))
+    if len(_deck) > _cap and (full or cache.get("decksize") != len(_deck)):
+        lines.append(
+            f"DECK_FAT 牌组 {len(_deck)} 张 > 上限 {_cap}：引擎/甲牌/小刀全被稀释，"
+            "接下来所有卡牌奖励 skip，商店优先删牌"
+        )
+        cache["decksize"] = len(_deck)
+        dirty = True
 
     if screen == "COMBAT":
         turn = combat.get("turn_number", combat.get("round", combat.get("turn", "?")))
@@ -2489,7 +2498,38 @@ def _pick_cards_once(picks, thought="", meme=""):
     return cur
 
 
-def cmd_do(action, card=None, target=None, option=None, thought="", meme="", options=None, full=False):
+def deck_cap(act) -> int:
+    """A10 牌组张数上限：牌组越厚，引擎/甲牌/小刀的抽牌密度越低（13 局血债）。"""
+    try:
+        a = int(str(act).strip())
+    except (TypeError, ValueError):
+        a = 1
+    if a >= 3:
+        return 20
+    if a == 2:
+        return 18
+    return 16
+
+
+def deck_cap_guard(before: dict) -> str | None:
+    """抽到奖励牌之前先量牌组：超上限就返回一段拦停文案。"""
+    run = before.get("run") or {}
+    deck = run.get("deck") or []
+    act = run.get("act_id", run.get("act"))
+    cap = deck_cap(act)
+    if len(deck) < cap:
+        return None
+    names = [str(c.get("name") or c.get("id") or "?") for c in deck if isinstance(c, dict)]
+    return (
+        f"DECK_CAP 牌组已 {len(deck)} 张（上限 {cap}）：再拿牌会把引擎/甲牌/小刀稀释掉，"
+        f"前 13 局全是这么输的。\n"
+        f"  正确动作：python sts2.py do skip_reward_cards\n"
+        f"  真要拿（必须能说出踢掉谁）：python sts2.py do choose_reward_card --option N --force\n"
+        f"  当前牌组：{', '.join(names)}"
+    )
+
+
+def cmd_do(action, card=None, target=None, option=None, thought="", meme="", options=None, full=False, force=False):
     if options:
         if action != "select_deck_card":
             print(f"WARN --options 只用于 select_deck_card（收到 {action}），已忽略")
@@ -2501,6 +2541,11 @@ def cmd_do(action, card=None, target=None, option=None, thought="", meme="", opt
             _meme_hint()
             return
     before = get_state()
+    if action == "choose_reward_card" and not force:
+        msg = deck_cap_guard(before)
+        if msg:
+            print(msg)
+            sys.exit(3)
     if action in ("play_card", "end_turn") and before.get("screen") == "COMBAT":
         acts = before.get("available_actions") or []
         if acts and action not in acts:
@@ -3266,6 +3311,8 @@ def main():
     p.add_argument("--thought", default="")
     p.add_argument("--meme", default="")
     p.add_argument("--full", action="store_true", help="动作后打完整 state")
+    p.add_argument("--force", action="store_true",
+                   help="牌组已到上限时仍要拿这张奖励牌（必须能说出踢掉谁）")
     p = sub.add_parser("batch", help="一次调用打完整个回合（推荐）：actions 列表 + 可选 end_turn")
     p.add_argument("spec", nargs="?", help='JSON：{"actions":[{"action":"play_card","card_id":"BASH","target_index":0},...,{"action":"end_turn"}]}')
     p.add_argument("--file", help="从 UTF-8 文件读 spec（省掉 PowerShell 引号转义，中文更稳）")
@@ -3304,7 +3351,7 @@ def main():
         if getattr(args, "options", None):
             options = [int(x) for x in str(args.options).replace(" ", "").split(",") if x != ""]
         cmd_do(args.action, args.card, args.target, args.option, args.thought, args.meme, options,
-               getattr(args, "full", False))
+               getattr(args, "full", False), getattr(args, "force", False))
     elif args.cmd == "batch":
         spec = args.spec
         if args.file:
