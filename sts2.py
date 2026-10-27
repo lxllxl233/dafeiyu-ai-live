@@ -31,6 +31,7 @@ if TOOLS not in sys.path:
     sys.path.insert(0, TOOLS)
 
 import path as brps
+import perf
 
 API = os.environ.get("STS2_API", "http://127.0.0.1:8080")
 OVERLAY = os.environ.get("STS2_OVERLAY", "http://127.0.0.1:8730")
@@ -119,6 +120,7 @@ ENCOUNTER_DB = _load_db("encounters.json")
 
 # ---------------------------------------------------------------- plumbing
 def get_state() -> dict:
+    perf.count("state_read")
     r = requests.get(API + "/state", timeout=15)
     r.raise_for_status()
     d = r.json()
@@ -282,7 +284,16 @@ def act(action: str, **params) -> dict:
             before = get_state()
         except Exception:
             before = None
+    _t_post = time.time()
     r = requests.post(API + "/action", json=body, timeout=40)
+    _dt = (time.time() - _t_post) * 1000
+    perf.count("action_post")
+    perf.count("action_ms", max(1, int(_dt)))
+    if _dt >= 800:
+        # 慢动作留证：结算/清场慢到底慢在哪一步，别靠猜。
+        _av_log("slow_action", action=action, ms=int(_dt))
+        if os.environ.get("STS2_TRACE_SLOW"):
+            print(f"SLOW_ACTION {action} {int(_dt)}ms", file=sys.stderr)
     try:
         d = r.json()
     except Exception:
@@ -363,7 +374,11 @@ def overlay_say(tag: str, thought: str, meme: str, state: dict | None = None,
                 "screen": state.get("screen", ""),
             }
         )
-    _prewarm_tts(sentence, cid)
+    # 预热必须**后台跑**：实测 `logs/av_client.jsonl` 里 prewarm_end 要 2600–4600ms，
+    # 而 POST /comment 只要 3–23ms。同步预热等于把「字幕出现」推迟 3-4 秒──
+    # 观众看到的就是「结算/奖励界面卡好久才说话」。页面自己会拉 /tts（同 key 命中缓存则秒回），
+    # 所以这里只负责让缓存先开始生成，绝不挡发布。
+    threading.Thread(target=_prewarm_tts, args=(sentence, cid), daemon=True).start()
     t_post = time.time()
     try:
         r = requests.post(OVERLAY + "/comment", json=payload, timeout=1.5)
@@ -2339,18 +2354,57 @@ def _fingerprint(s: dict):
     )
 
 
+def _sleep(sec: float, st=None) -> None:
+    """统一 sleep：计入 perf（主动等待时间要能和真实执行时间分开看）。"""
+    time.sleep(sec)
+    perf.count("sleep_ms", int(sec * 1000))
+    if st is not None:
+        st.slept(sec)
+
+
+def _await_change(before: dict, timeout: float = 3.0, interval: float = 0.08) -> dict:
+    """动作发出后「等状态真的变了」，不要用固定 sleep 猜。
+
+    run92 结算实测：`cmd_rewards` 每步后面挂 0.25–0.4 秒固定 sleep，一次结算 4–6 步
+    → 光睡觉就 1–2 秒，而引擎真正刷新只要 30–80ms。固定等待在快的时候全是浪费，
+    在慢的时候又不够。改成指纹一变就走，超时才放弃。
+    """
+    with perf.stage("await_change") as _st:
+        end = time.time() + timeout
+        fp = _fingerprint(before)
+        while time.time() < end:
+            s = get_state()
+            _st.poll()
+            if _fingerprint(s) != fp:
+                return s
+            _sleep(interval, _st)
+        return get_state()
+
+
 def wait_legal(action: str, timeout: float = 5.0):
-    end = time.time() + timeout
-    last = None
-    while time.time() < end:
-        s = get_state()
-        if action in (s.get("available_actions") or []):
-            return s
-        if s.get("screen") != "COMBAT":
-            return s
-        last = s
-        time.sleep(0.15)
-    return last
+    with perf.stage("wait_legal") as _st:
+        end = time.time() + timeout
+        last = None
+        while time.time() < end:
+            s = get_state()
+            _st.poll()
+            if action in (s.get("available_actions") or []):
+                return s
+            if s.get("screen") != "COMBAT":
+                return s
+            last = s
+            _sleep(0.15, _st)
+        return last
+
+
+def _wait_dbg(s: dict) -> str:
+    """调试用一行：新回合等在哪里（只看关键字段，不打整份 state）。"""
+    cb = s.get("combat") or {}
+    pl = cb.get("player") or {}
+    return (f"screen={s.get('screen')} acts={','.join(sorted(s.get('available_actions') or []))}"
+            f" E={pl.get('energy')}/{pl.get('max_energy', '?')} blk={pl.get('block')}"
+            f" hand={len(cb.get('hand') or [])} hp={(s.get('run') or {}).get('current_hp')}"
+            f" turn={cb.get('turn')}")
 
 
 def wait_new_turn_hand(prev_hand_len: int, timeout: float = 4.0) -> dict:
@@ -2360,50 +2414,60 @@ def wait_new_turn_hand(prev_hand_len: int, timeout: float = 4.0) -> dict:
     v20 加两条硬条件：`play_card/end_turn` 已经出现在 available_actions，且整份
     状态指纹连续 2 次不变、至少过了 0.6 秒——抽牌动画/状态推送没落地就不返回。
     """
-    start = time.time()
-    end = start + timeout
-    last_fp = None
-    stable = 0
-    last = get_state()
-    while time.time() < end:
-        s = get_state()
-        if s.get("screen") != "COMBAT":
-            return s
-        acts = set(s.get("available_actions") or [])
-        fp = _fingerprint(s)
-        if fp == last_fp:
-            stable += 1
-        else:
-            stable = 0
-            last_fp = fp
-        last = s
-        if ({"play_card", "end_turn"} & acts) and stable >= 2 and time.time() - start >= 0.6:
-            return s
-        time.sleep(0.12)
-    return last
+    with perf.stage("wait_new_turn_hand") as _st:
+        start = time.time()
+        end = start + timeout
+        last_fp = None
+        stable = 0
+        last = get_state()
+        _dbg = bool(os.environ.get("STS2_WAIT_DEBUG"))
+        if _dbg:
+            print(f"[wait] t=0.00 {_wait_dbg(last)}", file=sys.stderr)
+        while time.time() < end:
+            s = get_state()
+            _st.poll()
+            if s.get("screen") != "COMBAT":
+                return s
+            acts = set(s.get("available_actions") or [])
+            fp = _fingerprint(s)
+            if fp == last_fp:
+                stable += 1
+            else:
+                stable = 0
+                last_fp = fp
+            last = s
+            if _dbg:
+                print(f"[wait] t={time.time()-start:.2f} stable={stable} {_wait_dbg(s)}",
+                      file=sys.stderr)
+            if ({"play_card", "end_turn"} & acts) and stable >= 2 and time.time() - start >= 0.6:
+                return s
+            _sleep(0.12, _st)
+        return last
 
 
 def wait_stable_player_state(timeout: float = 6.0):
-    end = time.time() + timeout
-    last_fp = None
-    last_state = None
-    stable = 0
-    while time.time() < end:
-        s = get_state()
-        fp = _fingerprint(s)
-        if fp == last_fp:
-            stable += 1
-        else:
-            stable = 0
-            last_fp = fp
-        last_state = s
-        acts = s.get("available_actions") or []
-        if s.get("screen") != "COMBAT":
-            if stable >= 1:
+    with perf.stage("wait_stable_player") as _st:
+        end = time.time() + timeout
+        last_fp = None
+        last_state = None
+        stable = 0
+        while time.time() < end:
+            s = get_state()
+            _st.poll()
+            fp = _fingerprint(s)
+            if fp == last_fp:
+                stable += 1
+            else:
+                stable = 0
+                last_fp = fp
+            last_state = s
+            acts = s.get("available_actions") or []
+            if s.get("screen") != "COMBAT":
+                if stable >= 1:
+                    return s
+            elif ("play_card" in acts or "end_turn" in acts) and stable >= 1:
                 return s
-        elif ("play_card" in acts or "end_turn" in acts) and stable >= 1:
-            return s
-        time.sleep(0.15)
+            _sleep(0.15, _st)
     print("WARNING state did not stabilize into a player turn; not trusting this snapshot.")
     return last_state or get_state()
 
@@ -2428,24 +2492,26 @@ def _sel_progress(s: dict):
 
 def wait_selection_settle(before: dict, timeout: float = 3.0) -> dict:
     """点完一张牌后等界面稳定：屏幕离开选牌界面，或已选张数/卡面发生变化。"""
-    base_fp = _fingerprint(before)
-    end = time.time() + timeout
-    last = before
-    stable = 0
-    while time.time() < end:
-        s = get_state()
-        fp = _fingerprint(s)
-        changed = fp != base_fp
-        if s.get("screen") != "CARD_SELECTION":
-            if stable >= 1:
-                return s
-        elif changed and fp == _fingerprint(last):
-            if stable >= 1:
-                return s
-        stable = stable + 1 if fp == _fingerprint(last) else 0
-        last = s
-        time.sleep(0.12)
-    return last
+    with perf.stage("wait_selection") as _st:
+        base_fp = _fingerprint(before)
+        end = time.time() + timeout
+        last = before
+        stable = 0
+        while time.time() < end:
+            s = get_state()
+            _st.poll()
+            fp = _fingerprint(s)
+            changed = fp != base_fp
+            if s.get("screen") != "CARD_SELECTION":
+                if stable >= 1:
+                    return s
+            elif changed and fp == _fingerprint(last):
+                if stable >= 1:
+                    return s
+            stable = stable + 1 if fp == _fingerprint(last) else 0
+            last = s
+            _sleep(0.12, _st)
+        return last
 
 
 def _resolve_by_descriptor(cards: list, desc: dict):
@@ -2727,12 +2793,11 @@ def cmd_do(action, card=None, target=None, option=None, thought="", meme="", opt
                   " 真想拿牌就先 choose_reward_card --option N --force。")
             try:
                 act("claim_reward", option_index=idx)
-                time.sleep(0.4)
-                st_c = get_state()
+                st_c = _await_change(before)
                 if st_c.get("screen") == "CARD_SELECTION" or \
                         "skip_reward_cards" in (st_c.get("available_actions") or []):
                     act("skip_reward_cards")
-                    time.sleep(0.4)
+                    _await_change(st_c)
                     print("REWARD_CARD_SKIPPED 卡牌奖励已跳过（牌组不变）")
                 else:
                     print("REWARD_CARD_NOT_OPENED claim 后没进选牌界面，跳过这步")
@@ -2868,8 +2933,7 @@ def cmd_do(action, card=None, target=None, option=None, thought="", meme="", opt
                     target = ti
                     healed = True
             elif action == "play_card" and "invalid_action" in last_err and attempt == 0:
-                time.sleep(0.6)
-                st = get_state()
+                st = _await_change(before)
                 if "play_card" in (st.get("available_actions") or []):
                     print("AUTO_RETRY play_card 失败 → 重读状态后重试一次")
                     healed = True
@@ -2881,8 +2945,7 @@ def cmd_do(action, card=None, target=None, option=None, thought="", meme="", opt
             print("HINT 0 费牌没打出去=白丢伤害/格挡；检查 --target / 费用 / 目标是否合法，换一张再试。")
         sys.exit(2)
     if action == "use_potion":
-        time.sleep(0.4)
-        st1 = get_state()
+        st1 = _await_change(before)
         p1 = potion_at(st1, _int(option, 0))
         still = bool(p1 and p1.get("potion_id"))
         queued = bool(p1 and p1.get("is_queued"))
@@ -2972,7 +3035,76 @@ def potion_rank(pid: str) -> int:
     return 2
 
 
-def cmd_rewards(take=None, potion="skip", thought="", meme="", full=False):
+def card_pick_score(c: dict) -> float:
+    """奖励卡的一张牌值多少分（自动结算用）。
+
+    run91 量过：奖励界面真正贵的不是引擎（/state 10-40ms），而是**多花一个模型回合**
+    （logs/run_*.jsonl 里 REWARD 前那一步实测 95–96 秒）。所以卡牌要能自动挑，
+    让「打死怪」和「收完奖励」落在同一个 tool call 里。
+    评分只做粗筛：伤害/费优先，AOE、0 费、力量引擎加分，诅咒/状态直接 -99。
+    """
+    cid = str(c.get("card_id") or c.get("id") or "")
+    if _bad_card_kind(c):
+        return -99.0
+    meta = CARD_DB.get(cid, {})
+    try:
+        cost = float(c.get("energy_cost", c.get("cost", meta.get("cost", 1))) or 1)
+    except Exception:
+        cost = 1.0
+    if cost < 0:
+        cost = 3.0                      # X 费按 3 算
+    dmg = blk = 0.0
+    for v in c.get("dynamic_values") or []:
+        if not isinstance(v, dict):
+            continue
+        nm = str(v.get("name") or "").lower()
+        try:
+            cv = float(v.get("current_value", v.get("value")))
+        except Exception:
+            continue
+        if nm.startswith("damage"):
+            dmg += cv
+        elif nm.startswith("block"):
+            blk += cv
+    desc = _strip_tags(str(c.get("resolved_rules_text") or c.get("rules_text")
+                           or meta.get("description") or ""))
+    if not dmg:
+        m = re.search(r"造成\s*(\d+)\s*点伤害", desc) or re.search(r"Deal\s+(\d+)\s+damage", desc)
+        if m:
+            dmg = float(m.group(1))
+    if not blk:
+        m = re.search(r"获得\s*(\d+)\s*点格挡", desc) or re.search(r"Gain\s+(\d+)\s+Block", desc)
+        if m:
+            blk = float(m.group(1))
+    score = dmg * 1.0 + blk * 0.5 - cost * 2.0
+    if dmg and ("所有" in desc or "ALL" in desc.upper()):
+        score += 3.0                    # AOE
+    if cost == 0:
+        score += 2.0
+    if "power" in str(meta.get("type") or "").lower():
+        score += 3.0
+    for kw, bonus in (("力量", 4.0), ("易伤", 1.5), ("虚弱", 1.5),
+                      ("抽", 1.0), ("消耗", -0.8), ("失去", -0.8)):
+        if kw in desc:
+            score += bonus
+    return round(score, 2)
+
+
+def pick_best_card(cards: list[dict]) -> tuple[int, float, str]:
+    """返回 (下标, 分数, 名字)；空列表返回 (-1, -99, "")。"""
+    best_i, best_s, best_n = -1, -99.0, ""
+    for i, c in enumerate(cards or []):
+        if not isinstance(c, dict):
+            continue
+        s = card_pick_score(c)
+        if s > best_s:
+            cid = str(c.get("card_id") or c.get("id") or "")
+            best_i, best_s, best_n = i, s, str(CARD_DB.get(cid, {}).get("name") or c.get("name") or cid)
+    return best_i, best_s, best_n
+
+
+def cmd_rewards(take=None, potion="skip", thought="", meme="", full=False,
+                pick="auto", quiet=False):
     """一次调用把整个 REWARD 界面收干净（run91 修：结算慢的根因是拆成 5 个回合）。
 
     根因：原来结算 = claim 金币 → claim 药水 → claim 卡 → choose/skip → collect，
@@ -2981,25 +3113,49 @@ def cmd_rewards(take=None, potion="skip", thought="", meme="", full=False):
     于是奖励界面要停 5-10 分钟才「说话」。引擎本身很快（/state 实测 10-40ms），
     慢的全是**回合往返**。所以整个流程放进一个进程里循环，一轮说完再走。
 
+    run92 再进一步：`pick="auto"` 用 `card_pick_score` 自动挑牌，`quiet=True` 给
+    `tools/act.py` 在「清场」那一步内部直接调用 → 打死怪+收奖励共用一个 tool call，
+    奖励界面不再吃掉一整个模型回合。
+
     用法：
-      python sts2.py rewards                  # 金币/药水照领，卡牌奖励跳过，然后 collect
+      python sts2.py rewards                  # 金币/药水照领，卡牌自动挑（分数不够就跳）
       python sts2.py rewards --take 1         # 卡牌奖励拿第 1 张（显式选择，绕 pace 但会报牌组数）
+      python sts2.py rewards --pick skip      # 一张都不拿
       python sts2.py rewards --potion swap    # 药水满格时丢最差的一瓶换新
     """
     steps = []
     handled: set[int] = set()
+    prof: list[tuple[str, float]] = []
+    t_all = time.time()
     after = get_state()
+    prof.append(("read_state", time.time() - t_all))
     if thought or meme:
+        t_say = time.time()
         overlay_say(tag_for(after.get("screen", "")), thought, meme, after, force=True)
+        prof.append(("say", time.time() - t_say))
+    t_loop = time.time()
     for _round in range(8):
         st = get_state()
         screen = st.get("screen")
         if screen == "CARD_SELECTION":
             # 已经站在选牌界面上（上一轮 claim 打开了卡牌奖励）
-            if take is not None:
+            cards = (st.get("selection") or {}).get("cards") or []
+            want = take
+            if want is None and pick == "auto" and cards:
+                bi, bs, bn = pick_best_card(cards)
+                cap = deck_cap(run_act(st.get("run") or {}))
+                n = deck_size(st)
+                # 牌组还没满预算 → 分数 >1 就拿；已满 → 只有强牌（≥6 分，通常是有伤害的 AOE/力量）才加
+                limit = 1.0 if n < cap else 6.0
+                if bi >= 0 and bs >= limit:
+                    want = bi
+                    steps.append(f"pick_auto[{bi}]{bn}({bs})")
+                else:
+                    steps.append(f"pick_skip(best={bn} {bs}<{limit})")
+            if want is not None:
                 try:
-                    act("choose_reward_card", option_index=_int(take, 0))
-                    steps.append(f"choose_reward_card[{take}]")
+                    act("choose_reward_card", option_index=_int(want, 0))
+                    steps.append(f"choose_reward_card[{want}]")
                 except Exception as e:
                     steps.append(f"choose_failed:{e}")
                     try:
@@ -3013,7 +3169,7 @@ def cmd_rewards(take=None, potion="skip", thought="", meme="", full=False):
                     steps.append("skip_reward_cards")
                 except Exception as e:
                     steps.append(f"skip_failed:{e}")
-            time.sleep(0.3)
+            st = _await_change(st)
             continue
         if screen != "REWARD":
             break
@@ -3031,7 +3187,7 @@ def cmd_rewards(take=None, potion="skip", thought="", meme="", full=False):
                 steps.append("collect")
             except Exception as e:
                 steps.append(f"collect_failed:{e}")
-            time.sleep(0.4)
+            st = _await_change(st)
             continue
         progressed = False
         for r in todo:
@@ -3066,7 +3222,6 @@ def cmd_rewards(take=None, potion="skip", thought="", meme="", full=False):
                         try:
                             act("discard_potion", option_index=_int(worst.get("index"), 0))
                             steps.append(f"discard[{worst.get('index')}]{worst.get('potion_id')}")
-                            time.sleep(0.2)
                             act("claim_reward", option_index=idx)
                             steps.append(f"claim_potion[{idx}]{pid}")
                             progressed = True
@@ -3092,33 +3247,62 @@ def cmd_rewards(take=None, potion="skip", thought="", meme="", full=False):
             except Exception as e:
                 steps.append(f"collect_failed:{e}")
                 break
-        time.sleep(0.25)
+        st = _await_change(st)
+    prof.append(("loop_acts", time.time() - t_loop))
+    t_wait = time.time()
     after = wait_stable()
-    print("REWARDS " + (" → ".join(steps) if steps else "(没有可收的奖励)"))
+    prof.append(("wait_stable", time.time() - t_wait))
     n = deck_size(after)
     run = after.get("run") or {}
     cap = deck_cap(run_act(run))
-    print(f"REWARDS_RESULT deck={n}（pace {cap}）screen={after.get('screen')}")
-    if n > cap:
-        print(f"REWARDS_DECK_FAT 牌组 {n} 超过这个阶段预算 {cap}：下次别再拿牌，先去商店删一张。")
-    anchor = combat_anchor(after)
-    if anchor:
-        print(anchor)
-    print(compact(after, full=full))
-    _meme_hint()
+    summary = {"steps": steps, "deck": n, "cap": cap, "screen": after.get("screen"),
+               "state": after, "fat": n > cap,
+               "ms": int((time.time() - t_all) * 1000),
+               "profile": [(k, int(v * 1000)) for k, v in prof]}
+    if not quiet:
+        print("REWARDS " + (" → ".join(steps) if steps else "(没有可收的奖励)"))
+        print(f"REWARDS_RESULT deck={n}（pace {cap}）screen={after.get('screen')}")
+        slow = sorted(summary["profile"], key=lambda kv: -kv[1])[:3]
+        print("REWARDS_MS total=%dms 最慢 %s" % (
+            summary["ms"], " ".join(f"{k}={v}ms" for k, v in slow)))
+        if n > cap:
+            print(f"REWARDS_DECK_FAT 牌组 {n} 超过这个阶段预算 {cap}：下次别再拿牌，先去商店删一张。")
+        anchor = combat_anchor(after)
+        if anchor:
+            print(anchor)
+        print(compact(after, full=full))
+        _meme_hint()
+    return summary
+
+
+_BATTLE_OVER = object()   # 战斗已经结束（清场/选牌/奖励）：不会再有「玩家回合」
 
 
 def _player_turn_state(timeout=8.0):
-    """等到「玩家回合」快照再返回；超时返回 None（绝不盲发动作）。"""
-    end = time.time() + timeout
-    while True:
-        s = get_state()
-        acts = s.get("available_actions") or []
-        if s.get("screen") == "COMBAT" and ("play_card" in acts or "end_turn" in acts):
-            return s
-        if time.time() >= end:
-            return None
-        time.sleep(0.15)
+    """等到「玩家回合」快照再返回；超时返回 None（绝不盲发动作）。
+
+    run92 修的结算卡顿根因：清场那一刀之后，批量里剩下的 `end` 步还会来等
+    「玩家回合」，屏幕已经是 REWARD/MAP —— 旧版只会对着非战斗屏幕空转满
+    8 秒超时，外层再重试 10 次（8s × 11 ≈ **90 秒**），实测清场这一步
+    `run_batch` 92.6 秒，而真正的结算只有 1.1 秒。屏幕一旦不是 COMBAT 就
+    立刻返回 `_BATTLE_OVER`，让调用方直接走「跳过 end」的分支。
+    """
+    with perf.stage("player_turn_state") as _st:
+        end = time.time() + timeout
+        t0 = time.time()
+        while True:
+            s = get_state()
+            _st.poll()
+            acts = s.get("available_actions") or []
+            if s.get("screen") == "COMBAT" and ("play_card" in acts or "end_turn" in acts):
+                return s
+            if (s.get("screen") or "") != "COMBAT":
+                return _BATTLE_OVER
+            if time.time() >= end:
+                return None
+            # 出牌动画一般 150–400ms 就完：前 0.6 秒密一点（50ms），之后放松到 150ms。
+            # 固定 150ms 起步会每步白等一个周期，一手 4–5 步就是 0.3–0.5 秒。
+            _sleep(0.05 if time.time() - t0 < 0.6 else 0.15, _st)
 
 
 def _delta_line(before: dict, after: dict) -> str:
@@ -3221,19 +3405,27 @@ def cmd_batch(spec: str):
     _mm = next((str(x.get("meme") or "") for x in items if x.get("meme")), "")
     if _th or _mm:
         overlay_say(tag_for(start.get("screen", "")), _th, _mm, start, force=True)
+    st = None
     for i, it in enumerate(items):
+        perf.count("batch_step")
         a = it.get("action")
         if not a:
             print(f"batch item {i} missing action")
             sys.exit(2)
         if i > 0:
             st = _player_turn_state()
-            if st is None:
+            if st is _BATTLE_OVER:
+                # 清场/进选牌：屏幕已经不是战斗，重试只会白等 8 秒 × 10。
+                st = None
+            elif st is None:
                 # 药水/连打后引擎偶尔会短暂没有玩家回合快照（动画/重绘）。
                 # 以前这里直接 exit 3，结果「一半动作执行了、一半没执行」，很坑。
-                for _ in range(10):
-                    time.sleep(0.25)
-                    st = _player_turn_state()
+                for _ in range(6):
+                    _sleep(0.12)
+                    st = _player_turn_state(timeout=2.0)
+                    if st is _BATTLE_OVER:
+                        st = None
+                        break
                     if st is not None:
                         break
             if st is None:
@@ -3246,7 +3438,7 @@ def cmd_batch(spec: str):
                 print(f"BATCH PARTIAL {i}/{len(items)}：前 {i} 步已执行，下一步请先 python tools/ctx.py 看真实状态再续，别重发整批")
                 print(compact(get_state()))
                 sys.exit(3)
-        before = get_state()
+        before = st if st is not None else get_state()
         if (
             i == 0
             and before.get("screen") == "COMBAT"
@@ -3325,7 +3517,7 @@ def cmd_batch(spec: str):
             for _ in range(3):
                 if _fingerprint(after) != _fingerprint(before):
                     break
-                time.sleep(0.12)
+                _sleep(0.12)
                 after = get_state()
         log(a, params, before, after, resp or {}, thought, meme)
         print(f"[{i}] {a} {params.get('card_index', params)} -> {resp.get('status')} | {_delta_line(before, after)}")
@@ -3343,31 +3535,33 @@ def wait_stable(need_player=False, timeout=25):
     batch --wait player 用它省掉「打完再看一眼」的第二次工具调用；
     连读两次都稳定才算稳，避免把过渡帧当回合开始。
     """
-    end = time.time() + timeout
-    last = None
-    while time.time() < end:
-        s = get_state()
-        acts = set(s.get("available_actions") or [])
-        screen = s.get("screen") or ""
-        busy = not acts or acts <= {"save_and_quit", "discard_potion"}
-        if busy:
-            last = None
-            time.sleep(0.2)
-            continue
-        if need_player and screen == "COMBAT" and not ({"play_card", "end_turn"} & acts):
-            last = None
-            time.sleep(0.2)
-            continue
-        key = (screen, tuple(sorted(acts)), ((s.get("combat") or {}).get("hand") or []) and
-               len(((s.get("combat") or {}).get("hand") or [])), (s.get("run") or {}).get("current_hp"))
-        if key == last:
-            print(compact(s))
-            return s
-        last = key
-        time.sleep(0.15)
-    print("WAIT_TIMEOUT")
-    print(compact(get_state(), brief=True))
-    return None
+    with perf.stage("wait_stable") as _st:
+        end = time.time() + timeout
+        last = None
+        while time.time() < end:
+            s = get_state()
+            _st.poll()
+            acts = set(s.get("available_actions") or [])
+            screen = s.get("screen") or ""
+            busy = not acts or acts <= {"save_and_quit", "discard_potion"}
+            if busy:
+                last = None
+                _sleep(0.2, _st)
+                continue
+            if need_player and screen == "COMBAT" and not ({"play_card", "end_turn"} & acts):
+                last = None
+                _sleep(0.2, _st)
+                continue
+            key = (screen, tuple(sorted(acts)), ((s.get("combat") or {}).get("hand") or []) and
+                   len(((s.get("combat") or {}).get("hand") or [])), (s.get("run") or {}).get("current_hp"))
+            if key == last:
+                print(compact(s))
+                return s
+            last = key
+            _sleep(0.15, _st)
+        print("WAIT_TIMEOUT")
+        print(compact(get_state(), brief=True))
+        return None
 
 
 def cmd_wait(screen=None, player_turn=False, timeout=30):
@@ -3375,7 +3569,7 @@ def cmd_wait(screen=None, player_turn=False, timeout=30):
     while time.time() < end:
         s = get_state()
         if screen and s.get("screen") != screen:
-            time.sleep(0.25)
+            _sleep(0.25)
             continue
         if player_turn:
             acts = s.get("available_actions") or []
@@ -3388,7 +3582,7 @@ def cmd_wait(screen=None, player_turn=False, timeout=30):
                     )
                     print(compact(s))
                     return
-                time.sleep(0.25)
+                _sleep(0.25)
                 continue
         print(compact(s))
         return
@@ -3720,7 +3914,10 @@ def main():
     p.add_argument("--thought", default="")
     p.add_argument("--meme", default="")
     p = sub.add_parser("rewards", help="一次收完整个奖励界面（金币/药水/卡牌/collect 全在一个进程里循环）")
-    p.add_argument("--take", type=int, default=None, help="卡牌奖励拿第 N 张（0 起）；不给就跳过")
+    p.add_argument("--take", type=int, default=None,
+                   help="卡牌奖励拿第 N 张（0 起）；不给就走 --pick")
+    p.add_argument("--pick", choices=["auto", "skip"], default="auto",
+                   help="auto=用 card_pick_score 自动挑（默认）；skip=一张都不拿")
     p.add_argument("--potion", choices=["skip", "swap"], default="skip",
                    help="药水满格时：skip 留空不领 / swap 丢最差一瓶换新")
     p.add_argument("--thought", default="")
@@ -3754,7 +3951,8 @@ def main():
         cmd_do(args.action, args.card, args.target, args.option, args.thought, args.meme, options,
                getattr(args, "full", False), getattr(args, "force", False))
     elif args.cmd == "rewards":
-        cmd_rewards(args.take, args.potion, args.thought, args.meme, getattr(args, "full", False))
+        cmd_rewards(args.take, args.potion, args.thought, args.meme, getattr(args, "full", False),
+                    pick=getattr(args, "pick", "auto"))
     elif args.cmd == "batch":
         spec = args.spec
         if args.file:

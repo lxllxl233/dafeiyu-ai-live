@@ -38,6 +38,7 @@ import io
 import json
 import os
 import sys
+import time
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
@@ -45,10 +46,14 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.join(ROOT, "tools"))
 
+_T_IMPORT = time.time()
 import sts2  # noqa: E402
 import ctx as ctxmod  # noqa: E402
 import decision_log  # noqa: E402
 import sim  # noqa: E402
+import perf  # noqa: E402
+
+IMPORT_MS = int((time.time() - _T_IMPORT) * 1000)
 
 
 # ---------------------------------------------------------------- 输入规整
@@ -578,8 +583,19 @@ def clear_overflow_error(steps: list, cleared) -> str | None:
 def _execute(st: dict, seq: list, lines: list, fx: dict,
              allow: dict | None = None) -> dict:
     lines = [{"t": x, "m": ""} if isinstance(x, str) else x for x in (lines or []) if x]
+    _t = [time.time()]
+    _ph: dict[str, int] = {}
+
+    def _mk(label: str) -> None:
+        now = time.time()
+        if now - _t[0] >= 0.2:
+            _ph[label] = int((now - _t[0]) * 1000)
+        _t[0] = now
+
     plans = _candidate_plans(st) if decision_log.enabled() else []
+    _mk("cand_plans")
     ok, err, sm, steps, ended = validate_plan(st, seq)
+    _mk("validate")
     if not ok:
         out = {"ok": False, "err": err, "ctx": ctxmod.build_with_mem(st, ctxmod._load_mem())}
         if err.startswith("抽牌边界"):
@@ -628,7 +644,9 @@ def _execute(st: dict, seq: list, lines: list, fx: dict,
         return {"ok": False, "err": "seq 里没有动作（要结束回合就写 {\"end\":1}）",
                 "ctx": ctxmod.build_with_mem(st, ctxmod._load_mem())}
     _attach_say(actions, lines)
+    _mk("guards")
     log, run_err = _run_batch(actions)
+    _mk("run_batch")
 
     out = {"ok": run_err is None, "fx": want}
     if guard_meta.get("warn"):
@@ -666,14 +684,22 @@ def _execute(st: dict, seq: list, lines: list, fx: dict,
         # run69 的病根之二：end_turn 之后立刻读状态，拿到的是「新回合还没抽牌」
         # 的过渡快照（手牌 1 张 / 空）。照它排下一手就是漏费漏甲。这里等抽完牌、
         # 状态指纹连续两次不变再交出去；读不到就明确标 stale，别让模型照着排。
+        # run92 性能实测：`cmd_batch` 收尾时**已经**等过一轮稳定快照，这里再等一次
+        # 就是「上层等完下层再等」，白花 0.7–1.2 秒。先读一眼，已经是抽完牌的
+        # 玩家回合就直接用，别重复等。
         try:
-            next_st = sts2.wait_new_turn_hand(
-                len(st.get("combat", {}).get("hand") or []), timeout=6.0)
+            cur = sts2.get_state()
+            if cur.get("screen") == "COMBAT" and not _pre_draw(cur):
+                next_st = cur
+            else:
+                next_st = sts2.wait_new_turn_hand(
+                    len(st.get("combat", {}).get("hand") or []), timeout=6.0)
         except Exception:  # noqa: BLE001
             next_st = sts2.get_state()
     else:
         next_st = sts2.get_state()
     out["ctx"] = _next_ctx(st=next_st)
+    _mk("ctx")
     if ended and next_st.get("screen") == "COMBAT" and _pre_draw(next_st):
         out["stale_ctx"] = ("新回合还没抽完牌（手牌空/只有 1 张）：这份 ctx 不能用来排牌序，"
                             "先跑 python tools/ctx.py 再出牌")
@@ -683,6 +709,9 @@ def _execute(st: dict, seq: list, lines: list, fx: dict,
                   outcome="executed" if run_err is None else "batch_error",
                   err=run_err, steps=steps, forecast=want, plans=plans,
                   batch=batch_info, after=next_st, retargets=sm.retargets)
+    _mk("log_decision")
+    if _ph:
+        out.setdefault("ms", {}).update(_ph)
 
     # 第一句已随动作播；其余排队（不阻塞本回合）
     for ln in lines[1:]:
@@ -801,11 +830,54 @@ def _auto(turns: int, stop_hp: int, lines: list) -> dict:
     return out
 
 
+def _auto_settle(out: dict) -> dict:
+    """清完场顺手把奖励界面收掉，别让「结算」再吃一个模型回合。
+
+    实测（`logs/run_*.jsonl`）奖励界面本身只要 1–2 秒，贵的是它前后各有一个模型回合：
+    REWARD 之前那一步实测 **95–96 秒**。做法：清场后同一个 tool call 里调
+    `sts2.cmd_rewards`（金币/药水/卡牌自动挑/collect），返回时已经站在 MAP/EVENT 上。
+    """
+    try:
+        st = sts2.get_state()
+    except Exception:
+        return out
+    screen = st.get("screen")
+    if screen not in ("REWARD", "CARD_SELECTION"):
+        return out
+    steps: list[str] = []
+    t_settle = time.time()
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            summ = sts2.cmd_rewards(pick="auto", quiet=True)
+        steps = list(summ.get("steps") or [])
+        after = summ.get("state") or sts2.get_state()
+    except Exception as exc:  # noqa: BLE001
+        out["settle_err"] = str(exc)[:200]
+        return out
+    out["settle"] = {
+        "steps": steps,
+        "deck": sts2.deck_size(after),
+        "screen": after.get("screen"),
+        "ms": summ.get("ms"),
+        "profile": summ.get("profile"),
+        "wrap_ms": int((time.time() - t_settle) * 1000),
+    }
+    out["ctx"] = _next_ctx(st=after)
+    out["settle"]["ctx_ms"] = int((time.time() - t_settle) * 1000) - (out["settle"].get("wrap_ms") or 0)
+    try:
+        decision_log.record_run_summary(after)
+    except Exception:  # noqa: BLE001
+        pass
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser(description="执行结构化计划（seq + say）")
     ap.add_argument("--file", help="计划 JSON 文件（不给则读 stdin）")
     ap.add_argument("--dry", action="store_true",
                     help="只验算不执行：返回 fx/护栏/建议线，用来在花掉这一手之前核对算术")
+    ap.add_argument("--no-settle", action="store_true",
+                    help="清场后不要自动收奖励（默认会自动收，省掉一个模型回合）")
     args = ap.parse_args()
     raw = open(args.file, encoding="utf-8-sig").read() if args.file else sys.stdin.read()
     try:
@@ -819,19 +891,27 @@ def main():
 
     seq, lines, fx, auto = normalize(spec)
     allow = {str(k): bool(v) for k, v in spec.items() if str(k).startswith("allow")}
-    st = sts2.get_state()
+    with perf.trace("act", import_ms=IMPORT_MS, plan=os.path.basename(args.file or "-"),
+                    dry=bool(args.dry), seq=len(seq), auto=bool(auto)) as tr:
+        out = _run(seq, lines, fx, auto, allow, args, tr)
+        tr.note(ok=bool(out.get("ok")), screen=(out.get("ctx") or {}).get("screen"),
+                settle_steps=len((out.get("settle") or {}).get("steps") or []))
+    print(json.dumps(out, ensure_ascii=False))
+
+
+def _run(seq, lines, fx, auto, allow, args, tr):
+    with perf.stage("state_first"):
+        st = sts2.get_state()
     if st.get("screen") != "COMBAT":
         err = f"当前不是战斗（{st.get('screen')}）"
         _log_decision(st, seq, lines, fx, outcome="not_combat", err=err)
-        print(json.dumps({"ok": False, "err": err,
-                          "ctx": ctxmod.build_with_mem(st, ctxmod._load_mem())}, ensure_ascii=False))
-        return
+        return {"ok": False, "err": err,
+                "ctx": ctxmod.build_with_mem(st, ctxmod._load_mem())}
     stale = _stale_end(st, seq)
     if stale:
         _log_decision(st, seq, lines, fx, outcome="stale_end", err=stale)
-        print(json.dumps({"ok": False, "err": stale,
-                          "ctx": ctxmod.build_with_mem(st, ctxmod._load_mem())}, ensure_ascii=False))
-        return
+        return {"ok": False, "err": stale,
+                "ctx": ctxmod.build_with_mem(st, ctxmod._load_mem())}
     if auto:
         out = _auto(sts2._int(auto.get("turns"), 1), sts2._int(auto.get("stop_hp"), 0), lines)
     elif not seq:
@@ -842,11 +922,21 @@ def main():
     elif args.dry:
         out = _dry(st, seq, fx, allow)
     else:
+        t_exec = time.time()
         out = _execute(st, seq, lines, fx, allow)
+        if time.time() - t_exec >= 3:
+            out.setdefault("ms", {})["execute"] = int((time.time() - t_exec) * 1000)
     # 只有真的执行成功才更新回合记忆；被拒/批处理报错不能把上一手的 mid 清掉。
     if out.get("ok"):
+        t_memo = time.time()
         _write_memo(_turn_of(sts2.get_state()), bool(out.get("mid")), out.get("ended_turn"))
-    print(json.dumps(out, ensure_ascii=False))
+        if time.time() - t_memo >= 2:
+            out.setdefault("ms", {})["memo"] = int((time.time() - t_memo) * 1000)
+        if not args.dry and not args.no_settle:
+            t_set = time.time()
+            out = _auto_settle(out)
+            out.setdefault("ms", {})["settle_wrap"] = int((time.time() - t_set) * 1000)
+    return out
 
 
 if __name__ == "__main__":

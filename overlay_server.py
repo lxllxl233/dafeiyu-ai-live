@@ -455,6 +455,13 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(400, b'{"ok":false}', "application/json")
                 return
             c = add_comment(payload)
+            # 发布成功后**由服务端预热配音**（后台线程，常驻进程活到最后）：
+            # 客户端 CLI 是短命进程，它自己预热要么阻塞发布 2-4 秒（观众看到「卡好久才说话」），
+            # 要么在退出时被掐死。放在这里两头都占：字幕秒出，缓存照样填好，
+            # 页面 / 主播窗随后取 /tts 命中缓存即可。
+            speech = str((c or {}).get("speech") or "").strip()
+            if speech:
+                threading.Thread(target=tts_wav, args=(speech,), daemon=True).start()
             self._send(
                 200,
                 json.dumps({"ok": True, "comment": c}, ensure_ascii=False).encode("utf-8"),

@@ -378,6 +378,85 @@ check("R16c 药水价值排序：力量药水该留、技能药水可丢",
       (sts2.potion_rank("STRENGTH_POTION"), sts2.potion_rank("SKILL_POTION")), (0, 2))
 
 
+# --- R16d run92：结算「卡很久」的真根因不是引擎，是**等玩家回合的盲等**。
+# 实测 `tools/act.py` 清场那一步 `run_batch` = 92.6 秒，而结算本身只有 1.1 秒。
+# 原因：清场后批量里剩下的 `end` 步还会调 `_player_turn_state()`，屏幕已经是
+# REWARD/MAP，旧版对着非战斗屏幕空转满 8 秒超时，外层再重试 10 次 → 8s×11 ≈ 90 秒。
+def _pts_with(screen, acts, timeout=0.3):
+    saved = sts2.get_state
+    sts2.get_state = lambda: {"screen": screen, "available_actions": list(acts)}
+    try:
+        import time as _t
+        t0 = _t.time()
+        got = sts2._player_turn_state(timeout=timeout)
+        return got, _t.time() - t0
+    finally:
+        sts2.get_state = saved
+
+
+_got, _dt = _pts_with("REWARD", ["collect_rewards_and_proceed"])
+check("R16d 清场后（REWARD）立刻返回 _BATTLE_OVER", _got is sts2._BATTLE_OVER, True)
+check("R16d 而且不能空转满超时（<0.5 秒返回）", _dt < 0.5, True)
+_got, _dt = _pts_with("MAP", ["choose_map_node"])
+check("R16d 地图界面也立刻返回 _BATTLE_OVER", _got is sts2._BATTLE_OVER, True)
+_got, _dt = _pts_with("CARD_SELECTION", ["select_deck_card"])
+check("R16d 选牌界面也立刻返回 _BATTLE_OVER", _got is sts2._BATTLE_OVER, True)
+_got, _ = _pts_with("COMBAT", ["play_card", "end_turn"])
+check("R16d 真玩家回合仍然正常返回快照", isinstance(_got, dict) and _got.get("screen"), "COMBAT")
+_got, _dt = _pts_with("COMBAT", ["save_and_quit"], timeout=0.2)
+check("R16d 战斗中无动作（敌人回合）→ 还是超时返回 None", _got, None)
+check("R16d 战斗中等待确实会等到超时（不误判成结束）", _dt >= 0.15, True)
+
+
+# --- R16e run92：领奖时「自动挑牌」的排序（`card_pick_score`）必须真的把废牌排后面。
+# 病根：以前 CARD_SELECTION 直接拿第 0 张，run92 f14 因此吃了 SPOILS_MAP（600 金币的
+# 死牌、不能打出）这种纯占位牌。排序坏了就等于把牌组继续喂肥。
+_cards = [{"id": "SPOILS_MAP", "name": "藏宝图", "cost": -1, "type": "Skill",
+           "raw": {"description": "不能被打出。"}},
+          {"id": "STRIKE_IRONCLAD", "name": "打击", "cost": 1, "type": "Attack",
+           "raw": {"description": "造成 6 点伤害。"}},
+          {"id": "HEMOKINESIS", "name": "御血术", "cost": 1, "type": "Attack",
+           "raw": {"description": "失去 2 点生命。造成 15 点伤害。"}},
+          {"id": "ASCENDERS_BANE", "name": "进阶之灾", "cost": -1, "type": "Curse",
+           "raw": {"description": "不能被打出。"}}]
+_i, _s, _n = sts2.pick_best_card(_cards)
+check("R16e 御血术（15 伤/1 费）排第一", _n, "御血术")
+check("R16e 诅咒/藏宝图这类死牌分数为负", sts2.card_pick_score(_cards[3]) < 0, True)
+check("R16e 自动挑牌不会挑到死牌", _n not in ("藏宝图", "进阶之灾"), True)
+_i2, _s2, _n2 = sts2.pick_best_card([_cards[0], _cards[3]])
+check("R16e 全是废牌时也返回一个合法下标（由阈值决定跳不跳）", _i2 in (0, 1), True)
+
+
+# --- R16f run92：`overlay_say` 不能阻塞在 TTS 预热上（3–4 秒/句）。
+# 实测 av_client 日志：prewarm_end 2600–4640ms，published 只要 3–23ms。
+def _say_latency():
+    import time as _t
+    saved = (sts2._prewarm_tts, sts2.requests.post, sts2._av_log)
+
+    class _R:
+        status_code = 200
+
+        def json(self):
+            return {"id": 1}
+
+    def _slow_prewarm(text, cid):
+        _t.sleep(1.2)
+
+    sts2._prewarm_tts = _slow_prewarm
+    sts2.requests.post = lambda *a, **k: _R()
+    sts2._av_log = lambda *a, **k: None
+    try:
+        t0 = _t.time()
+        sts2.overlay_say("战斗", "测一句预热不挡发布", "", None, force=True)
+        return _t.time() - t0
+    finally:
+        sts2._prewarm_tts, sts2.requests.post, sts2._av_log = saved
+
+
+_dt = _say_latency()
+check("R16f 预热 1.2 秒时 overlay_say 仍然立刻返回（<0.5 秒）", _dt < 0.5, True)
+
+
 # ---------------------------------------------------------------- R17 过渡快照别误报
 # run85 f11 t2：手牌打空、能量还剩 1，被判「过渡快照」拒绝 end（账本 2 条 stale_end）。
 def _pre_state(energy, hand_n=0):

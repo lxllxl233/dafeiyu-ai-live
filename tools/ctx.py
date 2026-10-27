@@ -617,8 +617,12 @@ def _combat(state: dict, mem: dict) -> dict:
     if can:
         out["can"] = can
 
-    plans = sim.search(state, max_cards=8, max_plans=5, time_limit=0.8,
-                       max_nodes=120_000)
+    # 搜索预算可调：这是「建议线」，不是决策本身。0.8 秒买来的排序提升很有限，
+    # 但每回合都要付一次（实测 ctx 包 0.76 秒里约 0.7 秒都在这里）。默认 0.3 秒，
+    # 想看更深的线就 STS2_CTX_SIM_S=0.8。
+    _tl = float(os.environ.get("STS2_CTX_SIM_S", "0.3"))
+    plans = sim.search(state, max_cards=8, max_plans=5, time_limit=_tl,
+                       max_nodes=60_000)
     plan_out = []
     for pl in plans:
         p_out = {"k": pl["k"], "s": pl["seq"], "d": pl["dmg"], "take": pl["taken"],
