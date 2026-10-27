@@ -1,5 +1,6 @@
-# 录像与备份：体积大，不入库
-recordings/
+# 录像与备份：体积大，不入库（分 P 索引表除外，方便看每局录像）
+recordings/*
+!recordings/INDEX.md
 backups/
 
 # 运行期产物
