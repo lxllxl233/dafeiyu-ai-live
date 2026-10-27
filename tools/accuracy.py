@@ -35,6 +35,16 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LOG = os.path.join(ROOT, "logs", "decisions.jsonl")
 
 
+def _head() -> str:
+    """当前工作区的 git 短 sha（和账本 rev 对得上，才知道这局是哪套代码打的）。"""
+    try:
+        sys.path.insert(0, os.path.join(ROOT, "tools"))
+        import decision_log  # noqa: PLC0415
+        return decision_log.code_rev() or "(读取失败)"
+    except Exception:  # noqa: BLE001
+        return "(读取失败)"
+
+
 def load(run_id: str | None) -> list[dict]:
     recs = []
     if not os.path.exists(LOG):
@@ -74,6 +84,12 @@ def pct(a: int, b: int) -> str:
 def report(recs: list[dict], run_id: str | None) -> None:
     ex = [r for r in recs if r.get("outcome") == "executed"]
     print(f"== 口径 v1 ==  对局 {run_id or '(全部)'} · 记录 {len(recs)} 条 · executed {len(ex)} 条")
+    revs = sorted({str(r.get("rev") or "") for r in recs if r.get("rev")})
+    if revs:
+        print(f"   代码版本（账本 rev）: {', '.join(revs)}")
+    else:
+        print("   代码版本（账本 rev）: 无此字段（run85 及更早的账本没有版本戳，跨版本统计无效）")
+    print(f"   当前工作区 HEAD: {_head()}")
 
     # ---------------- 入伤 ----------------
     inc = []

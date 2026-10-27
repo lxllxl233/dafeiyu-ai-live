@@ -567,6 +567,11 @@ def _combat(state: dict, mem: dict) -> dict:
         # 原费，这里再明说「只有下一张攻击牌是 0 费」，避免按「全都免费」算能量。
         out["free_atk"] = {"n": st.free_atk, "t": "A",
                            "why": "免费攻击：只有下一张攻击牌 0 费，不是整手都免"}
+    unm = getattr(st, "unmodeled", None)
+    if unm:
+        # 这些机制 sim 没建模：入伤/斩杀是**估的**，别拿个位数去赌（run85 的教训）。
+        out["unmodeled"] = unm
+        out["unmodeled_why"] = "下列机制未建模，本回合的入伤/斩杀预测不精确"
     piles = _piles(state)
     if piles:
         out["piles"] = piles

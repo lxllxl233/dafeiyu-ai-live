@@ -15,7 +15,8 @@
 | 项 | 结论 |
 |---|---|
 | P0/P1 是否全部修完 | **P1–P8 已改实现 + 已加回归**；P9 只加了策略提示（它不是 bug） |
-| 是否靠放宽护栏过关 | **没有**。没有新增任何 `allow_*`、没有下调阈值、没有删断言（唯一改过的旧测试是 `test_decision_log.py` 的 fixture，见 §3.4） |
+| 未建模机制是否明确标记 | **已标记**：ctx 输出 `unmodeled`，forecast 输出 `approx`，账本留痕（§1.10） |
+| 是否靠放宽护栏过关 | **没有**。没有新增任何 `allow_*`、没有下调阈值、没有删断言（唯一改过的旧测试是 `test_decision_log.py` 的 fixture，见 §3.2） |
 | 全量测试 | **27/27 测试文件 ALL PASS**，`preflight` PASS（新增 `test_free_attack.py` 已进门禁） |
 | 历史重放 | 全库 135 条可重放：**114 → 115 完全吻合**，0 回退；run85 子集 12 条：**9 → 10** |
 | 能不能开 run86 | **可以开，但只能当"测量局"**：5 条验收口径全部尚未达标、本文也不声称达标，理由见 §5 |
@@ -70,7 +71,9 @@
     返回值里单独给 `"tick"`。
   - `tools/ctx.py:457`：`net = 入伤 + 状态税 - 格挡 + 状态税掉血 + tick`，并输出 `tick` 字段。
   - `tools/act.py:183-184`：`forecast` 里带 `tick`。
-- **回归**：R11（3）、R12（4）。
+- **回归**：R11（3）、R12（4）；另加 **R19（2）** 钉死「红面具不能二次乘虚弱」：
+  `total_damage` 存在时按它算（9），只有回落到 `damage×hits` 才补一次 ×0.75（也是 9）——
+  两条路径必须给出同一个数，否则就是重复打折。
 
 ### P4 敌人机制缺三项（假斩杀的直接来源）
 
@@ -111,6 +114,22 @@
   `deck_lock: "营养汤：牌组里的『打击』带『永恒』，不能被移除（删牌要挑别的牌）"`。
 - **没做**：没有替模型决定「拿不拿营养汤」，也没有阻断弃牌/删牌动作（那不是执行层的权力）。
 
+### 1.10 未建模机制必须显式标记（不是 run85 的编号项，是本次验收要求）
+
+- **要求**：`斩杀预测正确考虑已建模的减伤、复活等机制；尚未支持的机制必须明确标记，不能假装精确。`
+- **改动**
+  - `tools/sim.py UNMODELED_POWERS / UNMODELED_RELICS` + `unmodeled_parts()`：收集「这一局存在、
+    但 sim 没建模」的机制，`from_state` 存进 `s.unmodeled`。
+    当前表：`ESCAPE_ARTIST_POWER`（4 回合后离场）、`PLATING_POWER`（敌人回合末给自己覆甲）、
+    `GORGET`（战斗开始 +4 覆甲）、`CANDELABRA` / `PAELS_FLESH`（额外费用）、
+    `MUMMIFIED_HAND`（能力牌后随机手牌免费）、`ORNAMENTAL_FAN`（第 3 张攻击 +4 甲）。
+  - `tools/ctx.py`：有未建模项时输出 `unmodeled: [{id, why}]` + `unmodeled_why`。
+  - `tools/act.py forecast()`：有未建模项时输出 `approx: [id]`，**账本里能查到这一手是估的**。
+- **边界（重要）**：`approx` 只表示「这一手的数字不精确」，**不改变任何校验、不降低门槛**；
+  fx 校验、护栏、斩杀判断照旧。它是给模型的告示，不是给程序的后门。
+- **回归**：R20（7）—— 覆甲敌人 + 护喉甲 → `unmodeled` 两项都在、`ctx` 也标、`forecast.approx` 对得上；
+  干净局面**不乱标**（防「天天报警 → 被忽略」）。
+
 ---
 
 ## 2. 测试与门禁（逐项结果）
@@ -120,9 +139,9 @@
 | 文件 | 用例 | 断言 | 内容 |
 |---|---|---|---|
 | `tools/test_free_attack.py` | 5 组 | 14 | 部分免费 / 打空能量 / 顺序敏感 / 只免一次 / 2 层免费 |
-| `tools/test_regressions.py` | R7–R18 | 43 | 见 §1 每项的「回归」 |
+| `tools/test_regressions.py` | R7–R20 | 52 | 见 §1 每项的「回归」 |
 
-`test_regressions.py` 现在共 **64 条断言**（原 21 条 + 新 43 条），全部来自 run85 的真实局面（文件头注明了
+`test_regressions.py` 现在共 **73 条断言**（原 21 条 + 新 52 条），全部来自 run85 的真实局面（文件头注明了
 run/楼层/回合），不是手搓的理想场景。
 
 ### 2.2 全量执行结果
@@ -154,6 +173,10 @@ test_ctx_act / test_regressions / test_free_attack`）全部 `ALL OK`。
   （清场会触发燃烧之血回血，血量不可比）；实际入伤 = `before.me.hp − after.me.hp`；
 - 斩杀 = 按**下标**计：预测/确认（怪物从 after 列表消失）/假（仍在且 hp>0）；清场单列；
 - 命中率一律先给分母。
+
+**版本可追溯（run86 前补的）**：`tools/decision_log.py` 现在给每条决策记录写 `rev`（git 短 sha），
+`accuracy.py` 头部同时打印「账本里的 rev」和「当前工作区 HEAD」。run85 及更早的账本没有这个字段，
+脚本会直接说「无此字段，跨版本统计无效」—— 这正是 run85 复盘时「两套代码混在一局里」没法切开的坑。
 
 **用这个口径重算 run85（旧代码打的，作为基线）**：
 
@@ -213,6 +236,8 @@ run86 第一次遇到 `FREE_ATTACK` 时要顺手记下：手牌各区费用 + �
 
 **后果**：如果 run86 拿到这些遗物，`入伤 ±1 ≥ 80%` 这条**可能不达标，而且不一定是模型的错**。
 报告里必须按遗物分列，不能拿一个总数糊过去。
+**缓解（不是修好）**：这些遗物现在会被 `unmodeled`/`approx` 标出来（§1.10），所以 run86 的账本能
+直接筛出「这一手本来就不准」，不用事后猜。
 
 ### 4.3 敌人机制只补了三个
 
@@ -273,13 +298,14 @@ python -X utf8 tools/accuracy.py         # 先看一眼上一局基线，别拿�
 
 | 文件 | 改动 |
 |---|---|
-| `tools/sim.py` | 免费攻击 / 永冻冰晶 / 狱火 tick / 振翅 / 幻象 / 尖叫自晕；`c_base`、`eternal` |
+| `tools/sim.py` | 免费攻击 / 永冻冰晶 / 狱火 tick / 振翅 / 幻象 / 尖叫自晕；`c_base`、`eternal`；未建模机制清单 |
 | `sts2.py` | 状态牌判定、`_attack_profile`/`_hand_value_rank` 过滤、`pending_card_reward`、药水位检查 |
-| `tools/ctx.py` | `free_atk`、`tick` 进 `calc`、`deck_lock` |
-| `tools/act.py` | `forecast` 的 `revive`/`tick`、清场判定排除复活、`_pre_draw` 满能量判据 |
+| `tools/ctx.py` | `free_atk`、`tick` 进 `calc`、`deck_lock`、`unmodeled` 标注 |
+| `tools/act.py` | `forecast` 的 `revive`/`tick`/`approx`、清场判定排除复活、`_pre_draw` 满能量判据 |
+| `tools/decision_log.py` | **新增** `code_rev()`，每条记录带 `rev`（代码版本可追溯） |
 | `tools/preflight.py` | 测试清单加入 `test_free_attack.py` |
 | `tools/logstats.py` | `replay --run <run_id>` |
-| `tools/accuracy.py` | **新增**：入伤/血量/斩杀的唯一定义口径 |
+| `tools/accuracy.py` | **新增**：入伤/血量/斩杀的唯一定义口径 + 版本行 |
 | `tools/test_free_attack.py` | **新增**：14 条断言 |
-| `tools/test_regressions.py` | 新增 R7–R18（43 条断言） |
-| `tools/test_decision_log.py` | 只修 fixture（§3.2），未动护栏 |
+| `tools/test_regressions.py` | 新增 R7–R20（52 条断言） |
+| `tools/test_decision_log.py` | 只修 fixture（§3.2）+ 2 条 `rev` 断言，未动护栏 |

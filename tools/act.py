@@ -176,6 +176,9 @@ def forecast(st: dict, sm: sim.Sim, steps: list, ended: bool) -> dict:
     kills = [e["i"] for e in sm.enemies if e["dead"] and not e.get("revive")]
     stun = [e["i"] for e in sm.enemies if e["stunned"] and not e["dead"]]
     fx = {"e": sm.energy, "hp": hp, "draw": sm.draws, "exh": sm.exhausts}
+    # 未建模机制：这一手的入伤/斩杀是**估算**，账本里必须留痕（run85 归因全靠事后翻账）。
+    if getattr(sm, "unmodeled", None):
+        fx["approx"] = [x.get("id") for x in sm.unmodeled if isinstance(x, dict)]
     # 幻象：这一手打死但下回合会满血复活 —— 不是斩杀，别让计划按「清场」收尾
     rev = [e["i"] for e in sm.enemies if e.get("revive")]
     if rev:

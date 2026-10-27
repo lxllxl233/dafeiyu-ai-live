@@ -37,6 +37,47 @@ def enabled() -> bool:
     return os.environ.get("STS2_DECISION_LOG", "1") != "0"
 
 
+_REV: str | None = None
+
+
+def code_rev() -> str:
+    """当前代码版本（git 短 sha）：账本每条都记，避免后来的修复混进同一局的统计。
+
+    run85 复盘时就踩过：同一局的记录是两套代码打的，事后没法按版本切开。
+    读 `.git/HEAD`（含 detached / packed-refs），不跑子进程、不改仓库。
+    """
+    global _REV
+    if _REV is not None:
+        return _REV
+    _REV = ""
+    try:
+        git = os.path.join(ROOT, ".git")
+        head = os.path.join(git, "HEAD")
+        if os.path.isfile(head):
+            with open(head, encoding="utf-8") as fh:
+                txt = fh.read().strip()
+            if txt.startswith("ref:"):
+                ref = txt[4:].strip()
+                cand = os.path.join(git, *ref.split("/"))
+                if os.path.isfile(cand):
+                    with open(cand, encoding="utf-8") as fh:
+                        txt = fh.read().strip()
+                else:
+                    packed = os.path.join(git, "packed-refs")
+                    txt = ""
+                    if os.path.isfile(packed):
+                        with open(packed, encoding="utf-8") as fh:
+                            for line in fh:
+                                parts = line.split()
+                                if len(parts) == 2 and parts[1] == ref:
+                                    txt = parts[0]
+                                    break
+            _REV = txt[:12]
+    except Exception:  # noqa: BLE001
+        _REV = ""
+    return _REV
+
+
 def log_dir() -> str:
     p = os.environ.get("STS2_DECISION_LOG_DIR") or DEFAULT_LOG_DIR
     return os.path.abspath(p)
@@ -313,6 +354,7 @@ def record_decision(
     try:
         rec = {
             "v": 1,
+            "rev": code_rev(),
             "ts": datetime.now().isoformat(timespec="seconds"),
             "mode": mode,
             "outcome": outcome,

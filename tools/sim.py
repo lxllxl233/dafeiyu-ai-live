@@ -346,6 +346,54 @@ def _turn_start_hp_loss(powers) -> int:
     return total
 
 
+# ---------------------------------------------------------------- 建模边界（必须说出来）
+# 「没建模」不等于「不会发生」：下面这些会改预测，但 sim 目前不模拟。
+# 遇到就在 ctx / forecast 里标出来（`unmodeled` / `approx`），让模型知道这一手是**估的**，
+# 而不是拿一个精确到个位的数字去赌斩杀。
+UNMODELED_POWERS = {
+    "ESCAPE_ARTIST_POWER": "N 回合后离场：还要不要挡会变，本模型只按当前意图算",
+    "PLATING_POWER": "敌人回合末给自己覆甲：斩杀线会变，本模型不算它给自己上甲",
+}
+UNMODELED_RELICS = {
+    "GORGET": "战斗开始 +4 覆甲：本模型没算",
+    "CANDELABRA": "第 2 回合开始 +2 费：本模型按 3 费算",
+    "PAELS_FLESH": "第 3 回合起 +1 费：本模型按 3 费算",
+    "MUMMIFIED_HAND": "打能力牌后随机一张手牌本回合免费：本模型不算",
+    "ORNAMENTAL_FAN": "同回合第 3 张攻击 +4 甲：本模型没算",
+}
+
+
+def unmodeled_parts(enemies, powers, relic_ids) -> list[dict]:
+    """收集「这一局里存在、但 sim 没建模」的机制，供 ctx/forecast 如实标注。"""
+    out: list[dict] = []
+    seen: set[str] = set()
+
+    def _add(pid: str, why: str):
+        if pid and pid not in seen:
+            seen.add(pid)
+            out.append({"id": pid, "why": why})
+
+    for e in enemies or []:
+        if not isinstance(e, dict):
+            continue
+        for p in e.get("powers") or []:
+            if not isinstance(p, dict):
+                continue
+            pid = str(p.get("power_id") or p.get("id") or "").upper()
+            if pid in UNMODELED_POWERS:
+                _add(pid, UNMODELED_POWERS[pid])
+    for p in powers or []:
+        if not isinstance(p, dict):
+            continue
+        pid = str(p.get("power_id") or p.get("id") or "").upper()
+        if pid in UNMODELED_POWERS:
+            _add(pid, UNMODELED_POWERS[pid])
+    for rid in sorted({str(x).upper() for x in (relic_ids or ())}):
+        if rid in UNMODELED_RELICS:
+            _add(rid, UNMODELED_RELICS[rid])
+    return out
+
+
 def _stun_threshold(e: dict) -> int:
     """「横冲直撞 N」/「尖叫」：血量第一次跌破阈值时这回合的攻击直接取消。
 
@@ -475,6 +523,8 @@ class Sim:
         self._pf_used = False
         # 狱火：回合开始时失去 N 点生命（算进回合末血量）
         self.tick = 0
+        # 建模边界：这一局存在但 sim 没建模的机制（见 UNMODELED_*）
+        self.unmodeled: list[dict] = []
         self.next_attack_twice = False
         self.barricade = False
         self.metallicize = 0
@@ -543,6 +593,8 @@ class Sim:
                 for r in (run.get("relics") or []) if isinstance(r, dict)}
         if "PERMAFROST" in rids:
             s.permafrost = 7
+        s.unmodeled = unmodeled_parts((state.get("combat") or {}).get("enemies"),
+                                      p.get("powers"), rids)
         if s.free_atk:
             # buff 生效时引擎把所有攻击牌的 energy_cost 都报 0：还原成原费，
             # 只留 free_atk 这一个「还能免几张」的口径，避免按「全免费」算能量。

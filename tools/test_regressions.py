@@ -316,5 +316,64 @@ check("R18 满格时必须拦（否则静默 pending）",
       sts2.free_potion_slots(potion_rw(full_pots)) < len(sts2.pending_potion_rewards(potion_rw(full_pots))),
       True)
 
+# ---------------------------------------------------------------- R19 红面具的虚弱已在引擎意图里
+# run85 报告把 42 点入伤高估摊给「永冻冰晶 + 红面具」两个遗物，核对后只有永冻冰晶是缺口：
+# RED_MASK 给的 1 层虚弱已经算进引擎的 total_damage，sim 再乘一次 0.75 会变成「低估」。
+# 这条用例钉死：total_damage 存在时按它算，只有回落到 damage×hits 时才补虚弱。
+def _weak_enemy(with_total: bool):
+    e = {"index": 0, "enemy_id": "DUMMY", "name": "木桩", "current_hp": 60, "hp": 60,
+         "max_hp": 60, "is_alive": True, "block": 0,
+         "powers": [{"power_id": "WEAK_POWER", "name": "虚弱", "amount": 1}],
+         "intents": [{"type": "Attack", "damage": 12, "hits": 1}]}
+    if with_total:
+        e["intents"][0]["total_damage"] = 9  # 引擎已把 12 打成 9
+    return e
+
+
+st = state([card("DEFEND_IRONCLAD", 1, blk=5)], energy=3, enemies=[_weak_enemy(True)],
+           relics=["RED_MASK"])
+sm = sim.Sim.from_state(st)
+check("R19 total_damage 已是最终值，不再乘虚弱", sm.incoming(), 9)
+st = state([card("DEFEND_IRONCLAD", 1, blk=5)], energy=3, enemies=[_weak_enemy(False)],
+           relics=["RED_MASK"])
+check("R19 回落路径才补一次虚弱", sim.Sim.from_state(st).incoming(), 9)
+
+# ---------------------------------------------------------------- R20 没建模的机制要明说
+# 斩杀/入伤不能假装精确：ESCAPE_ARTIST / PLATING / 没建模的遗物必须出现在 ctx 和 forecast 里。
+plat = {"index": 0, "enemy_id": "THIEF", "name": "窃贼", "current_hp": 30, "hp": 30,
+        "max_hp": 30, "is_alive": True, "block": 0,
+        "powers": [{"power_id": "PLATING_POWER", "name": "覆甲", "amount": 4}],
+        "intents": [{"type": "Attack", "damage": 6, "hits": 1, "total_damage": 6}]}
+st = state([card("STRIKE_IRONCLAD", 1, dyn={"Damage": 6})], energy=3, enemies=[plat],
+           relics=["GORGET"])
+sm = sim.Sim.from_state(st)
+ids = [x["id"] for x in sm.unmodeled]
+check("R20 标出敌人覆甲", "PLATING_POWER" in ids, True)
+check("R20 标出没建模的遗物", "GORGET" in ids, True)
+fc = act.forecast(st, sm, [], ended=False)
+check("R20 forecast 带 approx", fc.get("approx"), ids)
+st_plain = state([card("STRIKE_IRONCLAD", 1, dyn={"Damage": 6})], energy=3)
+sm_plain = sim.Sim.from_state(st_plain)
+check("R20 全部建模时不乱标", sm_plain.unmodeled, [])
+check("R20 干净局面没有 approx", act.forecast(st_plain, sm_plain, [], ended=False).get("approx"), None)
+
+cst = {"screen": "COMBAT", "available_actions": ["play_card", "end_turn"],
+       "run": {"current_hp": 60, "max_hp": 80, "max_energy": 3, "floor": 9, "act_id": 1,
+               "ascension": 10, "gold": 100, "potions": [], "deck": [],
+               "relics": [{"relic_id": "GORGET", "name": "护喉甲"}]},
+       "combat": {"turn": 3,
+                  "player": {"current_hp": 60, "max_hp": 80, "energy": 3, "block": 0,
+                             "powers": []},
+                  "hand": [card("STRIKE_IRONCLAD", 1, dyn={"Damage": 6})],
+                  "enemies": [plat]},
+       "agent_view": {"combat": {"draw_cards": [{"card_id": "STRIKE_IRONCLAD"}],
+                                 "discard_cards": []}}}
+import ctx  # noqa: E402
+
+cout = ctx.build(cst)
+check("R20 ctx 也标 unmodeled", [x["id"] for x in cout.get("unmodeled") or []],
+      ["PLATING_POWER", "GORGET"])
+check("R20 ctx 说明为什么不精确", bool(cout.get("unmodeled_why")), True)
+
 print()
 print("ALL OK" if ok else "SOME CHECKS FAILED")

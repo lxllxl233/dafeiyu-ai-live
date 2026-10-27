@@ -117,6 +117,9 @@ def main():
             check("act", r.get("act"), 1)
             check("floor", r.get("floor"), 7)
             check("outcome", r.get("outcome"), "executed")
+            # 每条记录带代码版本：run85 那局是两套代码混着打的，事后没法按版本切开。
+            check("记录带代码版本", bool(r.get("rev")), True)
+            check("代码版本和当前工作区一致", r.get("rev"), decision_log.code_rev())
             check("chosen seq", r.get("input", {}).get("seq"), seq)
             check("steps 有牌", (r.get("steps") or [{}])[0].get("id"), "STRIKE_IRONCLAD")
             check("未写 end 标 mid", r.get("mid"), True)
