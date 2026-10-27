@@ -65,6 +65,7 @@ _TOOLS = os.path.join(ROOT, "tools")
 if _TOOLS not in sys.path:
     sys.path.insert(0, _TOOLS)
 from caster_state import CasterState, THINKING_TEXT  # noqa: E402  (主播三态状态机)
+import instance_lock  # noqa: E402  (单实例锁：屏幕上不许出现两个弹窗)
 ASSETS = os.path.join(ROOT, "overlay", "assets")
 STATE_FILE = os.path.join(ROOT, "logs", "streamer_window.json")
 TTS_CACHE = os.path.join(ROOT, "logs", "tts_cache")
@@ -769,8 +770,11 @@ def render(text: str, status: dict, scale: float = 1.0, talk: float = 0.0,
                       ln, font=L["f_text"], fill=C_TEXT)
 
     if chip:
-        # 穿透模式下的唯一可点区：☰ 菜单钮（左键=拖动，右键=菜单，双击=切回不穿透）
+        # 穿透模式下的唯一可点区：☰ 菜单钮（左键=拖动，右键=菜单；这块区域会自动摘掉穿透）
         cl, ct, cr, cb = chip_rect(L["W"], L["H"], s)
+        if os.environ.get("STS2_STREAMER_DEBUG"):
+            print(f"chip draw=({cl},{ct},{cr},{cb}) canvas={L['W']}x{L['H']} s={s:.3f}",
+                  flush=True)
         draw.rounded_rectangle((cl, ct, cr, cb), radius=max(3, int(5 * s)),
                                fill=(216, 168, 74, 52), outline=(216, 168, 74, 170),
                                width=max(1, int(1.2 * s)))
@@ -1401,6 +1405,9 @@ class StreamerWindow:
             talk = min(1.0, max(0.0, (now - self.talk_start_at) / span))
         text = self.display_text(mode)
         layout_text = self.text if mode == "thinking" and self.text else None
+        if os.environ.get("STS2_STREAMER_DEBUG"):
+            print(f"frame mode={mode} ct={self.click_through} layout={None if not layout_text else len(layout_text)}",
+                  flush=True)
         img = render(text, self.status, self.scale, talk, chip=self.click_through,
                      layout_text=layout_text)
         # 入场：滑 6px + 渐显（对应 CSS slidein .32s）
@@ -1669,6 +1676,8 @@ def main() -> int:
                     help="配音：mambo=本地 MamboTTS 曼波音色（默认）；animalese=旧动物语；off=静音")
     ap.add_argument("--vol", type=float, default=0.55, help="音量 0~1.5（默认 0.55，和页面一致）")
     ap.add_argument("--capture", action="store_true", help="允许录屏拍到它（默认对采集隐藏）")
+    ap.add_argument("--multi", action="store_true",
+                    help="允许多开（默认：发现旧窗口还活着就关掉它，避免屏幕上出现两个弹窗）")
     ap.add_argument("--preview", help="只渲染一张 PNG 就退出（验收/截图用）")
     ap.add_argument("--think", action="store_true",
                     help="和 --preview 一起用：截「思考中……」那一帧")
@@ -1708,6 +1717,10 @@ def main() -> int:
         print(f"PREVIEW {a.preview} {img.width}x{img.height}")
         return 0
 
+    # 单实例：屏幕上一个弹窗就够（历史坑：pythonw 起的旧进程没关，再开一个 → 两个弹窗）
+    instance_lock.take_over(instance_lock.LOCK_PATH, argv=sys.argv, multi=a.multi,
+                            note=lambda m: print(m, flush=True))
+
     ensure_server(a.port)
     pos = None
     if a.pos:
@@ -1731,6 +1744,7 @@ def main() -> int:
     finally:
         stop.set()
         win._save_pos()
+        instance_lock.release(instance_lock.LOCK_PATH)
     return 0
 
 
