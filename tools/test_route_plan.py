@@ -92,6 +92,43 @@ try:
     sts2.cmd_plan()
 
     print()
+    print("=== 5b) 计划走商店线、实际只给精英线：应报 ROUTE_DRIFT ===")
+    st = mk_state(hp=60, floor=8)
+    for n in st["map"]["nodes"]:
+        n["is_available"] = (n["row"], n["col"]) == (1, 1)
+    cur = sts2._snapshot(st)
+    plan = {
+        "identity": {
+            "run_id": cur["run_id"],
+            "act_id": cur["act_id"],
+            "map_sig": cur["map_sig"],
+        },
+        "snapshot": cur,
+        "path": [
+            [0, 2, "Ancient"],
+            [1, 3, "Monster"],
+            [2, 3, "Shop"],
+            [3, 2, "RestSite"],
+            [4, 2, "Boss"],
+        ],
+    }
+    rs = sts2._replan_reasons(cur, plan)
+    for r in rs:
+        print("  - " + r)
+    assert any("ROUTE_DRIFT" in r for r in rs), "漂移必须报 ROUTE_DRIFT"
+
+    print()
+    print("=== 5c) 计划下一格就在可选里：不应报 ROUTE_DRIFT ===")
+    st2 = mk_state(hp=60, floor=8)
+    for n in st2["map"]["nodes"]:
+        n["is_available"] = (n["row"], n["col"]) in ((1, 3), (1, 1))
+    cur2 = sts2._snapshot(st2)
+    plan2 = dict(plan, snapshot=cur2)
+    rs2 = sts2._replan_reasons(cur2, plan2)
+    assert not any("ROUTE_DRIFT" in r for r in rs2), "计划内节点不该报漂移"
+    print("  OK 无漂移")
+
+    print()
     print("=== 6) 清空计划 ===")
     sts2.cmd_plan(clear=True)
     sts2.cmd_plan()

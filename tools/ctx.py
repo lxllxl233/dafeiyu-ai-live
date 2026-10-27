@@ -943,20 +943,14 @@ def main():
     ap.add_argument("--out")
     ap.add_argument("--pretty", action="store_true")
     args = ap.parse_args()
-    st = sts2.get_state()
-    # end_turn 之后的过渡快照（新回合还没抽牌）不能当手牌用：等抽完再读。
-    if st.get("screen") == "COMBAT":
-        _c = st.get("combat") or {}
-        _hand = [x for x in (_c.get("hand") or []) if isinstance(x, dict)]
-        try:
-            _draw, _dis, _exh = _piles_cards(st)
-        except Exception:  # noqa: BLE001
-            _draw = _dis = 0
-        if len(_hand) <= 1 and (_draw or _dis):
-            try:
-                st = sts2.wait_new_turn_hand(len(_hand), timeout=6.0)
-            except Exception:  # noqa: BLE001
-                pass
+    # 这一轮决策开始了：告诉主播窗「思考中……」。
+    # ctx 是每回合决策入口，所以它天然就是「有待办」的开始；窗口不出声时显示思考中，
+    # 出话后由台词接管（见 tools/caster_state.py 的三态规则）。
+    try:
+        sts2.overlay_thinking(True, "读局面")
+    except Exception:  # noqa: BLE001
+        pass
+    st = sts2.get_state_settled()
     mem = _load_mem()
     d = build_with_mem(st, mem)
     s = json.dumps(d, ensure_ascii=False, indent=1 if args.pretty else None,

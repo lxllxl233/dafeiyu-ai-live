@@ -689,15 +689,15 @@ def _execute(st: dict, seq: list, lines: list, fx: dict,
         # 玩家回合就直接用，别重复等。
         try:
             cur = sts2.get_state()
-            if cur.get("screen") == "COMBAT" and not _pre_draw(cur):
+            if cur.get("screen") == "COMBAT" and not _pre_draw(cur) and len(
+                    [x for x in ((cur.get("combat") or {}).get("hand") or []) if isinstance(x, dict)]) >= 2:
                 next_st = cur
             else:
-                next_st = sts2.wait_new_turn_hand(
-                    len(st.get("combat", {}).get("hand") or []), timeout=6.0)
+                next_st = sts2.get_state_settled(timeout=6.0)
         except Exception:  # noqa: BLE001
-            next_st = sts2.get_state()
+            next_st = sts2.get_state_settled()
     else:
-        next_st = sts2.get_state()
+        next_st = sts2.get_state_settled()
     out["ctx"] = _next_ctx(st=next_st)
     _mk("ctx")
     if ended and next_st.get("screen") == "COMBAT" and _pre_draw(next_st):
@@ -782,7 +782,7 @@ def _auto(turns: int, stop_hp: int, lines: list) -> dict:
     spoke = False
     failed = False
     for n in range(max(1, turns)):
-        st = sts2.get_state()
+        st = sts2.get_state_settled()   # run95 f1：过渡快照 hand=[] → 空过整回合
         if st.get("screen") != "COMBAT":
             log.append(f"AUTO T{n + 1}: 不是战斗（{st.get('screen')}），停")
             break
@@ -821,7 +821,7 @@ def _auto(turns: int, stop_hp: int, lines: list) -> dict:
             failed = True
             break
     out = {"ok": not failed, "log": log}
-    next_st = sts2.get_state()
+    next_st = sts2.get_state_settled()
     out["ctx"] = _next_ctx(st=next_st)
     try:
         decision_log.record_run_summary(next_st)
@@ -830,7 +830,7 @@ def _auto(turns: int, stop_hp: int, lines: list) -> dict:
     return out
 
 
-def _auto_settle(out: dict) -> dict:
+def _auto_settle(out: dict, pick: str = "auto") -> dict:
     """清完场顺手把奖励界面收掉，别让「结算」再吃一个模型回合。
 
     实测（`logs/run_*.jsonl`）奖励界面本身只要 1–2 秒，贵的是它前后各有一个模型回合：
@@ -848,7 +848,7 @@ def _auto_settle(out: dict) -> dict:
     t_settle = time.time()
     try:
         with contextlib.redirect_stdout(io.StringIO()):
-            summ = sts2.cmd_rewards(pick="auto", quiet=True)
+            summ = sts2.cmd_rewards(pick=pick, quiet=True)
         steps = list(summ.get("steps") or [])
         after = summ.get("state") or sts2.get_state()
     except Exception as exc:  # noqa: BLE001
@@ -891,17 +891,21 @@ def main():
 
     seq, lines, fx, auto = normalize(spec)
     allow = {str(k): bool(v) for k, v in spec.items() if str(k).startswith("allow")}
+    # 清场后自动收奖励时怎么挑牌：auto（默认，按分数+牌组预算）/ skip（一张不拿，自己控牌组）
+    pick = str(spec.get("pick") or "auto").lower()
+    if pick not in ("auto", "skip"):
+        pick = "auto"
     with perf.trace("act", import_ms=IMPORT_MS, plan=os.path.basename(args.file or "-"),
                     dry=bool(args.dry), seq=len(seq), auto=bool(auto)) as tr:
-        out = _run(seq, lines, fx, auto, allow, args, tr)
+        out = _run(seq, lines, fx, auto, allow, args, tr, pick)
         tr.note(ok=bool(out.get("ok")), screen=(out.get("ctx") or {}).get("screen"),
                 settle_steps=len((out.get("settle") or {}).get("steps") or []))
     print(json.dumps(out, ensure_ascii=False))
 
 
-def _run(seq, lines, fx, auto, allow, args, tr):
+def _run(seq, lines, fx, auto, allow, args, tr, pick: str = "auto"):
     with perf.stage("state_first"):
-        st = sts2.get_state()
+        st = sts2.get_state_settled()
     if st.get("screen") != "COMBAT":
         err = f"当前不是战斗（{st.get('screen')}）"
         _log_decision(st, seq, lines, fx, outcome="not_combat", err=err)
@@ -934,8 +938,18 @@ def _run(seq, lines, fx, auto, allow, args, tr):
             out.setdefault("ms", {})["memo"] = int((time.time() - t_memo) * 1000)
         if not args.dry and not args.no_settle:
             t_set = time.time()
-            out = _auto_settle(out)
+            out = _auto_settle(out, pick)
             out.setdefault("ms", {})["settle_wrap"] = int((time.time() - t_set) * 1000)
+    # 思考态收尾：对局结束/掉出战斗到主菜单就收掉；否则续一次命（下一步还要算）。
+    if not args.dry:
+        try:
+            _st_now = sts2.get_state()
+            if _st_now.get("screen") in ("GAME_OVER", "MAIN_MENU"):
+                sts2.overlay_thinking(False)
+            else:
+                sts2.overlay_thinking(True, "下一步")
+        except Exception:  # noqa: BLE001
+            pass
     return out
 
 

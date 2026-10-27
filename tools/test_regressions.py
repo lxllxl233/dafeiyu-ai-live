@@ -687,5 +687,66 @@ hps, hexcl = accuracy.hp_rows(MIX)
 check("R25 血量用同一批记录", len(hps), 2)
 check("R25 血墙自扣血已经在 forecast.hp 里（不再二次补偿）",
       [x[1] - x[2] for x in hps if x[0]["forecast"].get("self") == 2], [0])
+# ---------------------------------------------------------------- R26 过渡快照 → settled 读
+# 账本 logs/decisions.jsonl（run 78DZXYQ5PL f1，mode=auto）：end 之后的过渡快照里
+# hand=[] / energy=0，sim 只能算出「无牌可打」，于是把新回合的 3 费 5 张牌整个空过，
+# 白吃 16 点（78→62），整局血线从这里开始崩。这条坑历史上修过三次
+# （run30 空手 / run68 f17 Boss 空过 / run85 f11 误判），每次都是某个调用方绕过守卫。
+def _combat_frame(hand_n, energy, mx=3):
+    return {"screen": "COMBAT", "run": {"current_hp": 78, "max_hp": 94},
+            "available_actions": ["play_card", "end_turn"],
+            "combat": {"turn": 1,
+                       "player": {"energy": energy, "max_energy": mx,
+                                  "current_hp": 78, "block": 0},
+                       "hand": [{"id": "STRIKE_IRONCLAD", "cost": 1} for _ in range(hand_n)],
+                       "enemies": [{"id": "E0", "current_hp": 20, "intent": "ATTACK"}]}}
+
+
+_orig_gs, _orig_wait = sts2.get_state, sts2.wait_new_turn_hand
+_waits = {"n": 0}
+
+
+def _fake_wait(prev_hand_len, timeout=4.0):
+    _waits["n"] += 1
+    return _combat_frame(5, 3)   # 等到的就是「抽完牌的玩家回合」
+
+
+sts2.wait_new_turn_hand = _fake_wait
+_ready = _combat_frame(5, 3)
+
+# 1) hand=0 的过渡帧 → 必须等到真手牌
+_waits["n"] = 0
+_seen = {"i": 0}
+sts2.get_state = lambda *a, **k: (_combat_frame(0, 0) if _seen["i"] == 0 else _ready)
+st = sts2.get_state_settled()
+check("R26 过渡快照(hand=0) 必须等到真手牌", len(st["combat"]["hand"]), 5)
+check("R26 过渡快照确实走了等待分支", _waits["n"] >= 1, True)
+
+# 2) 只读到 1 张也算过渡（run95 的另一半：5 张手牌被读成 1 张）
+_waits["n"] = 0
+_seen["i"] = 0
+sts2.get_state = lambda *a, **k: (_combat_frame(1, 0) if _seen["i"] == 0 else _ready)
+st = sts2.get_state_settled()
+check("R26 只读到 1 张也等", len(st["combat"]["hand"]), 5)
+
+# 3) 正常手牌（≥2 张）不许等，别给每回合加延迟
+_waits["n"] = 0
+sts2.get_state = lambda *a, **k: _ready
+st = sts2.get_state_settled()
+check("R26 手牌正常时不等待", _waits["n"], 0)
+check("R26 正常帧原样返回", len(st["combat"]["hand"]), 5)
+
+# 4) 非战斗界面不碰
+sts2.get_state = lambda *a, **k: {"screen": "MAP"}
+check("R26 非战斗直接返回", sts2.get_state_settled().get("screen"), "MAP")
+sts2.get_state, sts2.wait_new_turn_hand = _orig_gs, _orig_wait
+
+# 接线检查：守卫只留一处，别再让某个调用方绕过去
+_act_src = open(os.path.join(ROOT, "tools", "act.py"), encoding="utf-8").read()
+_ctx_src = open(os.path.join(ROOT, "tools", "ctx.py"), encoding="utf-8").read()
+check("R26 act.py 的 auto 走 settled 读", "get_state_settled()" in _act_src, True)
+check("R26 ctx.py 的 CLI 走 settled 读", "get_state_settled()" in _ctx_src, True)
+check("R26 ctx.py 不再自己手写等待", "wait_new_turn_hand(" in _ctx_src, False)
+
 print()
 print("ALL OK" if ok else "SOME CHECKS FAILED")

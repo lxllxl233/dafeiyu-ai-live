@@ -344,6 +344,23 @@ def _prewarm_tts(sentence: str, cid: str = "") -> None:
     return
 
 
+def overlay_thinking(on: bool, note: str = "") -> bool:
+    """告诉主播窗「Agent 正在算这一步」/「算完了」。
+
+    窗口据此在不出声时显示「思考中……」（状态机在 tools/caster_state.py）。
+    只发 on/off 两个**真实事件**，不发倒计时——窗口那边也没有「N 秒后自动消失」的逻辑；
+    唯一的兜底是 240s 存活超时（进程没了就不再显示思考中）。
+
+    失败一律静默：直播窗没开不该影响打牌。
+    """
+    try:
+        requests.post(OVERLAY + "/thinking",
+                      json={"on": bool(on), "note": str(note or "")[:40]}, timeout=0.8)
+        return True
+    except Exception:
+        return False
+
+
 def overlay_say(tag: str, thought: str, meme: str, state: dict | None = None,
                 force: bool = False):
     thought = _clean_speech(thought)
@@ -1438,12 +1455,30 @@ def _deck_stats(state: dict) -> dict:
     }
 
 
+def _map_pos(n: dict):
+    if not isinstance(n, dict) or n.get("row") is None or n.get("col") is None:
+        return None
+    try:
+        return [int(n["row"]), int(n["col"])]
+    except (TypeError, ValueError):
+        return None
+
+
 def _snapshot(state: dict) -> dict:
     run = state.get("run") or {}
     hp = _int(run.get("current_hp", run.get("hp")), 0)
     mhp = _int(run.get("max_hp"), 0)
     potions = run.get("potions") or []
     held = [p for p in potions if isinstance(p, dict) and (p.get("occupied") or p.get("potion_id"))]
+    nodes = (state.get("map") or {}).get("nodes") or []
+    cur_node = next((n for n in nodes if isinstance(n, dict) and n.get("is_current")), None)
+    avail = []
+    for n in nodes:
+        if not isinstance(n, dict) or not n.get("is_available"):
+            continue
+        pos = _map_pos(n)
+        if pos:
+            avail.append(pos + [str(n.get("node_type") or "?")])
     return {
         "run_id": state.get("run_id") or run.get("run_id"),
         "act_id": run.get("act_id", run.get("act")),
@@ -1455,6 +1490,8 @@ def _snapshot(state: dict) -> dict:
         "gold": _int(run.get("gold"), 0),
         "potions": len(held),
         "deck": _deck_stats(state),
+        "node": _map_pos(cur_node),
+        "avail": avail,
         "ts": datetime.now().isoformat(timespec="seconds"),
     }
 
@@ -1505,6 +1542,34 @@ def _replan_reasons(cur: dict, plan: dict):
         return ["旧计划没有 run_id/act/map 身份：无法确认它属于这一局，必须重新 route --commit"]
     if status == "stale":
         return [f"计划身份不匹配（计划 {plan.get('identity')} / 当前 run={cur.get('run_id')} act={cur.get('act_id')} map={cur.get('map_sig')}）：换局/换幕/换图后旧计划作废"]
+    planned = plan.get("path") or []
+    cur_pos = cur.get("node")
+    avail = [tuple(a) for a in (cur.get("avail") or [])]
+    if planned and avail:
+        coords = {a[:2] for a in avail}
+        idx = None
+        for i, p in enumerate(planned):
+            if cur_pos and list(p[:2]) == list(cur_pos):
+                idx = i
+                break
+        if idx is None:
+            # 还没走进计划路径：只要计划的起点就在当前可选项里，就算对得上
+            if tuple(planned[0][:2]) in coords:
+                idx = -1
+            else:
+                reasons.append(
+                    "ROUTE_DRIFT 当前节点不在计划路径上（走岔/换线）：营火商店精英的预测都不作数，必须重规划"
+                )
+        if idx is not None and idx + 1 < len(planned):
+            nxt = planned[idx + 1]
+            npos = (int(nxt[0]), int(nxt[1]))
+            if all(a[:2] != npos for a in avail):
+                act_types = ",".join(sorted({str(a[2]) for a in avail}))
+                ntype = nxt[2] if len(nxt) > 2 else "?"
+                reasons.append(
+                    f"ROUTE_DRIFT 计划下一格({nxt[0]},{nxt[1]})={ntype} 不在当前可选项（实际可选 {act_types}）："
+                    "这条线后面的营火/商店/精英都不作数，先 route 重算再走"
+                )
     base = plan["snapshot"]
     cur_pct = (cur["hp"] / cur["max_hp"]) if cur.get("max_hp") else 0
     base_pct = (base["hp"] / base["max_hp"]) if base.get("max_hp") else 0
@@ -1727,6 +1792,10 @@ def cmd_route(commit=None, note=""):
                     "option": i,
                     "start": {"row": start.get("row"), "col": start.get("col")},
                     "seq": seq,
+                    "path": [
+                        [n.get("row"), n.get("col"), str(n.get("node_type") or "?")]
+                        for n in path
+                    ],
                     "note": note,
                     "predicted": {
                         "score": b.get("score"),
@@ -2395,6 +2464,32 @@ def wait_legal(action: str, timeout: float = 5.0):
             last = s
             _sleep(0.15, _st)
         return last
+
+
+def get_state_settled(timeout: float = 6.0) -> dict:
+    """读状态，但避开「上一手 end 之后还没抽牌」的过渡快照。
+
+    run95 f1 的账本实证（logs/decisions.jsonl，mode=auto）：auto 在过渡快照上读到
+    `hand=[] / energy=0`，sim 只能给出「无牌可打」的线，于是把新回合的 3 费 5 张牌
+    整个空过，白吃 16 点（78→62），整局血线从这里开始崩。
+
+    这条坑历史上修过三次（run30 空手、run68 f17 Boss 空过、run85 f11 误判），
+    每次都是「某个调用方绕过了守卫」。所以守卫收在这里一处：
+    **手牌 ≤1 张就等稳定快照，≥2 张直接返回**（不引入额外的轮询开销）。
+
+    `wait_new_turn_hand` 自带「可用动作 + 指纹稳定」双条件，正常情况下 0.6s 内返回；
+    手牌确实是空的时候它也只多等一个稳定性窗口，不会卡满 timeout。
+    """
+    st = get_state()
+    if st.get("screen") != "COMBAT":
+        return st
+    hand = [x for x in ((st.get("combat") or {}).get("hand") or []) if isinstance(x, dict)]
+    if len(hand) <= 1:
+        try:
+            return wait_new_turn_hand(len(hand), timeout=timeout)
+        except Exception:  # noqa: BLE001
+            return st
+    return st
 
 
 def _wait_dbg(s: dict) -> str:
