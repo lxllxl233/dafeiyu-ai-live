@@ -1,39 +1,47 @@
-# 交接 · 2026-10-27 00:05（副屏弹幕窗已归位，等新窗口开跑）
+# 交接 · 2026-10-27 12:5x（用户要求开新窗口，run84 已存盘停在 f1）
 
-## 当前状态（已就绪，直接开新局）
+## 1. 现在的位置
 
-- 游戏：`Slay the Spire 2` 在**副屏**（显示器 2：物理 2560,0–4480,1080），`MAIN_MENU`，无进行中的局。
-- 主播窗：`streamer.py --capture --pos 2600,30 --scale 0.95`，**在副屏、游戏窗口上方**，
-  尺寸 1169x258（已截图确认能显示弹幕）。
-- overlay `:8730` 运行中、已 reset；曼波 TTS `:9880` 运行中（~0.9s/句）。
-- OBS：`free` 游戏采集 + `AI Commentary` 浏览器源，未录制。
-- 今晚两段废弃局录像：`recordings/sts2_ironclad_a10_run_abandoned_floor2_a.mp4` / `_b.mp4`。
+- 游戏：`MAIN_MENU`，**run84 已存档**（`continue_run` 可用）。
+  - 存盘点：**第一幕 f1，刚踏进第一个怪物房**（三敌人，战斗第 1 回合，这是 SL 起点，手牌会重抽）。
+  - 存档时：A10，HP 64/80，金 99，牌组 11（打击×5/防御×4/痛击/进阶之灾）。
+- Neow 选了 **白银熔炉 SILVER_CRUCIBLE**（前 3 次卡牌奖励都是升级版；第一个宝箱是空的）。
+  理由：本阶段最大毛病是「牌组质量/稀释」，升级版奖励 = 不额外占牌位的强度。
+- 已定路线（81 条路里唯一「1 精英 + 早商店」的一条，全部路都至少 1 精英）：
+  `(1,4) M → (2,4) M → (3,4) ? → (4,5) $商店 → (5,6) M → (6,6) M → (7,5) R营火 → (8,4) ? → (9,3) 宝箱 → (10,3) 精英 → (11,2) ? → (12,2) 营火 → (13,2) M → (14,1) M → (15,0) 营火 → Boss`
+  第一脚已经迈到 (1,4)。
+- OBS：**仍在录制 run84**（`recordings/.current` 记着 run=84）。
+  收尾时用 `python tools/rec_episode.py finish --result LOSS_xxx_fNN`（`--run` 可省略，会自动对号）。
 
-## 多屏铁律（这次踩过的坑）
+## 2. 这轮已经做完的事（已 commit + push 到 main）
 
-**游戏在副屏，弹幕窗就必须在副屏。** 之前 `_clamp` 把窗口夹到主屏工作区，
-等于把弹幕窗从副屏硬拽回主屏——用户看不见，还以为是「没语音没弹幕」。
+- 复盘：`docs/RETRO_runs78-83.md`（runs78–83 六局账 + 死因分类 + 牌组算术 + 代码改动清单）。
+- 新规则写进 `docs/RUN_DOCTRINE.md` **§9**：拿牌预算 / 血量硬线 / 四个数值口径 / DPS 门槛 / 固定工具动作。
+- run83 现场笔记：`logs/run83_notes.md`。
+- 代码（全部离线测试绿：`test_sim` / `test_act_guards` / `test_gates` / `test_combat_math` / `test_ctx_act`）：
+  1. `sim`/`ctx` 支持 **柔嫩**（每打一张牌 -1 力-1 敏 → 先打贵的）、**缩小**（-30%，牌面已含，别二次乘）、
+     **缠结**（攻击 +1 费，`hand[].c` 是实价）、**失衡**（全挡即眩晕，ctx 会提示 `IMBA_STUN`）。
+  2. **固化药水**（格挡 ×3）建模：`blk_mul`。
+  3. `act.py --dry`：只验算不执行（`fx`/`steps`/`best`），用来在花掉一回合前核对算术。
+  4. `act.py` 在 batch 被 `CARD_SELECTION` 打断时回传 `selection` + `next`（头槌类牌不用再多跑一趟）。
+  5. `rec_episode.py start --run N [--note]`，`finish --run` 可省略。
+  6. `sts2.deck_cap_guard` 新增 **`DECK_PACE`**：一幕前半段拿牌过快就拦。
 
-现在的行为：
-- `_clamp` 只在窗口**完全离开所有显示器**时才拉回来，绝不会跨屏搬运；
-- 没存档时默认跟着**游戏窗口所在显示器**放；
-- `_ensure_on_screen()` 每 2s 兜底，只防「跑到所有屏外」，不防「在副屏」；
-- 自动缩放按**目标显示器宽度**算（副屏 1920 宽 → 0.95× 合适），别用主屏宽度。
-
-## 下次开局前 3 条验收
+## 3. 新窗口直接照这个顺序开工
 
 ```powershell
-python tools/live.py check                  # 5 项全 OK
-# 截「虚拟桌面」（不是只截主屏），确认弹幕窗在副屏游戏上方
-python obsctl.py status                     # 未录制
+python tools/live.py check                    # overlay/TTS/OBS 五项
+python tools/ctx.py                           # 确认 MAIN_MENU + continue_run
+python -X utf8 sts2.py do continue_run        # 回到 f1 那场战斗
+python -X utf8 tools/ctx.py                   # 读局面
 ```
 
-然后：`obsctl.py start` → `do open_character_select` → 确认 A10 → `embark`；
-开录后先埋一组 quip，让第一条弹幕/语音立刻出现。
+- 战斗用 `tools/ctx.py` → `tools/act.py`（一手一个 batch，别拼大计划）。
+- 拿牌前先跑 §9.1 预算：第一幕 **+4 张** 上限、f8 前 ≤14 张。
+- 每幕进 Boss 前跑 `python tools/dps.py`，净输出 <40 别进。
+- 台词密度：本局台词统计只有 26%，**目标 ≥45%**，`act.py` 的 `say` 里每次至少埋一句。
 
-## 新一局打法备忘（上一局 33/80 放弃，史莱姆三连打亏了）
+## 4. 别忘的两条今天刚学的
 
-- 三连史莱姆（16/33/12）：**先斩 12 血小树枝**、痛击压中史莱姆；
-  别把两把打击摊给两只——上一局两只都剩 4 血，白挨一轮 13 伤。
-- 小牌组（12 张）路线成立，但 A10 双史莱姆同回合攻击 13，半挡半打=净掉 8。
-- Neow 的「铅制镇纸 → 亮剑（0 费 5 伤抽 1）」这手是对的，继续这么选。
+- 有**失衡**怪：优先把它那一击**完全格挡**，白赚一轮。
+- 有**柔嫩**：贵牌先打，越往后的牌越小；数值别自己乘，`hand[].dmg` 已是实价。
