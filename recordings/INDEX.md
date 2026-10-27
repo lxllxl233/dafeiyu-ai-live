@@ -20,3 +20,5 @@
 | P81 | sts2_ironclad_a10_run81_lose_act2elite.mp4 | lose_act2elite | 7.2 GB |
 | P82 | sts2_ironclad_a10_run82_LOSS_SANDWORM_f33.mp4 | LOSS_SANDWORM_f33 | 3.1 GB |
 | P83 | sts2_ironclad_a10_run83_ABANDONED_f10.mp4 | ABANDONED_f10 | 0.5 GB |
+| P84 | sts2_ironclad_a10_run84_ABANDONED_saved_f1.mp4 | ABANDONED_saved_f1 | 1.0 GB |
+| P85 | sts2_ironclad_a10_run85_DEFEAT.mp4 | act2 f22 双螨虫（模型验证局） | 1.9 GB |
