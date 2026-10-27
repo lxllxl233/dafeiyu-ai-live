@@ -19,6 +19,7 @@ sys.path.insert(0, os.path.join(ROOT, "tools"))
 os.environ.setdefault("STS2_DECISION_LOG", "0")
 
 import sim  # noqa: E402
+import act  # noqa: E402
 
 ok = True
 
@@ -135,6 +136,17 @@ check("R5 回合末税按张数叠加", sim.status_tax_parts(sm.hand), (10, 0))
 sm.play(sm.hand[0], 0)
 check("R5 打掉一张税就少 5", sim.status_tax_parts(sm.hand), (10, 0))
 
+# ---------------------------------------------------------------- R6 清场这一手不硬校验血量
+# run Z6DHD2PJBQ f5 t3：一刀打死 6 血怪，游戏当场回 6 血（燃烧之血），
+# 本地 sim 继续报 48 —— 账本里 15 条 fx.hp 误报全是这个口径差。
+st = state([card("STRIKE_IRONCLAD", 1, dmg=6)], energy=3, hp=48,
+           enemies=[enemy(0, "SLUDGE_SPINNER", 6, 9)], relics=["BURNING_BLOOD"])
+okv, err, sm, steps = sim.validate(st, [{"c": "STRIKE_IRONCLAD", "t": 0}])
+check("R6 一刀清场", okv, True)
+fc = act.forecast(st, sm, steps, ended=False)
+check("R6 清场标记", fc.get("clear"), 1)
+check("R6 清场时 fx.hp 不拦", act.fx_error({"hp": 48}, fc), None)
+check("R6 清场仍校验能量", bool(act.fx_error({"e": 99}, fc)), True)
+
 print()
 print("ALL OK" if ok else "SOME CHECKS FAILED")
-sys.exit(0 if ok else 1)

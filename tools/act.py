@@ -181,6 +181,10 @@ def forecast(st: dict, sm: sim.Sim, steps: list, ended: bool) -> dict:
         fx["draw_unknown"] = sm.draws
     if take is not None:
         fx["take"] = take
+    if not sm.alive():
+        # 清场这一手：战斗结束时燃烧之血回 6、遗物/死亡结算都会改血量，
+        # 本地 sim 只算回合内，血/掉血在这一手不可信（账本 15 条 fx.hp 误报都来自这里）。
+        fx["clear"] = 1
     if sm.selfhp:
         fx["self"] = sm.selfhp
     if kills:
@@ -199,6 +203,9 @@ def fx_error(got: dict, want: dict) -> str | None:
     keys = [("e", "回合末能量")]
     if not want.get("draw_unknown"):
         keys += [("hp", "回合末血量"), ("take", "本回合净掉血")]
+    if want.get("clear"):
+        # 清场：战后回血（燃烧之血 6 点）与死亡结算不在本地 sim 里，血量不可硬校验。
+        keys = [k for k in keys if k[0] == "e"]
     for k, label in keys:
         if k in got and k in want:
             if sts2._int(got[k], 0) != sts2._int(want[k], 0):
