@@ -30,7 +30,7 @@ python tools/act.py --file tmp_plan.json    # 执行seq，回下回合ctx
 - `hand_n`=真实手牌数（`hand[]` 同名牌合并，只看条数以为牌少）；`stale_ctx`=新回合未抽完牌，必须重读 `ctx.py`。
 - 遗言告警：敌人带「蒸汽喷发/爆炸/亡语」时斩杀≠安全——死后按层数结算一发（可格挡/缓冲）。`act` 在「清场且0甲」给 `warn:遗言警告`，看到就查有无甲或缓冲。
 - SL不改抽牌顺序（`save_and_quit`→continue后手牌一样），只救操作失误，每幕≤2次；商店每店只删1张；药水栏满时 `claim_reward` 静默成功不给药水（先看 `potions` 槽，满则 `discard_potion`）。
-- 「从牌组移除N张」多选界面点不动（blocker，docs/TODO_mod_deck_remove.md）：涅奥「精准剪刀」这类选项开CARD_SELECTION，但max_select=0、select_deck_card只回pending、confirm_selection不可用→卡死；别选，卡住save_and_quit→continue_run回滚。
+- 「从牌组移除N张」多选点不动（blocker，docs/TODO_mod_deck_remove.md）：max_select=0、select_deck_card只回pending→卡死；别选，卡住就save_and_quit→continue回滚。
 - 诅咒两种：进阶之灾（虚无）每回合手牌−1；贪婪（永恒）删不掉，商店删牌列表不出现；别把「删诅咒」写进计划。
 - 只堆甲死于消耗战：甲牌≥45%必须配「非基础高伤攻击≥2张」，python tools/gates.py同查。
 
@@ -197,6 +197,7 @@ T×N>当前血量×0.6→不打
 
 1. 金币先补牌再删牌：攻击牌<6张时每回合空1–2费，先买每费≥8的牌再删打击。
 2. 召唤/塞牌怪先算5回合能否杀，杀不了早交药/早撤；auto只给单只纯攻击杂怪。
-3. 覆甲药水第2–3回合交>留到40%血；SL确定性：重开抽牌序列不变。
-4. 牌组封顶Act1≤16；狂宴+4最大、黑暗之血战后+12；Boss不省药，留1瓶格挡给爆炸回合。
+3. 覆甲药水第2–3回合交>留到40%血；SL重开抽牌序列不变。
+4. 牌组Act1≤16；狂宴+4最大、黑暗之血+12；Boss不省药，留1瓶格挡给爆炸回合。
 5. 召唤型精英要70%血+AOE（寄生蛙 79 血）；A10二幕杂怪30–40/场，Act1出口≥60%。
+6. 无引擎（力量/恶魔/大甲/DoT）必输A1 Boss 233血；Neow石板优先恶魔形态；清场步 pick:skip 否则自动加牌撑牌组。

@@ -25,3 +25,4 @@
 | P86 | sts2_ironclad_a10_run86_lose_floor23.mp4 | act2 f23 产卵虫（测量局：中间指标 ±1 82.7% / 假斩杀 5 / batch 1） | 2.5 GB |
 | P94 | sts2_ironclad_a10_run94_lose_f17_act1boss.mp4 | lose_f17_act1boss | 1.0 GB |
 | P95 | sts2_ironclad_a10_run95_abandon_f6_forced_elite.mp4 | abandon_f6_forced_elite | 0.4 GB |
+| P96 | sts2_ironclad_a10_run96_through_r106_best_f17act1boss.mp4 | through_r106_best_f17act1boss | 11.5 GB |
