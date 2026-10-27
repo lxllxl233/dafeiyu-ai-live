@@ -375,8 +375,17 @@
   }
 
   // 说一句就排队：一次推来 2–4 句也能依次说完，不互相盖掉、也不叠着响。
+  // 2026-10-27 改「最新优先」：旧实现是严格 FIFO，上一句 8–15 秒没播完时新台词
+  // 只能干等，观众听到的就是「操作都做完了，过一会儿才讲解上一步」。现在：
+  //   · 还没起播的旧台词一律作废（mark skip），只留最新一条；
+  //   · 正在播的台词如果已经播了 PREEMPT_MS 以上，直接切到新台词；
+  //   · 台词从发布到现在超过 STALE_MS 的，不播（讲的已经是上一步了）。
   const sayQueue = [];
   let saying = false;
+  let sayTok = 0;              // 新台词一来就自增，老的播放循环看到自己过期就退
+  let playStartedAt = 0;       // 这一句真的开始出声的时刻（ms）
+  const PREEMPT_MS = 800;      // 至少让上一句说满 0.8 秒再切，别听成断字
+  const STALE_MS = 9000;       // 超过 9 秒还没轮到 → 不播（只影响过期解说，不丢字幕历史）
   const spokenIds = new Set();   // 同一条台词只播一次（SSE 和兜底轮询可能同时送到）
   const qs0 = new URLSearchParams(location.search);
   const ROLE = (qs0.get('role') || (qs0.get('live') ? 'live' : 'record')).toLowerCase();
@@ -399,13 +408,44 @@
     try { fetch('/mark?' + qs.toString(), { cache: 'no-store' }).catch(() => {}); } catch (e) {}
   }
 
+  // 前端版本：每次改这个文件就 +1，页面加载时上报一次，日志里能确认「播的到底是新 JS 还是缓存」。
+  const UI_VER = '2026-10-27b';
+  try { mark('hi', null, { ver: UI_VER }); } catch (e) {}
+
+  function ageMsOf(c) {
+    const ts = c && typeof c.ts === 'number' ? c.ts : 0;
+    return ts > 0 ? Math.max(0, Date.now() - ts * 1000) : 0;
+  }
+
   function enqueueSay(c, silent) {
     if (c && typeof c.id === 'number') {
       if (spokenIds.has(c.id)) return;
       spokenIds.add(c.id);
       if (spokenIds.size > 200) spokenIds.delete(spokenIds.values().next().value);
     }
+    if (!silent) {
+      const age = ageMsOf(c);
+      if (age > STALE_MS) {          // 从发布到轮到我超过 9 秒：这一步早过去了
+        mark('skip', c, { why: 'stale', age: Math.round(age) });
+        return;
+      }
+    }
+    if (silent) {
+      for (const old of sayQueue.splice(0)) mark('skip', old.c, { why: 'silent' });
+    }
+    // 最新优先：还没起播的旧台词直接作废（它讲的已经是上一步）
+    while (sayQueue.length) {
+      const old = sayQueue.shift();
+      mark('skip', old.c, { why: 'superseded' });
+    }
     sayQueue.push({ c, silent });
+    // 正在播/正在合成的那句让位给新句：
+    //   · 还没出声（合成中）→ 直接作废，别让观众先听到上一步
+    //   · 已经出声但播够 PREEMPT_MS → 切到新句（新句合成期间旧句继续响，不留空白）
+    if (saying && !silent) {
+      const played = playStartedAt ? Date.now() - playStartedAt : 0;
+      if (!playStartedAt || played > PREEMPT_MS) sayTok += 1;
+    }
     pumpSay();
   }
 
@@ -415,14 +455,24 @@
     try {
       while (sayQueue.length) {
         const { c, silent } = sayQueue.shift();
-        await sayOne(c, silent);
+        await sayOne(c, silent, ++sayTok);
       }
     } finally {
       saying = false;
     }
   }
 
-  async function sayOne(c, silent) {
+  // 等 durMs，但一有新台词就提前醒（返回 false = 已经被取代）
+  async function waitOrAbort(ms, tok) {
+    const end = Date.now() + Math.max(0, ms);
+    while (Date.now() < end) {
+      if (tok !== sayTok) return false;
+      await sleep(Math.min(80, end - Date.now()));
+    }
+    return tok === sayTok;
+  }
+
+  async function sayOne(c, silent, tok) {
     const thought = clip(cleanSpeech(c.thought), MAX_THOUGHT);
     const memeText = clip(cleanSpeech(c.meme), MAX_MEME);
     if (!thought && !memeText) return;
@@ -433,13 +483,21 @@
 
     // 刷新/重连时只补字幕，不重放上一句
     if (silent) { renderBubble(sentence, 0, c); return; }
+    // 排队排到现在还没轮到：这一步已经过去了，别播（字幕也就不挂了）
+    const age = ageMsOf(c);
+    if (age > STALE_MS) { mark('skip', c, { why: 'stale_play', age: Math.round(age) }); return; }
     // 先把声音起出来，等它真的从浏览器音频缓冲里出来，再让弹窗和头像抖动一起出。
     // 实测：post → OBS 拿到声音要 ~256ms，而画面几乎立刻可见 —— 差的就是这一段缓冲。
     const said = await mamboSay(sentence, c);
+    if (tok !== sayTok) { stopMambo(); return; }   // 合成期间来了新台词：这句不说了
     if (said.ok) await sleep(SPEAK_LEAD_MS);
+    if (tok !== sayTok) return;
     renderBubble(sentence, said.durMs, c);
-    // 一句说完再上下一条，队列里的话不会被吃掉
-    if (said.ok) await sleep(said.durMs + 120);
+    // 一句说完再上下一条，队列里的话不会被吃掉（有更新就提前醒）
+    if (said.ok) {
+      const done = await waitOrAbort(said.durMs + 60, tok);
+      if (!done) stopMambo();        // 被新台词取代：旧句立刻停
+    }
   }
 
   function showComment(c, silent) {
@@ -502,7 +560,7 @@
       mamboSource = src;
       src.onended = () => {
         mark('audio_end', c, { ctx: ctx.currentTime, dur: buf.duration });
-        if (mamboSource === src) { mamboSource = null; stopTalking(); }
+        if (mamboSource === src) { mamboSource = null; playStartedAt = 0; stopTalking(); }
       };
       // 起播前后各记一次：src.start() 只是调度，不是实际出声。
       const startPageT = Date.now() / 1000;
@@ -510,6 +568,7 @@
       const baseLatency = Number(ctx.baseLatency || 0);
       const outputLatency = Number(ctx.outputLatency || 0);
       src.start();
+      playStartedAt = Date.now();
       mark('audio', c, {
         ctx: startCtx,
         base: baseLatency,
@@ -523,9 +582,20 @@
     }
   }
 
+  let uiRev = null;   // 服务端 index.html 的版本号：换了前端就自己刷新，不用手动重开 OBS 源
+
   function applyState(d) {
     if (!d) return;
     if (d.status) statusEl.innerHTML = fmtStatus(d.status);
+    // 前端改过（ui_rev 变了）→ 空闲时自己 reload。OBS/直播姬的 browser source
+    // 会缓存旧 JS，不自动刷新的话改了页面等于没改。
+    if (d.ui_rev) {
+      if (uiRev === null) uiRev = d.ui_rev;
+      else if (d.ui_rev !== uiRev && !saying && !sayQueue.length) {
+        try { location.reload(); } catch (e) {}
+        return;
+      }
+    }
     // 服务端重启过（seq 回退）：把自己的游标也归零，否则后面所有台词都被当成旧的，彻底不响
     if (typeof d.seq === 'number' && d.seq < lastId) lastId = 0;
     const list = d.comments || [];
@@ -543,7 +613,8 @@
       showComment(fresh[fresh.length - 1], true);
       return;
     }
-    // 一次来多条（一条命令塞 2–4 句）：按顺序排队播，别只留最后一句
+    // 一次来多条（历史补发/一条命令塞多句）：只留最新一条去播——旧解说讲的
+    // 已经是上一步动作了（最新优先，见 enqueueSay 的注释）。
     for (const c of fresh) showComment(c, false);
   }
 

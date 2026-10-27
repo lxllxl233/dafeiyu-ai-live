@@ -124,7 +124,9 @@ def tts_wav(text: str) -> bytes | None:
 _lock = threading.Lock()
 _comments: deque = deque(maxlen=12)
 _seq = 0
-SEQ_PATH = os.path.join(ROOT, "logs", "overlay_seq.json")
+# 日志/序号目录可重定向：测试用临时目录，别把真直播的 seq 和观测日志搅乱。
+LOG_DIR = os.environ.get("STS2_OVERLAY_LOG_DIR") or os.path.join(ROOT, "logs")
+SEQ_PATH = os.path.join(LOG_DIR, "overlay_seq.json")
 
 
 def _load_seq() -> int:
@@ -163,8 +165,8 @@ _status = {
 # ---- A/V 观测：只落盘，不改变任何显示/播放时序。
 # av_marks.log 保持旧的 3 列前缀（time/event/role），第 4 列起才是 id；
 # av_marks.jsonl 给新脚本用，避免再靠猜解析。
-AV_MARKS = os.path.join(ROOT, "logs", "av_marks.log")
-AV_MARKS_JSONL = os.path.join(ROOT, "logs", "av_marks.jsonl")
+AV_MARKS = os.path.join(LOG_DIR, "av_marks.log")
+AV_MARKS_JSONL = os.path.join(LOG_DIR, "av_marks.jsonl")
 _av_lock = threading.Lock()
 
 
@@ -218,11 +220,92 @@ def set_thinking(on: bool, note: str = "") -> dict:
         elif note:
             _thinking["note"] = str(note or "")[:80]
         snap = {"seq": _seq, "comments": [], "status": dict(_status),
-                "thinking": dict(_thinking)}
+                "thinking": dict(_thinking), "playback": audio_state()}
         state = dict(_thinking)
     if changed:
         publish(snap)
     return state
+
+
+# ---------------------------------------------------------------- 音频生命周期
+# 「主播正在说话吗」必须由**真实播放**决定，不能由字数估时长决定：
+# 实测（logs/av_client.jsonl + logs/av_marks.jsonl）从发布到真的出声要
+# 2–6 秒（曼波合成 0.57+0.057*字数 秒，队里还有上一句时更久），而字数估计
+# 从发布时刻起算——所以旧实现 40/40 句都提前切了「思考中」，中位早 4.2s。
+#
+# 这里记录页面（OBS/直播姬 browser source）自报的 /mark 事件：
+#   ev=audio     → 这一句真的起播（带 dur），从「排队」移到「正在播」
+#   ev=audio_end → 这一句播完
+#   ev=skip      → 页面判定过期没播（要让队列长度回落，否则永远显示在说话）
+#   ev=silent    → 只挂字幕不出声
+# pending = 已发布但还没起播的台词（合成中/排队中）。它是**真实队列**，
+# 主播窗据此在合成空档里维持说话状态，而不是靠定时器硬撑。
+AUDIO_PENDING_TTL = float(os.environ.get("STS2_AUDIO_PENDING_TTL", "15"))
+_audio_lock = threading.Lock()
+_audio = {"seq": 0, "cid": "", "role": "", "since": 0.0, "dur": 0.0, "pending": {}}
+
+
+def _audio_tick() -> None:
+    """内部：涨 seq（只在真实状态变化时调用）。"""
+    _audio["seq"] = int(_audio["seq"]) + 1
+
+
+def audio_state() -> dict:
+    """给窗口看的音频快照：是否在播、还剩多久、队列还有几条。"""
+    now = time.time()
+    with _audio_lock:
+        pend = _audio["pending"]
+        for cid, at in list(pend.items()):
+            if now - at > AUDIO_PENDING_TTL:
+                pend.pop(cid, None)
+        playing = bool(_audio["cid"]) and now < _audio["since"] + _audio["dur"]
+        left = max(0.0, _audio["since"] + _audio["dur"] - now) if playing else 0.0
+        if not playing and _audio["cid"] and now >= _audio["since"] + _audio["dur"]:
+            _audio["cid"] = ""
+        return {
+            "seq": int(_audio["seq"]),
+            "playing": playing,
+            "remaining": round(left, 3),
+            "dur": round(float(_audio["dur"]), 3),
+            "cid": _audio["cid"],
+            "role": _audio["role"],
+            "pending": len(pend),
+            "speaking": bool(playing or pend),
+        }
+
+
+def audio_mark(ev: str, cid: str = "", role: str = "", dur: float = 0.0) -> dict:
+    """页面/OBS 自报的播放事件落到状态机。
+
+    只改状态、涨 seq，不主动 publish：主播窗是按 /state 轮询的（0.35s），
+    推一帧完整快照反而会把历史台词重复塞给页面。
+    """
+    now = time.time()
+    with _audio_lock:
+        pend = _audio["pending"]
+        if ev == "audio":
+            pend.pop(cid, None)
+            if dur > 0:
+                _audio.update(cid=cid, role=role, since=now, dur=float(dur))
+                _audio_tick()
+        elif ev in ("audio_end", "skip", "silent"):
+            had = cid in pend
+            pend.pop(cid, None)
+            if ev == "audio_end" and (not cid or cid == _audio["cid"]):
+                _audio.update(cid="", role="", since=0.0, dur=0.0)
+                had = True
+            if had:
+                _audio_tick()
+    return audio_state()
+
+
+def audio_enqueue(cid: str) -> None:
+    """新台词发布：记进待播队列（合成 + 排队都算在途）。"""
+    if not cid:
+        return
+    with _audio_lock:
+        _audio["pending"][cid] = time.time()
+        _audio_tick()
 
 
 def add_comment(payload: dict) -> dict:
@@ -255,6 +338,10 @@ def add_comment(payload: dict) -> dict:
             "speech": c["speech"],
         }
     )
+    if c["speech"]:
+        # 有台词 = 一定会有一次播放（页面出声，或窗口补位）→ 记进待播队列。
+        audio_enqueue(c["client_id"])
+        snap["playback"] = audio_state()
     publish(snap)
     return c
 
@@ -328,7 +415,17 @@ def snapshot(after: int = 0) -> dict:
     with _lock:
         items = [c for c in _comments if c["id"] > after]
         return {"seq": _seq, "comments": items, "status": dict(_status),
-                "thinking": dict(_thinking)}
+                "thinking": dict(_thinking), "playback": audio_state(),
+                "ui_rev": _ui_rev()}
+
+
+def _ui_rev() -> str:
+    """前端版本号（index.html 的 mtime+大小）：页面据此自己刷新，避免 OBS 缓存旧 JS。"""
+    try:
+        st = os.stat(INDEX)
+        return f"{int(st.st_mtime)}-{st.st_size}"
+    except OSError:
+        return ""
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -455,7 +552,7 @@ class Handler(BaseHTTPRequestHandler):
             body = {"ok": True, "clients": sum(roles.values()), "roles": roles,
                     "tts": dict(_tts_stat), "guard": dict(_guard),
                     "seq": _seq, "audio_ts": dict(_audio_ts),
-                    "thinking": dict(_thinking)}
+                    "thinking": dict(_thinking), "playback": audio_state()}
             self._send(200, json.dumps(body, ensure_ascii=False).encode("utf-8"),
                        "application/json; charset=utf-8")
         elif path == "/mark":
@@ -471,11 +568,15 @@ class Handler(BaseHTTPRequestHandler):
                     _audio_ts[role] = t
                 row = {"t": t, "ev": ev, "role": role,
                        "id": _av_num(mid), "cid": cid}
-                for key in ("page_t", "ctx", "base", "out", "dur", "start_t"):
+                for key in ("page_t", "ctx", "base", "out", "dur", "start_t", "ver", "why", "age"):
                     val = (qs.get(key) or [""])[0]
                     if val:
                         row[key] = _av_num(val)
                 _av_append(row, tsv=f"{t:.4f}\t{ev}\t{role}\t{mid or '-'}\n")
+                # 真实播放生命周期：窗口的「说话中/思考中」靠它，不靠字数估。
+                if ev in ("audio", "audio_end", "skip", "silent"):
+                    audio_mark(ev, cid=cid, role=role,
+                               dur=float(row.get("dur") or 0.0))
             except Exception:
                 pass
             self._send(200, b'{"ok":true}', "application/json")

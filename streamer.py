@@ -1002,6 +1002,9 @@ class StreamerWindow:
         self.status = {}
         self.presence = CasterState()      # 说话/思考/空闲三态（真实信号驱动）
         self._think_seq = 0
+        self._audio_seq = -1               # 真实播放事件的序号（旧帧不许覆盖新状态）
+        self._pb_playing = False
+        self._pb_speaking = False
         self.talk_start_at = 0.0
         self.talk_until = 0.0
         self.enter_at = 0.0
@@ -1380,6 +1383,61 @@ class StreamerWindow:
             print(f"思考状态：on={bool(on)} seq={seq} {before}->{self.presence.state}")
         self.dirty = True
 
+    def set_playback(self, pb: dict | None) -> None:
+        """overlay `playback` 的落点：**真实音频生命周期**。
+
+        页面（直播姬/OBS browser source）才是唯一的喇叭时，窗口拿不到
+        Speaker 的 on_start，只能靠这些自报事件：正在播/还剩多久/队列里还有几条。
+        旧实现只按字数估时长，配音要等 2–6 秒合成才起播，于是「话没说完就
+        显示思考中」——实测 40/40 句都提前切，中位早 4.2 秒。
+        """
+        if not isinstance(pb, dict):
+            return
+        try:
+            seq = int(pb.get("seq") or 0)
+        except (TypeError, ValueError):
+            seq = self._audio_seq + 1      # 脏数据当最新帧处理，但绝不许崩
+        if seq < self._audio_seq:
+            return          # 迟到的旧帧：不许覆盖更新的播放状态
+        self._audio_seq = seq
+        before = self.presence.state
+        speaking = bool(pb.get("speaking"))
+        playing = bool(pb.get("playing"))
+        if playing:
+            try:
+                left = float(pb.get("remaining") or 0.0)
+            except (TypeError, ValueError):
+                left = 0.0
+            self.presence.audio_started(left, str(pb.get("cid") or ""))
+            self.sync_talk(left, restart=not self._pb_playing)
+        elif speaking:
+            # 合成/排队空档：队列里确实还有台词，说话状态不能断
+            self.presence.audio_queue(True)
+        elif self._pb_speaking:
+            # 从「在说/排队」落到「真结束」才清，避免每轮空闲都把状态重置一遍
+            self.presence.audio_ended()
+            self.sync_talk(0.0)
+        self._pb_playing = playing
+        self._pb_speaking = speaking
+        if os.environ.get("STS2_STREAMER_DEBUG") and before != self.presence.state:
+            print(f"播放状态：{before}->{self.presence.state} {pb}", flush=True)
+        if before != self.presence.state:
+            self.dirty = True
+
+    def sync_talk(self, remaining: float, restart: bool = False) -> None:
+        """头像抖动跟着**真实播放**走：页面在响，窗口就该抖，不用等自己的 Speaker。"""
+        now = time.perf_counter()
+        if remaining and remaining > 0:
+            if restart or not self.talk_until or now >= self.talk_until:
+                self.talk_start_at = now
+                self.dirty = True
+            self.talk_until = now + min(30.0, max(0.12, float(remaining)))
+        else:
+            if self.talk_until or self.talk_start_at:
+                self.dirty = True
+            self.talk_start_at = 0.0
+            self.talk_until = 0.0
+
     def display_text(self, mode: str) -> str:
         """气泡里该显示什么：说话/空闲显示台词，思考中显示「思考中……」。
         没有待办（IDLE）时保持上一句，跟原来的空闲表现一致。
@@ -1393,9 +1451,17 @@ class StreamerWindow:
             self.status = dict(status)
             self.dirty = True
 
+    def tick_presence(self) -> str:
+        """结算三态，并保证「状态机说停 → 头像立刻停抖」。主循环和 frame() 都走这里。"""
+        mode = self.presence.tick()
+        if mode != "speaking" and self.talk_until:
+            # 宁可少抖一拍：声音没了就不许还在说话
+            self.sync_talk(0.0)
+        return mode
+
     def frame(self) -> Image.Image:
         now = time.perf_counter()
-        mode = self.presence.tick()
+        mode = self.tick_presence()
         if self.presence.dirty:
             self.presence.dirty = False
             self.dirty = True
@@ -1564,7 +1630,7 @@ class StreamerWindow:
             now = time.perf_counter()
             # 三态的到期结算（说话窗口结束 / 思考超时）必须在主循环里跑：
             # 只在 frame() 里 tick 的话，静止时根本不会重画，状态永远停在旧值。
-            mode = self.presence.tick()
+            mode = self.tick_presence()
             if mode != last_mode:
                 last_mode = mode
                 self.dirty = True
@@ -1612,6 +1678,8 @@ def poll_loop(win: StreamerWindow, port: int, stop: threading.Event, demo: bool)
             if isinstance(d.get("seq"), int) and d["seq"] < last_id:
                 last_id = 0
             win.update_status(d.get("status") or {})
+            # 真实播放状态先落：说话/思考由「真的在响吗」决定，不由字数估。
+            win.set_playback(d.get("playback"))
             th = d.get("thinking")
             if isinstance(th, dict):
                 # seq 单调：轮询偶尔乱序/重连时，旧状态不许把新的盖回去

@@ -713,14 +713,13 @@ def _execute(st: dict, seq: list, lines: list, fx: dict,
     if _ph:
         out.setdefault("ms", {}).update(_ph)
 
-    # 第一句已随动作播；其余排队（不阻塞本回合）
-    for ln in lines[1:]:
-        txt = "".join([ln.get("t") or "", ln.get("m") or ""])
-        if txt:
-            try:
-                sts2.overlay_say("combat", txt, "", st)
-            except Exception:
-                pass
+    # 一回合只播**一句**：第一句已经随第一个动作播出去了，后面再补发就是排队，
+    # 而配音单句 6–15 秒 + 合成 2–6 秒，排第二条必然把「操作 → 解说」拖到十几秒
+    # （实测 pub→play 中位 2.8s、p90 6.6s，一回合两句时后面那句还要再等整句）。
+    # 多出来的台词只留在决策账本里，不再单独配音。
+    extra = [ln for ln in lines[1:] if "".join([ln.get("t") or "", ln.get("m") or ""]).strip()]
+    if extra and os.environ.get("STS2_ACT_DEBUG"):
+        print(f"SAY_MERGE 本回合有 {len(extra)} 条多余台词未单独配音（一回合只播第一句）")
     return out
 
 

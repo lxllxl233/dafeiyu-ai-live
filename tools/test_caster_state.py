@@ -115,6 +115,79 @@ check("快照 thinking_age 是数字", isinstance(snap["thinking_age"], float), 
 check("空台词估计 ≥1.2s", cs._est_speech_seconds("") >= 1.2, True)
 check("超长台词估计 ≤12s", cs._est_speech_seconds("啊" * 500) <= 12.0, True)
 
+# ------------------------------------------------ 真实播放生命周期（2026-10-27 修复）
+# 病根：配音要等 2–6s 合成才起播，而字数估计从**发布时刻**起算 → 话没说完就切思考中。
+# 下面按「发布 → 合成空档 → 起播 → 播完」的真实顺序走一遍。
+s, clk = mk()
+s.set_thinking(True, seq=1, note="读局面")
+s.on_line("痛击把易伤压上去，最后 1 费一刀 9 点——够杀。")   # 23 字，估计 ~4.6s
+check("台词到达 → SPEAKING", s.state, cs.SPEAKING)
+clk.adv(2.0)
+s.audio_queue(True)            # 合成中：服务端说队列里还有这一条
+s.tick()
+check("合成空档（估计还没到期）仍是 SPEAKING", s.state, cs.SPEAKING)
+clk.adv(3.0)                   # 估计窗口已过（4.6s < 5.0s），但音频还没起
+s.audio_queue(True)            # 队列续命（真实队列信号）
+s.tick()
+check("估计到期但队列还有台词 → 仍是 SPEAKING（不许提前切思考中）", s.state, cs.SPEAKING)
+
+s.audio_started(9.5, cid="abc")   # 这一句真的起播了，真实时长 9.5s（比估计长得多）
+check("真实起播 → SPEAKING", s.state, cs.SPEAKING)
+clk.adv(8.0)
+s.audio_queue(False)
+s.tick()
+check("播到第 8 秒（估计早就过期）仍是 SPEAKING", s.state, cs.SPEAKING)
+clk.adv(1.6)
+s.tick()
+check("真实时长走完 → 回 THINKING（有待办）", s.state, cs.THINKING)
+check("audio 到期后 audio_on=False", s.audio_on, False)
+
+# 播完就该立刻回思考中，不能靠字数估计的长尾
+s, clk = mk()
+s.set_thinking(True, seq=1)
+s.on_line("短句。" * 6)          # 估计 ~7.6s
+s.audio_started(2.0)             # 但真实只有 2s
+clk.adv(2.2)
+s.audio_ended()
+check("真实 2s 播完立刻回 THINKING（估计 7.6s 不许拖尾巴）", s.state, cs.THINKING)
+
+# 队列空档：上一句播完、下一句还在合成 → 期间不许闪成思考中
+s, clk = mk()
+s.set_thinking(True, seq=1)
+s.audio_started(1.0)
+clk.adv(1.05)
+s.audio_queue(True)              # 队列里还有下一条
+s.tick()
+check("块间空档不闪状态（队列非空 → SPEAKING）", s.state, cs.SPEAKING)
+clk.adv(0.2)                     # 0.45s 续命还没到期
+s.audio_queue(True)
+s.tick()
+check("续命期内保持 SPEAKING", s.state, cs.SPEAKING)
+clk.adv(1.0)                     # 续命过期（轮询断了）
+s.tick()
+check("续命过期 → 回 THINKING（不假装还在说）", s.state, cs.THINKING)
+
+# 迟到的旧播放帧不许覆盖新状态
+s, clk = mk()
+s.set_thinking(True, seq=1)
+s.audio_started(5.0, cid="new")
+clk.adv(1.0)
+s.audio_ended()                  # 真的结束了
+check("结束后 → THINKING", s.state, cs.THINKING)
+s.audio_started(4.0, cid="old")  # 迟到的「起播」事件（窗口侧按 seq 丢，状态机也必须能自愈）
+clk.adv(4.5)
+s.tick()
+check("迟到事件最多维持自己的剩余时长，不会永久卡住", s.state, cs.THINKING)
+
+# 思考态在说话期间不许抢
+s, clk = mk()
+s.on_line("在说。")
+s.set_thinking(True, seq=9)
+check("说话期间上报思考不改变状态", s.state, cs.SPEAKING)
+snap = s.snapshot()
+check("快照带 audio_on", "audio_on" in snap, True)
+check("快照带 queued", "queued" in snap, True)
+
 print()
 print("ALL OK" if ok else "SOME CHECKS FAILED")
 sys.exit(0 if ok else 1)
