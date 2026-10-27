@@ -36,6 +36,9 @@ python -X utf8 sts2.py do continue_run        # 回到 f1 那场战斗
 python -X utf8 tools/ctx.py                   # 读局面
 ```
 
+自检（全部离线，30 秒）：`python tools/test_imports.py` / `test_sim.py` / `test_act_guards.py` /
+`test_gates.py` / `test_combat_math.py` / `test_ctx_act.py` —— 六个都应打印 `ALL OK`。
+
 - 战斗用 `tools/ctx.py` → `tools/act.py`（一手一个 batch，别拼大计划）。
 - 拿牌前先跑 §9.1 预算：第一幕 **+4 张** 上限、f8 前 ≤14 张。
 - 每幕进 Boss 前跑 `python tools/dps.py`，净输出 <40 别进。

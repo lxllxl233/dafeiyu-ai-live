@@ -25,10 +25,19 @@ v19 的 `advisor._simulate` 只认「伤害/格挡/易伤/虚弱」，于是：
 """
 from __future__ import annotations
 
+import os
 import re
+import sys
 import time
 
-import sts2
+# 允许 `python tools/sim.py` 直接跑（sts2 在仓库根）：被 ctx/test 导入时这段是幂等的。
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_ROOT = os.path.dirname(_HERE)
+for _p in (_HERE, _ROOT):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
+
+import sts2  # noqa: E402
 
 TYPES = {"Attack": "A", "Skill": "S", "Power": "P", "Status": "T", "Curse": "C"}
 TYPE_CN = {"A": "攻", "S": "技", "P": "能", "T": "状", "C": "诅", "?": "?"}

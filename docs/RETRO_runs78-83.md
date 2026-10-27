@@ -114,6 +114,8 @@ run82 的 f29/f30/f31 三层都在 8–19 血之间靠「佩尔之眼 + 药水�
 | `tools/gates.py` | 新增 `is_free_output` + 第二/三幕「0 费输出 ≥2」门槛 | 用户提的「多打小刀」落实到机器检查 |
 | `tools/dps.py` | 单独打印 0 费/小刀输出栏，并注明净输出不含免费伤害 | 避免把免费伤害重复算进 DPS |
 | `tools/test_gates.py` | +5 组（0 费识别 / 门槛 FAIL / 2 费不算） | 回归 |
+| `tools/noncombat.py`、`tools/sim.py` | 加 `sys.path` 引导，可直接单独运行 | 之前 `python tools/noncombat.py` 会 ModuleNotFoundError |
+| `tools/test_imports.py` | 新增：11 个模块导入冒烟 + 关键 API 断言 | 钉住上面这类「只能被导入、不能单独跑」的坑 |
 
 全部离线测试：`test_sim.py`（18 组）`test_act_guards.py`（20 组）`test_gates.py` `test_combat_math.py`
 `test_ctx_act.py` —— 全绿。

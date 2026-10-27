@@ -15,7 +15,18 @@
 """
 from __future__ import annotations
 
-import sim
+import os
+import sys
+
+# 既能被 ctx.py 当库导入，也能 `python tools/noncombat.py` 直接跑（之前直接跑会
+# ModuleNotFoundError: No module named 'sts2'，白丢一次调用）。
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_ROOT = os.path.dirname(_HERE)
+for _p in (_HERE, _ROOT):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
+
+import sim  # noqa: E402
 
 RARITY = {
     "Basic": -10,
