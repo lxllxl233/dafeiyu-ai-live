@@ -9,6 +9,9 @@
 
 判据：主播窗每轮询成功都会写 logs/streamer_heartbeat.json（≤2 秒一次）。
 心跳超过 --stale 秒（默认 20）没更新 = 窗口卡死，即使进程还在。
+进程活着也还要再看一眼**位图像素**（`tools/shot_popup.py`）：这个窗默认
+`WDA_EXCLUDEFROMCAPTURE`，抓屏永远拍不到，只有 PrintWindow 能证明它真画出来了。
+自愈起窗默认照抄用户配置：`--click-through` 开、`--capture` 关。
 """
 import argparse
 import ctypes
@@ -99,7 +102,18 @@ def check_streamer(stale=20):
         return BAD, f"主播窗进程 {pid} 不在了 — python tools/live.py restart-streamer"
     if age > stale:
         return BAD, f"主播窗进程 {pid} 在，但心跳 {age:.0f}s 没动（卡死）— python tools/live.py restart-streamer"
-    return OK, f"主播窗 pid {pid}，心跳 {age:.1f}s 前，seq {hb.get('seq')}"
+    # 进程活着 ≠ 屏幕上有东西：分层窗可能画成全透明（贴图/尺寸/穿透态出错）。
+    # 抓屏（OBS/直播姬/CopyFromScreen）永远拍不到它（WDA_EXCLUDEFROMCAPTURE），
+    # 所以只能问窗口自己要位图像素。
+    try:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        from shot_popup import probe as popup_probe
+        r = popup_probe()
+    except Exception as e:  # 探针本身坏了不许把体检带崩
+        return WARN, f"主播窗 pid {pid}，心跳 {age:.1f}s 前（像素探针失败：{type(e).__name__}）"
+    if not r.get("ok"):
+        return WARN, f"主播窗 pid {pid}，心跳 {age:.1f}s 前，但{r.get('msg')}"
+    return OK, f"主播窗 pid {pid}，心跳 {age:.1f}s 前，seq {hb.get('seq')}，{r['msg']}"
 
 
 def check_obs():
@@ -172,6 +186,10 @@ def cmd_restart_streamer(args):
     cmd = [exe, "streamer.py"]
     if args.capture:
         cmd.append("--capture")
+    if getattr(args, "click_through", False):
+        # 用户的原配置就是「穿透默认开、☰ 可操作」；自愈起窗必须照抄，
+        # 否则自动重启出来的窗会挡住鼠标、点不到游戏。
+        cmd.append("--click-through")
     if args.voice:
         cmd += ["--voice", args.voice]
     subprocess.Popen(cmd, cwd=ROOT, close_fds=True, stdin=subprocess.DEVNULL,
@@ -219,7 +237,11 @@ def main():
         p.add_argument("--stale", type=int, default=20)
         p.add_argument("--interval", type=int, default=30)
         p.add_argument("--dry-run", action="store_true")
-        p.add_argument("--capture", action="store_true", default=True)
+        p.add_argument("--capture", action="store_true", default=False,
+                       help="让窗口能被录屏/直播姬显示器捕获（默认排除，和用户配置一致）")
+        p.add_argument("--click-through", action="store_true", default=True,
+                       help="启动即点击穿透（用户原配置，默认开；用 --no-click-through 关）")
+        p.add_argument("--no-click-through", dest="click_through", action="store_false")
         p.add_argument("--voice", default="mambo")
         p.set_defaults(func=fn)
 

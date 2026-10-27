@@ -1555,3 +1555,33 @@ SPOILS_MAP 藏宝图（Gold=600, UNPLAYABLE）是**永久占一个抽牌位的�
 **经验写入规则（六条）**：①≥2 局不同 run_id，或「机制 + 一局实测」；②单局只能写进「观察」，
 门槛必须有可执行检查；③反例优先，出现反例先降级再解释；④先分清工具错与判断错；
 ⑤「最近变差了」必须先在 `logs/decisions.jsonl` 里数出次数和代价；⑥只追加、不删旧条目。
+
+---
+
+# 2026-10-27 21:50 追加：屏上看不到弹窗时，先查进程，别信截图
+
+## 1. 事实：主播窗是独立进程，它没了屏幕就干净了
+`streamer.py`（`pythonw.exe`）才是屏上气泡；`overlay/index.html` 那一路在 OBS 浏览器源里，
+是给观众看的。用户说「界面看不到弹窗」时，`Get-CimInstance Win32_Process` 里**没有 streamer.py**
+→ 窗口不是坏了，是**根本不存在**（这次是窗口被关掉，Event Log 无崩溃记录）。
+`tools/live.py check` 本来就报这一条，但当时**没人跑它、也没人在跑 `live.py watch`**。
+
+## 2. 坑：这个窗默认拍不到，截图全空 ≠ 没画
+窗口带 `WDA_EXCLUDEFROMCAPTURE`（"录屏里隐藏"），`CopyFromScreen` / `shot_window.py` /
+OBS / 直播姬抓屏**都拍不到它**，抓出来是桌面背景。2026-10-27 排查时为这事绕了 20 分钟，
+差点误判成「paint 坏了」。
+
+**唯一判据**：`PrintWindow(hwnd, hdc, 2 /*PW_RENDERFULLCONTENT*/)` 取窗口自己的分层位图，
+数不透明像素 → `tools/shot_popup.py`（`--quiet` 一行结论，`--out` 存图）。
+实测正常值：`1363x300 / opaque_px≈408900`（「思考中……」气泡在位）。
+
+## 3. 自愈要照抄用户配置
+`tools/live.py restart-streamer|watch` 旧默认起的是 `streamer.py --capture`（**不穿透**），
+自动重启出来会挡鼠标、点不到游戏 —— 等于修好了又坏。已改成默认 `--click-through`、
+`--capture` 关（要拍弹窗才显式加）。
+
+## 4. 下次的开播前 30 秒
+```
+python tools/live.py check            # 五路全绿，含「弹窗位图像素」
+python tools/live.py watch            # 常驻，心跳/进程没了 30s 内自动按原配置重启
+```

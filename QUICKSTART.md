@@ -100,5 +100,6 @@ python sts2.py report        # JSONL 战报 → logs/run_*.md
 | 药水用了没反应 | 旧版行为：`use_potion` 返回 `pending` 时重读 state 看 `is_queued`，最多重试 1 次 |
 | 前几句有声、后面全哑 | MamboTTS 假活：`python tools/tts_guard.py --check`，坏了 `--restart`（overlay 连续合成失败会自动拉起 guard） |
 | 同一句说两次（回音） | 看 `curl 127.0.0.1:8730/health` 的 `roles`：只允许一个 `live` 页面出声、主播窗在页面出声时让位；`audio_ts` 能看出是谁在响 |
+| 屏幕上没有弹窗 | 先 `python tools/live.py check`（含「弹窗位图像素」）；进程没了就 `restart-streamer`，想一劳永逸开播前挂着 `python tools/live.py watch`。**截图/录屏永远拍不到这个窗**（`WDA_EXCLUDEFROMCAPTURE`），别用截图判「有没有画」；要看真图 `python tools/shot_popup.py` |
 
 更多命令见 [README.md](README.md)。
