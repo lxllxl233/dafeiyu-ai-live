@@ -38,3 +38,5 @@ tmp_*.txt
 tmp_*.json
 tmp_*.py
 tmp_notes*.md
+logs/*.out
+logs/*.err
