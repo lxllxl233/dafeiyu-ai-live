@@ -663,6 +663,8 @@ def _combat(state: dict, mem: dict) -> dict:
         warns.append("HAND_FULL 手牌 10/10：抽牌/加牌/生成的牌会静默消失（run80 血债），先把牌打掉再抽")
     elif hand_n == 9:
         warns.append("hand_near_full(9/10)：再抽就溢出")
+    if any("BINDING" in str(x.get("id") or "").upper() for x in potions):
+        warns.append("缚魂药水实测无效：喝了敌方既没虚弱也没易伤（run81 两次验证），别把它算进伤害")
     if warns:
         out["warn"] = warns
     return out
