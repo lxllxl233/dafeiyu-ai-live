@@ -173,9 +173,11 @@ def main():
             check("batch 错误保留", "STOP" in (r4.get("err") or ""), True)
 
             # 5) GAME_OVER：写 run summary，胜/负都写
+            # 这里 before 必须用「手上没有能打的牌」的局面：漏费护栏会拦「还剩 3 费却空 end」，
+            # 而 GAME_OVER 那一手本来就没有下一回合可打（旧 fixture 直接撞在护栏上，测试一直是红的）。
             act._run_batch = batch_ok
             act.sts2.get_state = lambda: game_over_state(win=True)
-            win = act._execute(before, [{"end": 1}], [], {})
+            win = act._execute(combat_state(hand=[]), [{"end": 1}], [], {})
             check("结束回合返回成功", win.get("ok"), True)
             summary = json.load(open(os.path.join(tmp, "run_summary_run_test.json"),
                                      encoding="utf-8"))

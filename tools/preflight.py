@@ -28,7 +28,7 @@ sys.path.insert(0, TOOLS)
 
 TESTS = ["test_imports.py", "test_sim.py", "test_act_guards.py",
          "test_gates.py", "test_combat_math.py", "test_ctx_act.py",
-         "test_regressions.py"]
+         "test_regressions.py", "test_free_attack.py"]
 
 
 def run_test(name: str) -> tuple[bool, str]:

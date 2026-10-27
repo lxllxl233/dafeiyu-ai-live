@@ -446,11 +446,15 @@ def _calc(state: dict, st: sim.Sim, hand: list[dict], potions: list[dict]) -> tu
     blk = sim.max_block(state)
     tax_dmg, tax_hp = sim.status_tax_parts(st.hand)
     tax = tax_dmg + tax_hp
+    # 狱火：回合初自伤发生在敌方结算之后，净掉血里必须带上（run85 固定差 1 的来源）
+    tick = sts2._int(getattr(st, "tick", 0), 0)
     # 可格挡状态伤害和攻击共用格挡池；无视格挡的失血直接进净掉血。
-    net = max(0, inc + tax_dmg - blk) + tax_hp
+    net = max(0, inc + tax_dmg - blk) + tax_hp + tick
     full = net == 0
     lethal = sim.lethal_targets(state)
     out = {"n": len(st.alive()), "inc": inc, "blk": blk, "net": net, "full": full}
+    if tick:
+        out["tick"] = tick
     if tax:
         out["tax"] = tax
         out["tax_dmg"] = tax_dmg
@@ -558,6 +562,11 @@ def _combat(state: dict, mem: dict) -> dict:
     out["hand"] = _hand_out(st.hand)
     # 同名牌会合并成一条（q 张），只看条数会以为手牌很少：给一个真实张数。
     out["hand_n"] = len(st.hand)
+    if st.free_atk:
+        # 引擎在 buff 生效时把所有攻击牌的 energy_cost 都报 0：手牌里的 c 已经还原成
+        # 原费，这里再明说「只有下一张攻击牌是 0 费」，避免按「全都免费」算能量。
+        out["free_atk"] = {"n": st.free_atk, "t": "A",
+                           "why": "免费攻击：只有下一张攻击牌 0 费，不是整手都免"}
     piles = _piles(state)
     if piles:
         out["piles"] = piles
@@ -903,6 +912,11 @@ def build(state: dict) -> dict:
     deck = _deck(state)
     if deck:
         out["deck"] = deck
+    # run85 P9：营养汤把打击附成「永恒」= 不能被移除 → 商店删牌这条路被自己堵死。
+    # 这不是 bug，但模型必须知道「删打击」已不可行，否则会一直按老路线瘦身。
+    if any(str((r or {}).get("relic_id") or (r or {}).get("id") or "") == "NUTRITIOUS_SOUP"
+           for r in (run.get("relics") or []) if isinstance(r, dict)):
+        out["deck_lock"] = "营养汤：牌组里的『打击』带『永恒』，不能被移除（删牌要挑别的牌）"
     choice = _choice(state)
     try:
         ev = noncombat.evaluate(state, choice)

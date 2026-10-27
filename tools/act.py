@@ -173,15 +173,21 @@ def forecast(st: dict, sm: sim.Sim, steps: list, ended: bool) -> dict:
         hp, take = res["hp_after"], res["taken"]
     else:
         hp, take = sm.hp, None
-    kills = [e["i"] for e in sm.enemies if e["dead"]]
+    kills = [e["i"] for e in sm.enemies if e["dead"] and not e.get("revive")]
     stun = [e["i"] for e in sm.enemies if e["stunned"] and not e["dead"]]
     fx = {"e": sm.energy, "hp": hp, "draw": sm.draws, "exh": sm.exhausts}
+    # 幻象：这一手打死但下回合会满血复活 —— 不是斩杀，别让计划按「清场」收尾
+    rev = [e["i"] for e in sm.enemies if e.get("revive")]
+    if rev:
+        fx["revive"] = rev
+    if ended and (res.get("tick") or 0):
+        fx["tick"] = res["tick"]
     if ended and sm.draws:
         # 抽到的牌不在本地 sim 手里；end_turn 的状态税/掉血只能按旧手牌估。
         fx["draw_unknown"] = sm.draws
     if take is not None:
         fx["take"] = take
-    if not sm.alive():
+    if not sm.alive() and not any(e.get("revive") for e in sm.enemies):
         # 清场这一手：战斗结束时燃烧之血回 6、遗物/死亡结算都会改血量，
         # 本地 sim 只算回合内，血/掉血在这一手不可信（账本 15 条 fx.hp 误报都来自这里）。
         fx["clear"] = 1
@@ -280,6 +286,9 @@ def _pre_draw(st: dict) -> bool:
 
     run68 f17：Boss 准备回合，ctx 读到 hand=[]，我照着手牌空发了纯 end，
     结果把整个第 8 回合（3 费 + 5 张牌，Boss 不还手）空过。
+
+    run85 f11 t2 误报：手牌确实打空了、能量还剩 1，被判「过渡快照」拒绝 end。
+    过渡快照的特征是**新回合满能量**，所以再加一条：能量没满就放行。
     """
     c = st.get("combat") or {}
     if [x for x in (c.get("hand") or []) if isinstance(x, dict)]:
@@ -288,7 +297,16 @@ def _pre_draw(st: dict) -> bool:
         draw, dis, _exh = ctxmod._piles_cards(st)
     except Exception:  # noqa: BLE001
         return False
-    return bool(draw or dis)
+    if not (draw or dis):
+        return False
+    p = c.get("player") or {}
+    run = st.get("run") or {}
+    e = sts2._int(p.get("energy"), 0)
+    em = sts2._int(p.get("max_energy", run.get("max_energy")), 0) or 3
+    if e < em:
+        # 还有能量没花完 → 手牌是真打空了，不是「上一手 end 之后的过渡快照」
+        return False
+    return True
 
 
 def _stale_end(st: dict, seq: list) -> str | None:

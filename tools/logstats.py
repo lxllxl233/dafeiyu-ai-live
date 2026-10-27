@@ -294,6 +294,7 @@ def main(argv: list[str]) -> int:
     p.add_argument("--idx", type=int, required=True)
     p = sub.add_parser("replay")
     p.add_argument("--limit", type=int, default=6)
+    p.add_argument("--run", default=None, help="只看某一局（run_id）")
     p = sub.add_parser("verify")
     p.add_argument("--limit", type=int, default=8)
     p.add_argument("--field", default="all")
@@ -302,6 +303,8 @@ def main(argv: list[str]) -> int:
     if not recs:
         print(f"没有日志：{LOG}")
         return 1
+    if getattr(a, "run", None):
+        recs = [r for r in recs if r.get("run_id") == a.run]
     if a.cmd == "summary":
         return cmd_summary(recs)
     if a.cmd == "errors":

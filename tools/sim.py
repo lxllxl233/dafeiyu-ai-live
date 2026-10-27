@@ -138,6 +138,9 @@ def parse_card(card: dict, idx: int | None = None) -> dict:
     out = {
         "i": idx, "id": cid, "n": str(card.get("name") or db.get("name") or cid),
         "c": max(0, sts2._int(card.get("energy_cost", card.get("cost")), sts2._int(db.get("cost"), 0))),
+        # 卡库原费：引擎在「免费攻击」生效时会把所有攻击牌报成 0 费，
+        # 需要原费才能还原「这一张本来要几费」。
+        "c_base": max(0, sts2._int(db.get("cost"), 0)),
         "t": card_type(card),
         "up": 1 if (card.get("upgraded") or card.get("is_upgraded")) else 0,
         "play": card.get("playable", True) is not False,
@@ -149,6 +152,9 @@ def parse_card(card: dict, idx: int | None = None) -> dict:
     # 引擎给的实时牌面（ctx 用它，而不是 DB 里可能过期的中文描述）
     if text:
         out["ltx"] = text
+        # 永恒 ETERNAL：不能被移除（营养汤把打击附成 0 费+永恒，商店删不掉）
+        if "永恒" in text:
+            out["eternal"] = 1
 
     # 狂怒 RAGE：卡面数字在 DB 里是变量占位符（"获得点格挡"），引擎实测 3 点/攻击。
     if str(cid).upper().startswith("RAGE"):
@@ -307,18 +313,61 @@ def _power_ids(powers) -> dict:
     return out
 
 
+def _free_attack_count(powers) -> int:
+    """未消耗的「免费攻击 / FREE_ATTACK」层数：只有下一张攻击牌是 0 费。
+
+    run85 f11/f17/f20/f21 四次 batch 中断的根因：引擎在 buff 生效时把**所有**
+    攻击牌的 energy_cost 都报成 0，ctx 照抄 → 计划按「全都免费」算能量，
+    实际只有一张免费，打到第三张就断供。这里把 buff 还原成「还剩几张免费」。
+    """
+    n = 0
+    for p in powers or []:
+        if not isinstance(p, dict):
+            continue
+        pid = str(p.get("power_id") or p.get("id") or "").upper()
+        if pid in ("FREE_ATTACK", "FREE_ATTACK_POWER"):
+            n += max(1, sts2._int(p.get("amount"), 1))
+    return n
+
+
+def _turn_start_hp_loss(powers) -> int:
+    """回合开始时自己掉血的 power（狱火 INFERNO）：进回合末血量预测。
+
+    run85 的 take 误差里 12/35 是固定 +1 —— 都是狱火那 1 点回合初自伤没算。
+    """
+    total = 0
+    for p in powers or []:
+        if not isinstance(p, dict):
+            continue
+        pid = str(p.get("power_id") or p.get("id") or "").upper()
+        blob = f"{p.get('name') or ''}{p.get('description') or ''}"
+        if "INFERNO" in pid or "狱火" in blob:
+            total += max(1, sts2._int(p.get("amount"), 1))
+    return total
+
+
 def _stun_threshold(e: dict) -> int:
-    """「横冲直撞 N」：血量第一次 ≤ N 时这回合的攻击直接取消。
+    """「横冲直撞 N」/「尖叫」：血量第一次跌破阈值时这回合的攻击直接取消。
 
     仪式兽实测阈值是 buff 里写的 160（机制文案写 150 是错的），所以从
     powers 的「横冲直撞NNN」里取数字，取不到就当没有这个机制。
+    尖叫 SHRIEK_POWER（run85 f11 骇鳗）：生命值第一次降到 50% 或以下就自晕，
+    power 的 amount 就是 50% 血线（150 血的骇鳗 amount=75）。
     """
+    maxhp = sts2._int(e.get("max_hp"), 0)
     for p in e.get("powers") or []:
         if not isinstance(p, dict):
             continue
+        pid = str(p.get("power_id") or p.get("id") or "").upper()
         blob = f"{p.get('name') or ''}{p.get('power_id') or ''}{p.get('description') or ''}"
-        if "横冲直撞" not in blob:
-            continue
+        if "SHRIEK_POWER" not in pid and "尖叫" not in blob:
+            if "横冲直撞" not in blob:
+                continue
+        n = sts2._int(p.get("amount"), 0)
+        if "SHRIEK_POWER" in pid or "尖叫" in blob:
+            if 0 < n < maxhp:
+                return n
+            return max(1, maxhp // 2)
         m = re.search(r"横冲直撞\s*(\d+)", blob) or re.search(r"(\d+)", blob)
         if m:
             n = sts2._int(m.group(1), 0)
@@ -352,6 +401,10 @@ def enemy_state(e: dict, idx: int | None = None) -> dict:
         "intangible": sts2._int(pm.get("intangible"), 0),
         "ravenous": ravenous,
         "minion": "MINION_POWER" in pid,
+        # 振翅：攻击牌伤害 -50%；幻象：死了下回合满血复活（都不该被当成普通目标）
+        "flutter": 1 if "FLUTTER_POWER" in pid else 0,
+        "illusion": 1 if "ILLUSION_POWER" in pid else 0,
+        "escape": sts2._int(pid.get("ESCAPE_ARTIST_POWER"), 0),
         "dead": not (e.get("is_alive", True) and sts2._int(e.get("current_hp", e.get("hp")), 1) > 0),
         "stunned": False, "str": sts2._int(pm.get("str"), 0),
         "stun_at": _stun_threshold(e) or sts2._int(e.get("stun_at"), 0),
@@ -413,6 +466,15 @@ class Sim:
         self.next_attack_zero = False
         self.next_skill_zero = False
         self.skills_zero = False
+        # 「免费攻击」还有几张没花（来自 FREE_ATTACK buff）。和 next_attack_zero 分开：
+        # 前者是进战斗/换回合时就挂着的，后者是本回合打了无情猛攻才给的。
+        self.free_atk = 0
+        self.free_discount = 0
+        # 永冻冰晶：本场第一张能力牌给 7 甲（run85 有 6 个回合的入伤高估来自它）
+        self.permafrost = 0
+        self._pf_used = False
+        # 狱火：回合开始时失去 N 点生命（算进回合末血量）
+        self.tick = 0
         self.next_attack_twice = False
         self.barricade = False
         self.metallicize = 0
@@ -475,6 +537,20 @@ class Sim:
         s.dark_embrace = sts2._int(pid.get("DARK_EMBRACE_POWER"), 0)
         s.rupture = sts2._int(pid.get("RUPTURE_POWER"), 0)
         s.skills_zero = "CORRUPTION_POWER" in pid
+        s.free_atk = _free_attack_count(p.get("powers"))
+        s.tick = _turn_start_hp_loss(p.get("powers"))
+        rids = {str(r.get("relic_id") or r.get("id") or "").upper()
+                for r in (run.get("relics") or []) if isinstance(r, dict)}
+        if "PERMAFROST" in rids:
+            s.permafrost = 7
+        if s.free_atk:
+            # buff 生效时引擎把所有攻击牌的 energy_cost 都报 0：还原成原费，
+            # 只留 free_atk 这一个「还能免几张」的口径，避免按「全免费」算能量。
+            for card in s.hand:
+                if card.get("t") == "A" and not card.get("c") and card.get("c_base") \
+                        and not card.get("eternal"):
+                    card["c"] = card["c_base"]
+                    card["disc"] = 1
         av = (state.get("agent_view") or {}).get("combat") or {}
         s.exhaust_pile = len([x for x in (av.get("exhaust_cards") or []) if isinstance(x, dict)])
         return s
@@ -506,7 +582,7 @@ class Sim:
         if card.get("x"):
             return self.energy
         c = max(0, sts2._int(card.get("c"), 0))
-        if card.get("t") == "A" and self.next_attack_zero:
+        if card.get("t") == "A" and (self.next_attack_zero or self.free_atk > 0):
             c = 0
         if card.get("t") == "S" and (self.next_skill_zero or self.skills_zero):
             c = 0
@@ -557,7 +633,7 @@ class Sim:
         return d
 
     def hurt_enemy(self, e: dict, per: int, hits: int = 1,
-                   strength: bool = True, vuln: bool = True) -> int:
+                   strength: bool = True, vuln: bool = True, attack: bool = True) -> int:
         if e["dead"] or e["hp"] <= 0:
             return 0
         per = max(0, int(per))
@@ -565,6 +641,9 @@ class Sim:
             per += self.str_bonus
         if vuln and e["vuln"]:
             per = int(per * 1.5)  # 力量先加，易伤后乘；顺序不能反
+        # 振翅 FLUTTER：从攻击牌受到的伤害 -50%（能力牌/药水/势不可当不算攻击牌）
+        if attack and e.get("flutter"):
+            per = max(1, int(per * 0.5)) if per else 0
         if e["timid"]:
             e["blk"] += e["timid"]
             e["timid"] = 0
@@ -595,6 +674,10 @@ class Sim:
             if e["hp"] <= 0:
                 e["hp"] = 0
                 e["dead"] = True
+                # 幻象 ILLUSION：死了下回合满血复活 → 这不是斩杀，别把它算进 kill
+                if e.get("illusion") and not e.get("_revived_done"):
+                    e["revive"] = 1
+                    e["_revived_done"] = True
                 self._on_death(e)
                 break
         # 横冲直撞：第一次跌破阈值 → 这只怪本回合的攻击取消（不算「击晕」状态，只跳这一下）
@@ -639,12 +722,15 @@ class Sim:
         # 可格挡的状态伤害与攻击共享格挡池；失去生命（呼唤/悔恨）无视格挡。
         tax_dmg, tax_hp = status_tax_parts(self.hand)
         end_taken = max(0, inc + tax_dmg - block)
-        taken = end_taken + tax_hp + self.thorns_taken
-        hp_after = self.hp - end_taken - tax_hp
+        # 狱火：回合开始时自伤，发生在「敌方结算之后、下一次 ctx 快照之前」，
+        # 所以它算进回合末血量（run85 的 +1 误差全都是这一项）。
+        tick = max(0, sts2._int(self.tick, 0))
+        taken = end_taken + tax_hp + self.thorns_taken + tick
+        hp_after = self.hp - end_taken - tax_hp - tick
         return {"incoming": inc, "taken": taken, "hp_after": hp_after,
                 "block": block, "tax": tax_dmg + tax_hp,
                 "tax_dmg": tax_dmg, "tax_hp": tax_hp,
-                "thorns": self.thorns_taken}
+                "thorns": self.thorns_taken, "tick": tick}
 
     # ---------------------------------------------------------------- 出牌
     def play(self, card: dict, target: int | None = None) -> dict | None:
@@ -656,6 +742,13 @@ class Sim:
         cm = card.get("cm") or {}
         used_na = self.next_attack_zero and card.get("t") == "A" and not cm.get("na")
         used_ns = self.next_skill_zero and card.get("t") == "S" and not cm.get("ns")
+        # 免费攻击只会花掉一层：打掉一张攻击牌就少一张免费（不是整手都免）
+        if card.get("t") == "A" and not cm.get("na"):
+            base_c = max(0, sts2._int(card.get("c"), 0))
+            if base_c > cost:
+                self.free_discount += base_c - cost
+            if self.free_atk > 0 and not used_na:
+                self.free_atk -= 1
         self.energy -= cost
         self.played += 1
         card["_played"] = True
@@ -706,6 +799,11 @@ class Sim:
             self.block += gain
             step["blk"] = gain
         # 狂怒：本回合每打一张攻击牌 +N 格挡（引擎实测生效，老版本漏算）
+        if card.get("t") == "P" and self.permafrost and not self._pf_used:
+            # 永冻冰晶：本场第一张能力牌给 7 甲（和狂怒/势不可当同属「额外获得格挡」）
+            self._pf_used = True
+            self.block += self.permafrost
+            step["blk"] = step.get("blk", 0) + self.permafrost
         if card.get("rage"):
             self.rage += card["rage"]
         if self.rage and card.get("t") == "A":

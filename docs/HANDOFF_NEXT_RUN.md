@@ -1,5 +1,11 @@
 # 交接 · 2026-10-27 12:5x（用户要求开新窗口，run84 已存盘停在 f1）
 
+> **⚠️ 本文件已过期（内容停在 run84 存档）。当前状态见：**
+> - run85（`FNVZ5NS2U5`）已打完并死在第二幕 f22，游戏现在 `GAME_OVER`；
+> - 复盘：`docs/RUN85_VERIFICATION.md`；修复+回归：`docs/RUN86_FIXES.md`（**run86 开工前必读 §5**）；
+> - run86 精度只认 `python -X utf8 tools/accuracy.py`（口径写死在文件头，别再用别的分母）。
+
+
 ## 1. 现在的位置
 
 - 游戏：`MAIN_MENU`，**run84 已存档**（`continue_run` 可用）。

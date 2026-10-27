@@ -463,6 +463,8 @@ def _hand_value_rank(hand, enemies) -> str:
     for c in hand:
         if not isinstance(c, dict):
             continue
+        if card_is_status_like(c):
+            continue  # 状态/诅咒牌不进攻击/格挡价值榜（毒素 5 点是自伤，不是输出）
         cid = str(c.get("card_id") or c.get("id") or "?")
         up = "+" if (c.get("upgraded") or c.get("is_upgraded")) else ""
         cost = _int(c.get("energy_cost", c.get("cost")), 0)
@@ -778,6 +780,24 @@ def potion_at(state: dict, index: int):
         if _int(p.get("index"), -1) == index:
             return p
     return None
+
+
+def free_potion_slots(state: dict) -> int:
+    """空药水位数量（A10 只有 2 格；满了再领奖励只会静默 pending）。"""
+    return sum(1 for p in potion_slots(state) if not p.get("potion_id"))
+
+
+def pending_potion_rewards(state: dict) -> list:
+    """奖励界面里还没领的药水奖励的 reward 下标。"""
+    rew = state.get("reward") or {}
+    out = []
+    for i, r in enumerate(rew.get("rewards") or []):
+        if not isinstance(r, dict):
+            continue
+        t = str(r.get("reward_type") or r.get("type") or "").lower()
+        if "potion" in t and not (r.get("is_claimed") or r.get("claimed")):
+            out.append(i)
+    return out
 
 
 def _hp_gate_line(s):
@@ -1856,8 +1876,26 @@ def zero_if_bad(v: int, default: int) -> int:
     return v if v and v > 0 else default
 
 
+def card_is_status_like(c: dict) -> bool:
+    """状态/诅咒牌（毒素/伤口/灼烧…）。
+
+    这些牌身上也有 Damage 动态值，但那是**自己**掉血的数值，不是攻击伤害：
+    毒素 TOXIC 的 Damage=5 是「回合末在手牌里就扣自己 5 血」。run85 里
+    VALUE_RANK 把它排成「5伤/1费=5.0」并进了 3 个出牌计划，等于把自伤当输出。
+    """
+    cid = str(c.get("card_id") or c.get("id") or "")
+    t = str(c.get("card_type") or c.get("type") or "").lower()
+    if not t:
+        db = CARD_DB.get(cid) or {}
+        t = str(db.get("type") or "").lower()
+    return "status" in t or "curse" in t
+
+
 def _attack_profile(c: dict):
     """(每段伤害, 固定段数, 易伤额外段数)；Damage 已含自身力量/虚弱。"""
+    # 状态/诅咒牌一律不是攻击牌（引擎也会给它们一个 Damage 字段）
+    if card_is_status_like(c):
+        return None
     per = _card_live(c, {"Damage", "CalculatedDamage"})
     if not per:
         return None
@@ -2550,6 +2588,20 @@ def deck_cap_guard(before: dict) -> str | None:
     )
 
 
+def pending_card_reward(state: dict) -> bool:
+    """奖励界面还有没领的卡牌奖励（collect/resolve 会把它一并塞进牌组）。"""
+    rew = state.get("reward") or {}
+    if rew.get("card_options"):
+        return True
+    for r in rew.get("rewards") or []:
+        if not isinstance(r, dict):
+            continue
+        t = str(r.get("reward_type") or r.get("type") or "").lower()
+        if "card" in t and not (r.get("is_claimed") or r.get("claimed")):
+            return True
+    return False
+
+
 def cmd_do(action, card=None, target=None, option=None, thought="", meme="", options=None, full=False, force=False):
     if options:
         if action != "select_deck_card":
@@ -2567,6 +2619,16 @@ def cmd_do(action, card=None, target=None, option=None, thought="", meme="", opt
         if msg:
             print(msg)
             sys.exit(3)
+    # run85：collect_rewards_and_proceed 会静默把卡牌奖励一起领走，绕过 DECK_CAP
+    # （牌组 16→20 张，第二幕就是被这 4 张稀释掉的）。先 skip 再收。
+    if action in ("collect_rewards_and_proceed", "resolve_rewards") and not force:
+        if before.get("screen") == "REWARD" and pending_card_reward(before):
+            msg = deck_cap_guard(before)
+            if msg:
+                print(msg.replace(
+                    "  真要拿（必须能说出踢掉谁）：python sts2.py do choose_reward_card --option N --force",
+                    "  要空收奖励（跳过卡牌）：python sts2.py do skip_reward_cards，再 collect_rewards_and_proceed"))
+                sys.exit(3)
     if action in ("play_card", "end_turn") and before.get("screen") == "COMBAT":
         acts = before.get("available_actions") or []
         if acts and action not in acts:
@@ -2636,6 +2698,24 @@ def cmd_do(action, card=None, target=None, option=None, thought="", meme="", opt
             if ti is not None:
                 target = ti
                 print(f"POTION_AUTO_TARGET 需要目标 → target_index={ti}（最低血敌人）")
+    # run85 C8：药水位只有 2 格，满了再 claim 会静默回 pending（4 次「以为拿到、其实没有」）。
+    if action in ("claim_reward", "claim_all_rewards") and not force:
+        pend = pending_potion_rewards(before)
+        if action == "claim_reward":
+            idx = _int(option, 0)
+            pend = [x for x in pend if x == idx]
+        free = free_potion_slots(before)
+        if pend and free < len(pend):
+            print(
+                f"POTION_SLOTS_FULL 药水只有 {len(potion_slots(before))} 格，空 {free} 格，"
+                f"却要领 {len(pend)} 瓶（奖励 {pend}）—— 引擎会返回 pending，等于没领到。\n"
+                "  先丢一瓶：python sts2.py do discard_potion --option N\n"
+                "  或者跳过这个奖励：python sts2.py do skip_reward_cards"
+            )
+            for q in potion_slots(before):
+                print(f"  slot[{q.get('index')}] {q.get('name') or '-'} "
+                      f"occupied={bool(q.get('potion_id'))}")
+            sys.exit(2)
     params = {}
     if card is not None:
         params["card_index"] = card
