@@ -7,6 +7,17 @@ import time
 from dafeiyu.agent import play
 from dafeiyu.agent.planner import _extract_plan
 
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _isolate_live_stop(tmp_path, monkeypatch):
+    # 真实直播时 logs/autoplay.stop 可能存在，测试不能继承这个状态。
+    monkeypatch.setattr(play, "STOP_PATH", tmp_path / "autoplay.stop")
+    play._stop.clear()
+    yield
+    play._stop.clear()
+
 
 class _FakeSts2:
     def __init__(self, states):
@@ -133,6 +144,44 @@ def test_blind_multi_select_uses_ui_fallback(monkeypatch):
     assert play._blind_selection(base["selection"]) is True
     assert play._card_selection(fake, base) == "CARD ui 2 -> EVENT"
     assert fake.calls == []
+
+
+def test_llm_usage_accumulates(tmp_path, monkeypatch):
+    monkeypatch.setattr(play, "STATUS_PATH", tmp_path / "autoplay.json")
+    monkeypatch.setattr(play, "LOG_PATH", tmp_path / "autoplay.jsonl")
+    with play._lock:
+        for key, value in (("tokens_in", 0), ("tokens_out", 0),
+                           ("tokens_total", 0), ("llm_calls", 0), ("tokens_last", 0)):
+            play._state[key] = value
+    play._add_llm_usage({"input": 120, "output": 30, "total": 150}, "run-a")
+    play._add_llm_usage({"input": 80, "output": 20, "total": 100}, "run-b")
+    st = play.status()
+    assert st["tokens_in"] == 200
+    assert st["tokens_out"] == 50
+    assert st["tokens_total"] == 250
+    assert st["tokens_last"] == 100
+    assert st["llm_calls"] == 2
+    assert play.STATUS_PATH.exists()
+
+
+def test_stop_from_other_process_keeps_remote_running(monkeypatch, tmp_path):
+    monkeypatch.setattr(play, "STOP_PATH", tmp_path / "autoplay.stop")
+    monkeypatch.setattr(play, "_thread", None)
+    monkeypatch.setattr(play, "_pid_alive", lambda pid: True)
+    monkeypatch.setattr(play, "status", lambda: {
+        "running": True, "pid": 999999, "mode": "llm", "last": "LLM 思考…"})
+    writes = []
+
+    def fake_write(**kw):
+        writes.append(kw)
+        return {}
+
+    monkeypatch.setattr(play, "_write_status", fake_write)
+    play._stop.clear()
+    out = play.stop_autoplay()
+    assert "正在停手" in out["message"]
+    assert any(w.get("stopping") is True for w in writes)
+    assert not any(w.get("running") is False for w in writes)
 
 
 def test_rest_prefers_heal_when_low():

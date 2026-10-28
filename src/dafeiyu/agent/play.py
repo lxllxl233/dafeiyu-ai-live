@@ -36,6 +36,12 @@ _state: dict = {
     "running": False, "screen": "", "floor": 0, "hp": 0, "max_hp": 0,
     "step": 0, "last": "", "error": "", "started_at": 0, "updated_at": 0,
     "game": "", "pid": 0, "mode": "local", "pace": "voice",
+    # LLM 实际 token（来自 API 的 usage，不是按字数估算）
+    "tokens_in": 0, "tokens_out": 0, "tokens_total": 0, "llm_calls": 0,
+    "tokens_last": 0,
+    # 录像/停止状态
+    "recording": False, "record_path": "", "record_error": "",
+    "stopping": False,
 }
 
 
@@ -60,6 +66,38 @@ def _log(msg: str, **data) -> None:
             f.write(json.dumps(row, ensure_ascii=False) + "\n")
     except OSError:
         pass
+
+
+def _stopping() -> bool:
+    return _stop.is_set() or STOP_PATH.exists()
+
+
+def _add_llm_usage(usage: dict | None, run_id: str = "") -> dict:
+    """累计 API 返回的 usage；失败重试的 token 也算，观众看到的是真账单。"""
+    usage = usage if isinstance(usage, dict) else {}
+    try:
+        tin = int(usage.get("input") or 0)
+        tout = int(usage.get("output") or 0)
+        total = int(usage.get("total") or (tin + tout))
+    except (TypeError, ValueError):
+        tin = tout = total = 0
+    if total <= 0 and tin <= 0 and tout <= 0:
+        return {"input": 0, "output": 0, "total": 0}
+    with _lock:
+        _state["tokens_in"] = int(_state.get("tokens_in") or 0) + tin
+        _state["tokens_out"] = int(_state.get("tokens_out") or 0) + tout
+        _state["tokens_total"] = int(_state.get("tokens_total") or 0) + total
+        _state["llm_calls"] = int(_state.get("llm_calls") or 0) + 1
+        _state["tokens_last"] = total
+        _state["updated_at"] = time.time()
+        try:
+            STATUS_PATH.write_text(json.dumps(_state, ensure_ascii=False, indent=1),
+                                   encoding="utf-8")
+        except OSError:
+            pass
+    _log("llm_usage", run_id=run_id, input=tin, output=tout, total=total,
+         cumulative=int(_state.get("tokens_total") or 0))
+    return {"input": tin, "output": tout, "total": total}
 
 
 def _pid_alive(pid: int | None) -> bool:
@@ -129,6 +167,38 @@ def _say(text: str) -> None:
         pass
 
 
+def _start_autoplay_recording(game: str, mode: str) -> None:
+    """自动玩默认录像；OBS 不在就尝试拉起，失败只记状态，不挡玩法。"""
+    try:
+        from ..recording import auto  # noqa: PLC0415
+
+        res = auto.start_session(game, note=f"自动玩 · {mode}")
+    except Exception as exc:  # noqa: BLE001
+        res = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+    _write_status(
+        recording=bool(res.get("ok")),
+        record_path=str(res.get("path") or ""),
+        record_error="" if res.get("ok") else str(res.get("error") or "录像启动失败"),
+    )
+    _log("record_start" if res.get("ok") else "record_failed",
+         path=res.get("path"), error=res.get("error"))
+
+
+def _finish_autoplay_recording(result: str = "") -> dict:
+    try:
+        from ..recording import auto  # noqa: PLC0415
+
+        res = auto.stop_session(result=result)
+    except Exception as exc:  # noqa: BLE001
+        res = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+    _write_status(recording=False,
+                  record_path=str(res.get("path") or _state.get("record_path") or ""),
+                  record_error="" if res.get("ok") else str(res.get("error") or ""))
+    _log("record_stop" if res.get("ok") else "record_stop_failed",
+         path=res.get("path"), error=res.get("error"))
+    return res
+
+
 def _settings() -> tuple[str, str]:
     """读本机配置；菜单/控制台刚改过也能在下一步生效。"""
     try:
@@ -164,6 +234,8 @@ def _sleep(seconds: float) -> None:
 
 def _pace() -> None:
     """normal = 旧版快节奏；voice = 等上一句估计播完，至少留 2 秒。"""
+    if _stopping():
+        return
     _, pace = _settings()
     if pace == "normal":
         _sleep(0.7)
@@ -322,10 +394,15 @@ def _combat_llm(tools, planner, state: dict, game: str) -> str:
         result = run_turn(
             goal, tools=tools, planner=planner, dry_run=False,
             game=game or "slay-the-spire-2", max_attempts=2,
+            should_stop=_stopping,
         )
     except Exception as exc:  # noqa: BLE001
         _log("llm_failed", error=f"{type(exc).__name__}: {exc}")
         return f"LLM_FAILED {type(exc).__name__}: {exc}"
+    _add_llm_usage(result.get("tokens"), str(result.get("run_id") or ""))
+    if _stopping():
+        _log("llm_cancelled", run_id=result.get("run_id"))
+        return "STOPPED"
     if not result.get("ok"):
         steps = result.get("steps") or []
         nodes = {str(s.get("node") or "") for s in steps if isinstance(s, dict)}
@@ -385,6 +462,8 @@ def _combat(sts2, advisor, state: dict, *, mode: str = "local",
             llm_tools=None, llm_planner=None, game: str = "") -> str:
     if mode == "llm" and llm_tools is not None and llm_planner is not None:
         out = _combat_llm(llm_tools, llm_planner, state, game)
+        if out == "STOPPED" or _stopping():
+            return "STOPPED"
         if out.startswith(("LLM_FAILED_PLAN", "LLM_FAILED_VALIDATE", "LLM_FAILED_EXECUTE")):
             # 规划/验算/执行失败时重新读当前局面，用本地算账兜底；执行失败
             # 也可能是 LLM 只打了一半，此时更不能把整局停在这里。
@@ -583,6 +662,8 @@ def _modal(sts2, state: dict) -> str:
 
 def _one_step(sts2, advisor, state: dict, *, mode: str = "local",
               llm_tools=None, llm_planner=None, game: str = "") -> str:
+    if _stopping():
+        return "STOPPED"
     screen = _screen(state)
     if screen == "GAME_OVER":
         return "GAME_OVER"
@@ -640,10 +721,16 @@ def _run(game: str, mode: str = "local") -> None:
 
             cfg = LiveConfig.load()
             llm_tools = Sts2Tools(game)
-            llm_planner = LLMPlanner(cfg, model=cfg.autoplay_llm_model or cfg.llm_model)
+            llm_planner = LLMPlanner(cfg, model=cfg.autoplay_llm_model or cfg.llm_model,
+                                      timeout=25.0)
         _speech_until = 0.0
         _write_status(running=True, game=game, error="", step=0, mode=mode,
                       started_at=time.time(), last="启动游戏…")
+        if not _stopping():
+            _start_autoplay_recording(game, mode)
+        if _stopping():
+            _write_status(last="已停手")
+            return
         state = _wait_game(sts2, timeout=150)
         if state is None:
             _write_status(running=False, error="启动超时：游戏 API 未就绪")
@@ -654,7 +741,7 @@ def _run(game: str, mode: str = "local") -> None:
         _log("start", game=game, mode=mode)
         step = 0
         stalled = 0
-        while not _stop.is_set() and not STOP_PATH.exists():
+        while not _stopping():
             if step >= 5000:
                 _write_status(running=False, last="达到步数上限，停手")
                 break
@@ -690,6 +777,10 @@ def _run(game: str, mode: str = "local") -> None:
                 _log("step_error", error=last)
                 _write_status(error=last)
                 time.sleep(1.2)
+            if last == "STOPPED":
+                _write_status(last="已停手")
+                _log("stop")
+                break
             step += 1
             _set_from_state(sts2.get_state() if not last.startswith("WAIT") else state, last)
             _write_status(step=step, error="" if not last.startswith("ERROR") else _state.get("error", ""))
@@ -718,8 +809,15 @@ def _run(game: str, mode: str = "local") -> None:
         _write_status(running=False, error=f"{type(exc).__name__}: {exc}", last="异常停手")
         _log("fatal", error=f"{type(exc).__name__}: {exc}")
     finally:
+        try:
+            _finish_autoplay_recording("autoplay_end")
+        except Exception:
+            pass
         with _lock:
             _thread = None
+            _state["stopping"] = False
+            _state["running"] = False
+            _write_status(stopping=False, running=False)
 
 
 def start_autoplay(game: str | None = None, *, mode: str | None = None,
@@ -783,7 +881,10 @@ def start_autoplay(game: str | None = None, *, mode: str | None = None,
         _stop.clear()
         _write_status(running=True, game=game, error="", last="启动中…",
                       screen="", step=0, mode=mode, pace=pace,
-                      started_at=time.time(), pid=os.getpid())
+                      started_at=time.time(), pid=os.getpid(),
+                      tokens_in=0, tokens_out=0, tokens_total=0, llm_calls=0,
+                      tokens_last=0, recording=False, record_path="", record_error="",
+                      stopping=False)
         _thread = threading.Thread(target=_run, args=(game, mode),
                                    name="dafeiyu-autoplay", daemon=True)
         _thread.start()
@@ -792,19 +893,40 @@ def start_autoplay(game: str | None = None, *, mode: str | None = None,
 
 
 def stop_autoplay() -> dict:
-    """跨进程停手：写停止文件，桌面端/管理端都能调用。"""
+    """跨进程停手：写停止文件；本进程的录像立即收尾，不等 LLM 回来。"""
+    global _speech_until
     try:
         paths.LOGS.mkdir(parents=True, exist_ok=True)
         STOP_PATH.write_text(str(time.time()), encoding="utf-8")
     except OSError:
         pass
     _stop.set()
+    _speech_until = 0.0
     current = status()
+    remote = bool(current.get("pid") and int(current.get("pid")) != os.getpid()
+                  and current.get("running") and _pid_alive(current.get("pid")))
+    if remote:
+        # 从 CLI/另一个进程停：只写停止文件，不能把远端进程的状态改成
+        # running=false（那会让控制台以为停了，实际还在动）。
+        _write_status(last="正在停手…", stopping=True)
+        return {"ok": True, "message": "正在停手…", "status": status()}
     if current.get("running") and _pid_alive(current.get("pid")):
-        _write_status(last="正在停手…")
+        _write_status(last="正在停手…", stopping=True)
     else:
-        _write_status(running=False, last="已停手")
-    return {"ok": True, "message": "已请求停手", "status": status()}
+        _write_status(running=False, last="已停手", stopping=False)
+    # 先停 OBS，避免用户点了停手录像还在后台继续。
+    try:
+        _finish_autoplay_recording("stopped")
+    except Exception:
+        pass
+    th = _thread
+    if th is not None and th.is_alive() and th is not threading.current_thread():
+        th.join(1.5)
+    alive = bool(th is not None and th.is_alive())
+    if not alive:
+        _write_status(running=False, last="已停手", stopping=False)
+    return {"ok": True, "message": "正在停手…" if alive else "已停手",
+            "status": status()}
 
 
 __all__ = ["start_autoplay", "stop_autoplay", "status"]

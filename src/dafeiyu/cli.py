@@ -155,6 +155,12 @@ def cmd_status(args) -> int:
         if adapter is not None:
             session.attach(adapter)
     status = session.status()
+    try:
+        from dafeiyu.agent.play import status as play_status
+
+        status["play"] = play_status()
+    except Exception:
+        pass
     status["product"] = {"name": __product__, "version": __version__, "root": str(paths.ROOT)}
     status["games"] = [p.info.to_dict() for p in registry.packs()]
     if args.json:
@@ -176,6 +182,12 @@ def cmd_status(args) -> int:
         print(f"  game    {game['adapter']} · {_game_status_line(game.get('state') or {})}")
     else:
         print(f"  game    {cfg.game}（未连接）")
+    play = status.get("play") or {}
+    if play.get("running") or play.get("tokens_total"):
+        print(f"  play    {'运行中' if play.get('running') else '停手'}"
+              f" · {play.get('mode', '?')} · tok {play.get('tokens_total') or 0}"
+              f"（入 {play.get('tokens_in') or 0} / 出 {play.get('tokens_out') or 0}）"
+              f" · {'录像中' if play.get('recording') else '未录像'}")
     return 0
 
 
@@ -325,11 +337,12 @@ def cmd_play(args) -> int:
         while status().get("running"):
             now = status()
             key = (now.get("screen"), now.get("floor"), now.get("hp"), now.get("step"),
-                   now.get("last"))
+                   now.get("last"), now.get("tokens_total"))
             if key != last:
                 print(f"[{now.get('screen') or '?'}] f{now.get('floor') or '?'} "
                       f"HP {now.get('hp') or '?'}/{now.get('max_hp') or '?'} "
-                      f"step {now.get('step') or 0} · {now.get('last') or ''}")
+                      f"step {now.get('step') or 0} · {now.get('last') or ''} "
+                      f"· tok {now.get('tokens_total') or 0}")
                 last = key
             time.sleep(1.0)
     except KeyboardInterrupt:

@@ -86,9 +86,15 @@ def _node_summary(name: str, out: dict, state: AgentState) -> str:
 
 
 def build_graph(tools: Tools, planner: Any, recorder: TraceRecorder,
-                *, max_attempts: int = 2):
+                *, max_attempts: int = 2, should_stop=None):
     if StateGraph is None:
         raise RuntimeError("没有安装 langgraph；运行 pip install -e .[agent]")
+
+    def cancelled() -> bool:
+        try:
+            return bool(should_stop and should_stop())
+        except Exception:
+            return False
 
     def traced(name: str, fn):
         def wrapper(state: AgentState) -> dict:
@@ -113,6 +119,8 @@ def build_graph(tools: Tools, planner: Any, recorder: TraceRecorder,
         return wrapper
 
     def observe(state: AgentState) -> dict:
+        if cancelled():
+            return {"error": "已停手", "done": True}
         res = tools.observe()
         if not res.get("ok"):
             return {"error": str(res.get("error") or "观察失败"), "done": True}
@@ -122,6 +130,8 @@ def build_graph(tools: Tools, planner: Any, recorder: TraceRecorder,
     def plan(state: AgentState) -> dict:
         if state.get("error"):
             return {}
+        if cancelled():
+            return {"error": "已停手", "done": True}
         attempt = int(state.get("attempts") or 0) + 1
         if planner is None:
             return {"error": "没有 planner：请传 --plan，或配置 LLM", "done": True}
@@ -134,7 +144,12 @@ def build_graph(tools: Tools, planner: Any, recorder: TraceRecorder,
             res = planner.plan(state.get("context") or {},
                                feedback=str(state.get("feedback") or ""))
         if not res.get("ok"):
-            return {"error": str(res.get("error") or "规划失败"), "done": True}
+            return {"error": str(res.get("error") or "规划失败"), "done": True,
+                    "usage": res.get("usage") or {}}
+        if cancelled():
+            # 已经花掉的 token 照记；但停手后绝不再验算/出牌。
+            return {"error": "已停手", "done": True,
+                    "usage": res.get("usage") or {}}
         return {
             "plan": res.get("plan") or {},
             "plan_source": str(res.get("planner") or "planner"),
@@ -143,6 +158,8 @@ def build_graph(tools: Tools, planner: Any, recorder: TraceRecorder,
         }
 
     def validate(state: AgentState) -> dict:
+        if cancelled():
+            return {"error": "已停手", "done": True}
         res = tools.validate(state.get("plan") or {})
         if not res.get("ok"):
             return {"validation": res,
@@ -150,6 +167,8 @@ def build_graph(tools: Tools, planner: Any, recorder: TraceRecorder,
         return {"validation": res, "feedback": ""}
 
     def execute(state: AgentState) -> dict:
+        if cancelled():
+            return {"error": "已停手", "done": True}
         res = tools.execute(state.get("plan") or {},
                             dry_run=bool(state.get("dry_run", True)))
         if not res.get("ok"):
@@ -210,7 +229,7 @@ def build_graph(tools: Tools, planner: Any, recorder: TraceRecorder,
 def run_turn(goal: str, *, tools: Tools | None = None, planner: Any = None,
              plan: dict | None = None, game: str = "slay-the-spire-2",
              dry_run: bool = True, max_attempts: int = 2,
-             trace_path=None, mode: str = "demo") -> dict:
+             trace_path=None, mode: str = "demo", should_stop=None) -> dict:
     """跑一轮图；`plan` 给了就优先用它（外部 Agent 模式）。"""
     if plan is not None and planner is None:
         planner = ProvidedPlanner(plan)
@@ -220,7 +239,8 @@ def run_turn(goal: str, *, tools: Tools | None = None, planner: Any = None,
         planner = DemoPlanner()
     recorder = TraceRecorder(goal, game=game, mode=mode, path=trace_path)
     try:
-        graph = build_graph(tools, planner, recorder, max_attempts=max_attempts)
+        graph = build_graph(tools, planner, recorder, max_attempts=max_attempts,
+                            should_stop=should_stop)
     except Exception as exc:  # noqa: BLE001
         recorder.finish("error", error=f"{type(exc).__name__}: {exc}")
         return {"ok": False, "status": "error", "error": str(exc),

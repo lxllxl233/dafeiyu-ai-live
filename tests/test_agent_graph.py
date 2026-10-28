@@ -73,6 +73,27 @@ def test_tokens_are_not_double_counted(tmp_path):
     assert read_runs(tmp_path / "trace.jsonl", limit=1)[0]["tokens"]["total"] == 10
 
 
+def test_stop_cancels_before_execute_but_keeps_usage(tmp_path):
+    class StopAfterPlan(DemoPlanner):
+        def __init__(self):
+            self.stop = False
+
+        def plan(self, context, feedback=""):
+            out = super().plan(context, feedback)
+            out["usage"] = {"input": 11, "output": 4, "total": 15}
+            self.stop = True
+            return out
+
+    planner = StopAfterPlan()
+    result = run_turn("stop", tools=DemoTools(), planner=planner,
+                      trace_path=tmp_path / "trace.jsonl",
+                      should_stop=lambda: planner.stop)
+    assert result["ok"] is False
+    assert "已停手" in result["error"]
+    assert "execute" not in [s["node"] for s in result["steps"]]
+    assert result["tokens"]["total"] == 15
+
+
 def test_external_plan_is_used_without_llm(tmp_path):
     plan = {"say": ["外部计划"], "seq": [{"end": 1}]}
     result = run_turn("external", tools=DemoTools(), planner=None, plan=plan,

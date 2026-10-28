@@ -33,9 +33,9 @@ v1 把四样东西焊在一个「打杀戮尖塔」的工程里；v2 把它们�
 - **语音层**：曼波语（MamboTTS）为主，引擎不在线时点「启动」/「试听」会自动拉起本地引擎，仍失败才回退动物语。
 - **游戏切换**：桌宠右键「游戏 ▸」或管理端「游戏」页切换，写入 `config.game`，游戏适配器和 Agent 下一轮读取。
 - **游戏启动**：右键「只启动游戏」、管理端按钮或 `python main.py game launch`，按 `game.json` 的 `launch` 拉起 Steam / exe。
-- **让她玩**：右键「让她玩」二级菜单选**本地算账 / LLM 规划**；默认慢速播报，等语音再出下一步。战斗之外（奖励/地图/营火/事件）仍走本地，控制台也能切。当前只支持杀戮尖塔 2。
+- **让她玩**：右键「让她玩」二级菜单选**本地算账 / LLM 规划**；默认慢速播报，等语音再出下一步。战斗之外（奖励/地图/营火/事件）仍走本地，控制台也能切。自动玩默认自动开 OBS 录像，控制台「Agent 流程」能看到本轮累计 Token 和 LLM 回合数。当前只支持杀戮尖塔 2。
 - **Agent 流程**：LangGraph 把一回合拆成观察 → 规划 → 验算 → 执行 → 反思，节点耗时/token/重试写本机轨迹，控制台「Agent 流程」可看。
-- **录像回放**：`recordings/<游戏>/run-NNNN/run.mp4`，一局一个录像，`meta.json` 记角色/进阶/结果。
+- **录像回放**：自动玩开始即开录（OBS 没开会自动拉起），停止时收成 `recordings/<游戏>/run-NNNN/run.mp4`；`meta.json` 记角色/进阶/结果。
 - **离线演示**：`python main.py demo` 不需要游戏，跑通「游戏 → 性格 → 语音 → UI」。
 
 ![直播姬控制台](docs/studio.png)
@@ -361,7 +361,7 @@ python main.py play --stop       # 从另一个进程停手
 - **本地算账**：`tools/advisor.py` 算伤害/格挡/斩杀，不烧 token；
 - **LLM 规划**：战斗回合进 LangGraph `observe → plan → validate → execute`，默认用
   `deepseek-chat`（非推理模型，避免长局面把 content 挤空），轨迹仍写
-  `logs/agent_trace.jsonl`；规划/验算失败时本回合用本地兜底，执行失败才停手；
+  `logs/agent_trace.jsonl`；规划/验算/执行失败都会按最新手牌用本地兜底，不再整局停手；
 - **慢速播报**：按上一句台词长度估算播完时间，至少留 2 秒再出下一步；
 - **普通节奏**：旧版 0.7 秒，适合静音或只想快进。
 
@@ -376,7 +376,8 @@ python main.py play --stop       # 从另一个进程停手
 - `GAME_OVER`：回主菜单开新一局；想停手点「让她停手」；
 - 未知界面：停在那一步并写日志，不猜按钮。
 
-进展写 `logs/autoplay.json` 和 `logs/autoplay.jsonl`，可以从另一个进程停：
+进展写 `logs/autoplay.json` 和 `logs/autoplay.jsonl`，其中包括 API 实际 token
+（`tokens_in/out/total`、`llm_calls`）和录像状态；可以从另一个进程停：
 `python main.py play --stop`（桌面/管理端都调用它）。本地模式是整局循环；
 LLM 模式只在战斗回合进入 LangGraph，非战斗界面仍走本地，避免每个地图节点都烧 token。
 
@@ -464,7 +465,7 @@ OBS 场景仍叫 `StS2`：`StS2 Game`（game_capture）+ `AI Commentary`（浏�
 ## 测试
 
 ```powershell
-python -m pytest -q tests          # 直播姬：总线/性格/语音/游戏/启动/配置/Agent/自动玩法/录像（57 项）
+python -m pytest -q tests          # 直播姬：总线/性格/语音/游戏/启动/配置/Agent/自动玩法/录像（62 项）
 python tools/test_ctx_act.py       # 决策层：ctx + act（离线）
 python tools/test_streamer.py      # 桌宠渲染/透明/换行/配音
 python tools/test_overlay_playback.py

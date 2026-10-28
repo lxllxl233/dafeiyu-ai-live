@@ -459,6 +459,9 @@
           <div class="kv" style="margin-top:12px"><span>自动玩法</span><b id="playState">—</b></div>
           <div class="kv"><span>局面</span><b id="playDetail">—</b></div>
           <div class="kv"><span>步数</span><b id="playStep">—</b></div>
+          <div class="kv"><span>Token 累计</span><b id="playTokens">—</b></div>
+          <div class="kv"><span>LLM 调用</span><b id="playCalls">—</b></div>
+          <div class="kv"><span>录像</span><b id="playRecord">—</b></div>
           <div class="field" style="margin-top:12px"><label for="playMode">玩法</label>
             <select id="playMode">
               <option value="local">本地算账（不烧 token）</option>
@@ -691,7 +694,8 @@ function renderNav(){
   const voices = v.voices || {};
   const game = (cfg.game_options || DATA?.games || []).find(g => g.id === cfg.game) || {};
   const said = DATA?.studio?.said ?? 0;
-  const tokens = DATA?.overlay?.usage?.total ?? 0;
+  const playTokens = Number(DATA?.play?.tokens_total || 0);
+  const tokens = playTokens > 0 ? playTokens : (DATA?.overlay?.usage?.total ?? 0);
   $("#navVoice").textContent = cfg.voice === "mambo"
     ? (voices.mambo?.available ? "曼波在线" : "曼波离线")
     : (cfg.voice === "off" ? "静音" : "动物语");
@@ -767,6 +771,7 @@ function renderPlay(){
   const p = DATA?.play || {};
   const cfg = DATA?.config || {};
   const running = !!p.running;
+  const stopping = !!p.stopping;
   const mode = p.mode || cfg.autoplay_mode || "local";
   const pace = cfg.autoplay_pace || p.pace || "voice";
   if (document.activeElement !== $("#playMode")) {
@@ -778,17 +783,41 @@ function renderPlay(){
   if (document.activeElement !== $("#playPace")) {
     $("#playPace").value = pace === "normal" ? "normal" : "voice";
   }
-  $("#playState").textContent = running
-    ? `运行中 · ${mode === "llm" ? "LLM" : "本地"} · ${pace === "voice" ? "慢速" : "普通"}`
-    : (p.error ? "异常停手" : "停手");
+  $("#playState").textContent = stopping
+    ? "正在停手…"
+    : (running
+      ? `运行中 · ${mode === "llm" ? "LLM" : "本地"} · ${pace === "voice" ? "慢速" : "普通"}`
+      : (p.error ? "异常停手" : "停手"));
   const where = p.screen ? `${p.screen} · f${p.floor || "?"} · HP ${p.hp || "?"}/${p.max_hp || "?"}` : (p.last || "—");
   $("#playDetail").textContent = where;
   $("#playStep").textContent = p.step ? `${p.step} 步` : "—";
-  $("#playStart").disabled = running;
-  $("#playStop").disabled = !running;
-  $("#playHint").textContent = running
-    ? "运行中切换玩法需先「停手」；播报节奏从下一步生效。"
-    : "玩法/节奏会写本机 config.json；LLM 模式只分析战斗回合，其他界面仍走本地。";
+  const tin = Number(p.tokens_in || 0), tout = Number(p.tokens_out || 0);
+  const total = Number(p.tokens_total || (tin + tout));
+  $("#playTokens").textContent = total > 0
+    ? `${total} tok（入 ${tin} / 出 ${tout}）`
+    : (mode === "llm" ? "0 tok" : "—");
+  $("#playCalls").textContent = Number(p.llm_calls || 0) > 0
+    ? `${p.llm_calls} 次` : "—";
+  if (p.recording) {
+    $("#playRecord").textContent = "录像中";
+    $("#playRecord").title = p.record_path || "";
+  } else if (p.record_error) {
+    $("#playRecord").textContent = `未录像：${p.record_error}`;
+    $("#playRecord").title = p.record_error;
+  } else if (p.record_path) {
+    $("#playRecord").textContent = "已保存";
+    $("#playRecord").title = p.record_path;
+  } else {
+    $("#playRecord").textContent = "未开录";
+    $("#playRecord").title = "";
+  }
+  $("#playStart").disabled = running || stopping;
+  $("#playStop").disabled = !(running || stopping);
+  $("#playHint").textContent = stopping
+    ? "正在停手：不再出牌；如果卡在 LLM 回合，最多等它这次请求返回。"
+    : (running
+      ? "运行中切换玩法需先「停手」；播报节奏从下一步生效。"
+      : "玩法/节奏会写本机 config.json；LLM 模式只分析战斗回合，其他界面仍走本地。");
 }
 
 async function savePlaySettings(){
@@ -824,15 +853,19 @@ async function startPlay(){
 }
 
 async function stopPlay(){
+  $("#playStop").disabled = true;
+  $("#playState").textContent = "正在停手…";
   try{
     const r = await fetch("/api/play/stop", {
       method:"POST", headers:{"content-type":"application/json"}, body:"{}",
     });
     const res = await r.json();
     if(!res.ok) throw new Error(res.error || res.message || "HTTP " + r.status);
-    toast(res.message || "已请求停手");
-    setTimeout(refresh, 800);
+    toast(res.message || "已停手");
+    await refresh();
+    setTimeout(refresh, 1800);
   }catch(e){ toast("停手失败：" + e.message, true); }
+  finally{ refresh(); }
 }
 
 async function runAgent(){
@@ -1100,7 +1133,7 @@ document.addEventListener("keydown", (e) => {
 setView(location.hash.replace(/^#/, ""), false);
 setCounter();
 refresh();
-setInterval(refresh, 5000);
+setInterval(refresh, 3000);
 </script>
 </body>
 </html>
