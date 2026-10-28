@@ -219,7 +219,7 @@ def _ensure_run(sts2, state: dict) -> dict | None:
                 return sts2.get_state()
         return None
     if screen == "MAIN_MENU":
-        for name in ("continue_run", "open_character_select"):
+        for name in ("continue_run", "open_character_select", "abandon_run"):
             if name in acts:
                 sts2.act(name)
                 return sts2.get_state()
@@ -385,10 +385,15 @@ def _combat(sts2, advisor, state: dict, *, mode: str = "local",
             llm_tools=None, llm_planner=None, game: str = "") -> str:
     if mode == "llm" and llm_tools is not None and llm_planner is not None:
         out = _combat_llm(llm_tools, llm_planner, state, game)
-        if out.startswith(("LLM_FAILED_PLAN", "LLM_FAILED_VALIDATE")):
-            # 规划/验算失败时还没有出牌，本回合用本地算账兜底，不让整局卡死。
+        if out.startswith(("LLM_FAILED_PLAN", "LLM_FAILED_VALIDATE", "LLM_FAILED_EXECUTE")):
+            # 规划/验算/执行失败时重新读当前局面，用本地算账兜底；执行失败
+            # 也可能是 LLM 只打了一半，此时更不能把整局停在这里。
             _log("llm_fallback", error=out)
-            local = _combat_local(sts2, advisor, state)
+            try:  # 执行失败可能已经打了一半，必须按最新手牌重算，不能用旧 state
+                fresh = sts2.get_state()
+            except Exception:
+                fresh = state
+            local = _combat_local(sts2, advisor, fresh)
             return f"LLM 失败，本地兜底（{local}）"
         return out
     return _combat_local(sts2, advisor, state)
@@ -568,7 +573,8 @@ def _chest(sts2, state: dict) -> str:
 
 
 def _modal(sts2, state: dict) -> str:
-    for name in ("proceed", "dismiss", "close"):
+    # 主菜单的 abandon_run 会弹确认框，只认 proceed/dismiss 会停手。
+    for name in ("proceed", "confirm_modal", "dismiss", "close"):
         if name in _acts(state):
             sts2.act(name)
             return f"MODAL {name}"
