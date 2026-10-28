@@ -7,7 +7,7 @@
 
 ## 0. 前提
 
-- Windows 10/11（透明弹幕窗 / OBS 音频路由）
+- Windows 10/11（桌宠透明窗 / OBS 音频路由）
 - Python 3.10+
 - 可选：《杀戮尖塔 2》Steam 版 v0.107.1 + OBS Studio 30+（要 obs-websocket）
 
@@ -22,20 +22,21 @@ python -m pip install -r requirements.txt
 
 ```powershell
 python dafeiyu.py setup      # 建 db/、tools/data/ 兼容链接
-python dafeiyu.py doctor     # 自检：人设卡 / 两种语音 / overlay / 语料库
+python dafeiyu.py doctor     # 自检：人设卡 / 两种语音 / overlay / 语料库 / 录像
 python dafeiyu.py demo       # 离线跑「游戏 → 性格 → 语音 → UI」
 python dafeiyu.py studio     # 控制台 http://127.0.0.1:8730/studio
 ```
 
 控制台里能：发台词（先「只算 lint」再「送到直播」）、试听曼波/动物语、看四层状态。
 
-只想起 OBS 透明弹幕（不要控制台）：`python overlay_server.py`，OBS 浏览器源指向
-`http://127.0.0.1:8730/`，宽 1400 高 300，背景透明。
+只想起 OBS 桌宠弹幕（不要控制台）：`python overlay_server.py`，OBS 浏览器源指向
+`http://127.0.0.1:8730/`，宽 560 高 470，背景透明（气泡 + 大肥鱼 + 名字）。
 
-想看桌面悬浮弹幕（可拖动、可点击穿透、有声音）：
+想看桌面桌宠（可拖动、可点击穿透、有声音）：
 
 ```powershell
-python streamer.py --demo     # 左键拖 · 右键菜单 · Ctrl+Alt+D 穿透 · Ctrl+Alt+S 声音
+python streamer.py           # 默认桌宠；加 --panel 回旧版横幅
+# 左键拖（左右/上下换朝向）· 滚轮缩放 · 右键菜单 · Ctrl+Alt+D 穿透 · Ctrl+Alt+S 声音
 ```
 
 ## 3. 打杀戮尖塔 2（v1 流程）
@@ -66,7 +67,9 @@ python dafeiyu.py games      # 应该看到「杀戮尖塔 2 ● 在线」
 python obsctl.py setup       # 建场景 StS2：StS2 Game / AI Commentary / StS2 Audio
 python obsctl.py health      # 出帧 / 游戏窗口 / 后台静音 / 音频
 python tools/live.py check   # 弹幕窗心跳 / 曼波合成 / OBS 源 / 游戏 API
-python obsctl.py start       # 开始录制（recordings/）
+python dafeiyu.py replay start --character ironclad --ascension 10
+# 打完：停录并收进 recordings/slay-the-spire-2/run-NNNN/run.mp4
+python dafeiyu.py replay stop --result win_a10
 ```
 
 ### 3.4 让 Agent 开局
@@ -78,9 +81,11 @@ python obsctl.py start       # 开始录制（recordings/）
 收尾：
 
 ```powershell
-python obsctl.py stop
 python sts2.py report
 ```
+
+录像默认一局一个 `run.mp4`，索引在 `recordings/INDEX.md`；旧的散放录像已迁进
+`recordings/slay-the-spire-2/run-NNNN/`，用法见 [`recordings/README.md`](recordings/README.md)。
 
 ## 4. 常见问题
 
@@ -95,5 +100,6 @@ python sts2.py report
 | 同一句说两次 | `curl 127.0.0.1:8730/health` 的 `roles`：只允许一个 live 页面出声 |
 | 老脚本找不到 `db/sts2.db` | 跑一次 `python dafeiyu.py setup` |
 | 屏幕上没有弹窗 | `python tools/shot_popup.py` 看真窗口；`tools/live.py restart-streamer` |
+| 录像文件在哪 | `python dafeiyu.py replay list`；一局一个 `recordings/<游戏>/run-NNNN/run.mp4` |
 
 更多命令见 [README.md](README.md)、[ARCHITECTURE.md](ARCHITECTURE.md)。

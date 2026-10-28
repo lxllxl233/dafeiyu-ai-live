@@ -128,7 +128,7 @@ def main() -> int:
                STS2_VOICE_DELEGATE="0")
     proc = subprocess.Popen(
         [sys.executable, "-X", "utf8", os.path.join(ROOT, "streamer.py"),
-         "--port", "8791", "--demo", "--mute", "--voice", "off",
+         "--port", "8791", "--demo", "--mute", "--voice", "off", "--panel",
          "--scale", "1.0", "--pos", "300,300", "--click-through"],
         cwd=ROOT, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     try:

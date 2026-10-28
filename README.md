@@ -3,7 +3,7 @@
 > 一个可换游戏、可换性格、可换声音的 **AI 直播工具**。
 > 第一视角是《杀戮尖塔 2》铁甲战士 A10——但它只是「游戏列表」里的第一个包。
 
-`v2.0.0` · Python 3.10+ · Windows（透明弹幕窗 / OBS） · 中文
+`v2.0.0` · Python 3.10+ · Windows（桌宠 / OBS） · 中文
 
 ---
 
@@ -14,7 +14,7 @@ v1 把四样东西焊在一个「打杀戮尖塔」的工程里；v2 把它们�
 
 ```
 ┌──────────────────────────── 大肥鱼直播姬 ────────────────────────────┐
-│  UI 层        OBS 浏览器源 · 直播姬控制台 · 桌面透明弹幕窗            │
+│  UI 层        OBS 桌宠气泡 · 直播姬控制台 · 桌面桌宠（可拖）          │
 │  源码        事件总线 · 会话编排 · 配置 · CLI                        │
 │  性格层      大肥鱼人设卡 · 台词 lint · 节奏 / 招牌冷却               │
 │  语音层      动物语（内置合成） · 曼波语（本地 GPT-SoVITS）           │
@@ -25,16 +25,21 @@ v1 把四样东西焊在一个「打杀戮尖塔」的工程里；v2 把它们�
 能做的事：
 
 - **直播姬控制台** `http://127.0.0.1:8730/studio`：四层状态一屏看完，发台词、看 lint、试听两种语音、看游戏列表。
-- **OBS 透明弹幕**：浏览器源 `/`，弹幕带逐像素 alpha，直接进录像。
-- **桌面透明弹幕窗**：Win32 分层窗口，可拖、可缩放、点击穿透，不进录像。
+- **OBS 桌宠弹幕**：浏览器源 `/`，大肥鱼精灵 + 漫画气泡，带逐像素 alpha，直接进录像。
+- **桌面桌宠**：Win32 分层窗口，三视图精灵可拖（左右/上下换朝向，带倾斜/拉伸/速度线），说话走气泡；点击穿透，不进录像。
 - **性格层**：改 `persona/dafeiyu/card.json` 就能换语气/禁语/招牌，不用动代码。
 - **语音层**：曼波语（MamboTTS）为主，引擎不在线自动回退动物语，直播不哑。
 - **游戏列表**：`games/registry.json` 注册，适配器只读状态；换游戏只加一个包。
+- **录像回放**：`recordings/<游戏>/run-NNNN/run.mp4`，一局一个录像，`meta.json` 记角色/进阶/结果。
 - **离线演示**：`python dafeiyu.py demo` 不需要游戏，跑通「游戏 → 性格 → 语音 → UI」。
 
 ![直播姬控制台](docs/studio.png)
 
 *控制台：四层状态、台词 lint、两种语音试听、游戏包与语料库（截图时游戏未开、曼波引擎未起）。*
+
+![桌宠与气泡](docs/overlay_pet.png)
+
+*OBS 浏览器源：大肥鱼精灵 + 一句话气泡；桌宠窗用的是同一套三视图。*
 
 ---
 
@@ -43,15 +48,17 @@ v1 把四样东西焊在一个「打杀戮尖塔」的工程里；v2 把它们�
 ```
 dafeiyu-ai-live/
 ├── ui/                          # UI 层
-│   ├── overlay/                 # OBS 浏览器源（透明弹幕 + 动物语音效）
+│   ├── overlay/                 # OBS 浏览器源（透明气泡 + 动物语音效）
 │   ├── studio/                  # 直播姬控制台（单页，无外部依赖）
-│   └── desktop/streamer.py      # 桌面透明弹幕窗（Win32 + Pillow）
+│   └── desktop/                 # 桌面桌宠（Win32 + Pillow）
+│       ├── streamer.py
+│       └── assets/pet/          # 正面/侧面/背面精灵（MIT，见 SOURCE.md）
 ├── src/dafeiyu/                 # 源码
 │   ├── core/                    # 事件总线 / 会话编排 / 配置
 │   ├── persona/                 # 性格层实现（compose / lint / pacing）
 │   ├── voice/                   # 语音层实现（animal / mambo / router）
 │   ├── games/                   # 游戏列表：协议、注册表、StS2 适配器
-│   ├── stream/obs.py            # OBS WebSocket 控制（录制/场景/音频/自检）
+│   ├── stream/                  # OBS 控制（obs.py）+ 录像回放（replay.py）
 │   ├── ui/overlay_server.py     # overlay + 控制台后端（:8730）
 │   └── cli.py                   # dafeiyu 命令
 ├── persona/dafeiyu/             # 性格层资产：人设卡 + 说话系统说明
@@ -62,6 +69,10 @@ dafeiyu-ai-live/
 │       ├── game.json            # 游戏包清单
 │       ├── compat/              # 游戏兼容层：sts2.py 客户端 + mod + 补丁
 │       └── corpus/              # 游戏语料库：sts2.db + 英文数据
+├── recordings/                  # 录像回放：按游戏分目录，一局一个 run.mp4
+│   ├── README.md
+│   ├── INDEX.md
+│   └── slay-the-spire-2/run-0094/{run.mp4,meta.json}
 ├── tools/                       # 决策/运维工具（A10 工作台、体检、TTS 看护）
 ├── docs/                        # 玩法手册、复盘、教训
 ├── tests/                       # 直播姬单元测试
@@ -73,12 +84,13 @@ dafeiyu-ai-live/
 
 | 层 | 路径 | 说明 |
 |---|---|---|
-| UI | `ui/` | `overlay`（OBS 源）、`studio`（控制台）、`desktop`（桌面窗） |
+| UI | `ui/` | `overlay`（OBS 源）、`studio`（控制台）、`desktop`（桌宠） |
 | 源码 | `src/dafeiyu/` | 内核 + CLI；不依赖具体游戏 |
 | 性格层 | `persona/` + `src/dafeiyu/persona/` | 人设卡是数据，lint/节奏是代码 |
 | 语音层 | `voice/` + `src/dafeiyu/voice/` | 动物语 / 曼波语，路由负责回退 |
 | 游戏列表 | `games/registry.json` | 每个游戏 = 一个包 |
 | 杀戮尖塔 2 | `games/slay-the-spire-2/` | `compat/` 兼容层 + `corpus/` 语料库 |
+| 录像回放 | `recordings/<游戏>/run-NNNN/` | 一局一个 `run.mp4` + `meta.json` |
 
 ---
 
@@ -92,6 +104,16 @@ python dafeiyu.py setup      # 建 db/、tools/data/ 兼容链接（老脚本继
 python dafeiyu.py doctor     # 环境自检：人设卡 / 语音 / overlay / 语料库 / 游戏
 python dafeiyu.py demo       # 不需要游戏，跑一遍完整链路
 python dafeiyu.py studio     # 起服务：http://127.0.0.1:8730/studio
+python streamer.py           # 桌面桌宠（--panel 回旧版横幅）
+```
+
+录一局：
+
+```powershell
+python dafeiyu.py replay start --character ironclad --ascension 10
+# 打完
+python dafeiyu.py replay stop --result win_a10
+python dafeiyu.py replay list
 ```
 
 控制台里可以直接：
@@ -108,6 +130,35 @@ python dafeiyu.py studio     # 起服务：http://127.0.0.1:8730/studio
   [铁甲战士 · A10 · F6 · HP 47/80 · COMBAT]
   大肥鱼> 9 点，它 9 血。刚好够。
 ```
+
+## 桌宠与气泡
+
+- 精灵来自 [1190fasheqi/dafeiyu-pet](https://github.com/1190fasheqi/dafeiyu-pet)（MIT），
+  只保留正面 / 侧面 / 背面三张图，**没有逐帧动画**：呼吸、摇摆、倾斜、拉伸、速度线、
+  松手回弹都是 `ui/desktop/streamer.py` 实时画的。
+- 鼠标拖动方向决定朝向：左右 → 侧面（自动镜像）、向上 → 背面、向下 → 正面；
+  拖得越快倾斜越大，松手 0.45 秒回正。
+- 说话是漫画气泡：奶白底 + 金边 + 尾巴，出现淡入上浮，说完 1.6 秒淡出；
+  思考中显示「思考中…」，不会一直挂着上一句。
+- 窗口空白像素不吃鼠标：只有鱼身和气泡可点，其余点击直接落到游戏里。
+- `python streamer.py` 默认桌宠；`--panel` 回旧版横幅，`--preview out.png` 只渲染不上屏。
+
+## 录像回放
+
+```text
+recordings/
+├── README.md
+├── INDEX.md
+└── slay-the-spire-2/
+    └── run-0094/
+        ├── run.mp4
+        └── meta.json
+```
+
+- `python dafeiyu.py replay start` 建当前局、把 OBS 录像目录指过去并开录；
+- `python dafeiyu.py replay stop --result ...` 停录、收成该局唯一的 `run.mp4`、写 meta 和索引；
+- 一局一个视频，重复录制默认不覆盖（`--force` 才换）；多出来的段进 `_extra/`；
+- 视频不入 Git，只提交 `README.md` 和 `INDEX.md`；旧的散放 mp4 已迁进分游戏目录。
 
 ---
 
@@ -222,11 +273,11 @@ python dafeiyu.py games
 python sts2.py state                  # 游戏状态（mod :8080）
 python tools/ctx.py                   # 结构化局面包
 python tools/act.py --file plan.json  # 校验并执行牌序
-python obsctl.py start|stop           # 录像
+python obsctl.py start|stop           # 裸 OBS 开关；正式录像用 replay start/stop
 python obsctl.py health               # 出帧/音频/后台静音自检
 python tools/live.py check            # 主播链路体检
 python tools/live.py watch            # 长时间直播看护
-python streamer.py                    # 桌面透明弹幕窗
+python streamer.py                    # 桌面桌宠（--panel 旧横幅）
 python overlay_server.py              # 只起弹幕服务
 ```
 
@@ -247,7 +298,7 @@ OBS 场景仍叫 `StS2`：`StS2 Game`（game_capture）+ `AI Commentary`（浏�
 
 | 方法 | 路径 | 用途 |
 |---|---|---|
-| GET | `/` | OBS 透明弹幕页 |
+| GET | `/` | OBS 桌宠气泡页 |
 | GET | `/studio` | 直播姬控制台 |
 | GET | `/api/studio` | 四层状态 + 最近台词 + 游戏包 |
 | GET | `/api/games` | 游戏列表（强制刷新在线状态） |
@@ -261,9 +312,9 @@ OBS 场景仍叫 `StS2`：`StS2 Game`（game_capture）+ `AI Commentary`（浏�
 ## 测试
 
 ```powershell
-python -m pytest -q tests          # 直播姬：总线/性格/语音/游戏/会话（29 项）
+python -m pytest -q tests          # 直播姬：总线/性格/语音/游戏/会话/录像（32 项）
 python tools/test_ctx_act.py       # 决策层：ctx + act（离线）
-python tools/test_streamer.py      # 桌面窗渲染/透明/换行/配音
+python tools/test_streamer.py      # 桌宠渲染/透明/换行/配音
 python tools/test_overlay_playback.py
 python dafeiyu.py doctor           # 环境自检
 ```
@@ -291,10 +342,21 @@ python dafeiyu.py doctor           # 环境自检
 
 ## 已知限制
 
-- 桌面透明弹幕窗和 OBS 控制在 Windows 上验证；Linux/macOS 只有 overlay + 控制台。
+- 桌面桌宠和 OBS 控制在 Windows 上验证；Linux/macOS 只有 overlay + 控制台。
 - 游戏兼容层针对 **v0.107.1 + STS2-Agent v0.8.0**；游戏升级后需重新验证 mod（见 `game.json` 的 `compat.checks`）。
 - 曼波引擎、参考音频、OBS 场景都是本机外部依赖，仓库不包含模型和录像。
 - 语料库来自公开 Wiki + mod 自带数据 + 本地实战记录；仅用于本地研究与直播，不再分发游戏资源。
+
+## 开源协议
+
+本项目代码用 **MIT License**，见根目录 [`LICENSE`](LICENSE)，版权归 lxllxl233。
+
+第三方素材各自保留原协议：
+
+- 桌宠精灵：[1190fasheqi/dafeiyu-pet](https://github.com/1190fasheqi/dafeiyu-pet)（MIT），
+  副本与署名在 `ui/desktop/assets/pet/LICENSE`、`SOURCE.md`；
+- 游戏名、卡牌/角色数据版权归 Mega Crit 与原作；`compat/mod/` 里的 mod 二进制归其作者；
+- 语料库只用于本地研究与直播，不再分发游戏资源。
 
 ## 声明
 

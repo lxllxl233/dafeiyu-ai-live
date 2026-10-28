@@ -8,7 +8,7 @@
 ```
         ┌────────────────────────────────────────────┐
         │                 UI 层（ui/）                │
-        │  OBS 浏览器源 · 控制台 · 桌面透明窗          │
+        │  OBS 桌宠气泡 · 控制台 · 桌面桌宠             │
         └───────────────▲───────────────┬────────────┘
                         │HTTP / SSE     │POST /api/say /api/voice
         ┌───────────────┴───────────────▼────────────┐
@@ -30,7 +30,7 @@
 | 游戏适配器 | 游戏/兼容层状态 | `GameState`、`game.*` 事件 | 返回空状态，不影响开播 |
 | 性格层 | thought / meme / 整句 | 拼句 + lint + 节奏建议 | lint 只报告，不阻断（`strict_lint` 可开） |
 | 语音层 | 文本 | WAV / `voice.ready` / `voice.failed` | 回退动物语；`off` 时静音但字幕照常 |
-| UI 服务 | `/api/*`、`/comment` | 透明弹幕、控制台数据 | HTTP 错误码；页面轮询自愈 |
+| UI 服务 | `/api/*`、`/comment` | 桌宠气泡、控制台数据 | HTTP 错误码；页面轮询自愈 |
 
 ## 2. 事件目录
 
@@ -114,7 +114,7 @@ class GameAdapter:
 
 | 路径 | 作用 |
 |---|---|
-| `/` | 透明弹幕页（OBS 源） |
+| `/` | 桌宠气泡页（OBS 源）：大肥鱼精灵 + 漫画气泡 |
 | `/studio` | 控制台单页 |
 | `/api/studio` | 四层状态聚合（人设/语音/游戏/overlay/最近台词） |
 | `/api/say` | 拼句 + lint + `add_comment`；`dry_run` 只算 lint |
@@ -124,6 +124,21 @@ class GameAdapter:
 
 关键约束：**弹幕只有一条写入路径** `add_comment()`。控制台、CLI、Agent 都必须走它，
 这样 seq 单调、页面不会把新台词当旧消息、桌面窗和 OBS 永远同一句。
+
+### 录像回放
+
+`src/dafeiyu/stream/replay.py` 管目录和元数据，OBS 只负责开/关：
+
+```text
+recordings/<game-id>/run-NNNN/
+  run.mp4     一局一个（默认）
+  meta.json   game/run/character/ascension/result/size/started_at/ended_at
+```
+
+- `start` 先 `SetRecordDirectory` 指到该局，再 `StartRecord`；老 OBS 不支持就退回默认目录。
+- `stop` 读 `StopRecord.outputPath`，`os.replace` 成 `run.mp4`（同盘瞬间），再写 meta。
+- 目标 `run.mp4` 已存在默认报错，不静默覆盖；多出的段进 `_extra/`。
+- `recordings/INDEX.md` 由 `scan()` 生成；视频被 `.gitignore` 排除，只提交说明和索引。
 
 ## 7. 扩展点
 
@@ -136,6 +151,9 @@ class GameAdapter:
 | 换默认语音/音量/间奏 | `config.json` 或 `DAFEIYU_*` 环境变量 |
 | 加游戏 | `games/<id>/` + `GameAdapter` + `games/registry.json` |
 | 加 UI 面板 | `ui/studio/index.html` + `/api/studio` 字段 |
+| 换桌宠精灵 | `ui/desktop/assets/pet/`（正面/侧面/背面） |
+| 换 OBS 气泡样式 | `ui/overlay/index.html` 的 `#main` |
+| 改录像目录规则 | `src/dafeiyu/stream/replay.py` |
 
 ## 8. 测试策略
 

@@ -1,6 +1,7 @@
-# 录像与备份：体积大，不入库（分 P 索引表除外，方便看每局录像）
+# 录像与备份：体积大，不入库（分游戏目录；索引和说明除外）
 recordings/*
 !recordings/INDEX.md
+!recordings/README.md
 backups/
 
 # 运行期产物
@@ -41,11 +42,17 @@ tmp_notes*.md
 logs/*.out
 logs/*.err
 
-# �������ӣ��� python dafeiyu.py setup ���ɣ���ʵ������ games/slay-the-spire-2/corpus/��
+# 兼容链接（由 python dafeiyu.py setup 生成，真实内容在 games/slay-the-spire-2/corpus/）
 /db/
 /tools/data/
 
-# ֱ������������ / ���Ի���
+# 直播姬本机配置 / 测试缓存
 /config.json
 /.pytest_cache/
 logs/voice_test.wav
+
+# 桌宠录制/浏览器调试缓存
+logs/*.lock
+logs/*.html
+logs/*profile*/
+logs/pet_src/

@@ -55,7 +55,7 @@ import wave
 from ctypes import wintypes
 
 try:
-    from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
+    from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont, ImageOps
 except ImportError:  # pragma: no cover
     print("需要 Pillow：pip install -r requirements.txt")
     raise SystemExit(2)
@@ -72,6 +72,15 @@ STATE_FILE = os.path.join(ROOT, "logs", "streamer_window.json")
 TTS_CACHE = os.path.join(ROOT, "logs", "tts_cache")
 PORT = int(os.environ.get("STS2_OVERLAY_PORT", "8730"))
 PLACEHOLDER = "（还没收到弹幕 —— agent 一开口，这里就换成它说的话）"
+
+# ---------------------------------------------------------------- 桌宠形象
+# 精灵来自 https://github.com/1190fasheqi/dafeiyu-pet（MIT，见 assets/pet/SOURCE.md）。
+# 三视图没有逐帧动画：呼吸/摇摆/拖拽倾斜/拉伸/速度线/回弹都在这里实时画。
+PET_DIR = os.path.join(ROOT, "ui", "desktop", "assets", "pet")
+PET_STATE_FILE = os.path.join(ROOT, "logs", "streamer_pet.json")
+PET_BASE_W, PET_BASE_H = 560, 500      # 1.0× 时的画布（气泡区 + 精灵区）
+PET_FISH_H = 300                       # 1.0× 时的精灵高度
+PET_FACING = {"front": "正面", "side": "侧面", "back": "背面"}
 
 # ---------------------------------------------------------------- 设计参数
 # 数值直接抄 overlay/index.html 的 CSS，改这里等于改「同款」的还原度。
@@ -794,6 +803,139 @@ def render(text: str, status: dict, scale: float = 1.0, talk: float = 0.0,
         _static_cache[(text, skey, round(scale, 3), chip, layout_text)] = canvas
     return canvas
 
+_PET_CACHE: dict[tuple[str, int], Image.Image] = {}
+
+
+def load_pet_sprite(facing: str, height: int) -> Image.Image:
+    """按朝向/高度取精灵（缓存），侧面默认朝左，向右拖动时镜像。"""
+    key = (facing, int(height))
+    hit = _PET_CACHE.get(key)
+    if hit is not None:
+        return hit
+    name = PET_FACING.get(facing, "正面")
+    path = os.path.join(PET_DIR, f"{name}_306.png")
+    im = Image.open(path).convert("RGBA")
+    if int(height) != im.height:
+        im = im.resize((max(1, round(im.width * int(height) / im.height)), int(height)),
+                       Image.LANCZOS)
+    if len(_PET_CACHE) > 24:
+        _PET_CACHE.clear()
+    _PET_CACHE[key] = im
+    return im
+
+
+def render_pet(text: str, mode: str, scale: float, now: float, pet) -> Image.Image:
+    """桌宠一帧：精灵 + 气泡。
+
+    - 朝向：拖动方向决定正面 / 侧面 / 背面（侧面自动镜像）
+    - 动态：呼吸、说话弹跳、拖拽倾斜 / 压扁 / 拉长、速度线、松手回弹
+    - 气泡：漫画式圆角气泡 + 尾巴，出现时淡入上浮，说完 1.6s 后淡出
+    """
+    scale = max(MIN_SCALE, float(scale))
+    W, H = int(PET_BASE_W * scale), int(PET_BASE_H * scale)
+    canvas = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+
+    facing = getattr(pet, "pet_facing", "front") or "front"
+    face_right = bool(getattr(pet, "pet_face_right", False))
+    energy = float(getattr(pet, "pet_energy", 0.0) or 0.0)
+    lean = float(getattr(pet, "pet_lean", 0.0) or 0.0)
+    fish_h = int(PET_FISH_H * scale)
+    sprite = load_pet_sprite(facing, fish_h)
+    if facing == "side" and face_right:
+        sprite = ImageOps.mirror(sprite)
+
+    # 呼吸 + 说话弹跳（脚底固定，向上长）
+    breathe = 1.0 + 0.012 * math.sin(now * 2.2)
+    talk = 0.0
+    if getattr(pet, "talk_start_at", 0.0) and now < getattr(pet, "talk_until", 0.0):
+        span = max(0.001, pet.talk_until - pet.talk_start_at)
+        talk = min(1.0, max(0.0, (now - pet.talk_start_at) / span))
+    bounce = abs(math.sin((now - pet.talk_start_at) * 9.0)) * 4.0 * scale if talk else 0.0
+
+    sx = 1.0 - 0.035 * energy
+    sy = breathe + 0.06 * energy
+    sprite = sprite.resize((max(1, int(sprite.width * sx)), max(1, int(sprite.height * sy))),
+                           Image.LANCZOS)
+    if abs(lean) > 0.2:
+        sprite = sprite.rotate(lean, resample=Image.BICUBIC, expand=True)
+
+    sway = 2.0 * scale * math.sin(now * 1.3)
+    x = (W - sprite.width) // 2 + int(sway)
+    y = H - sprite.height - int(10 * scale) + int(bounce)
+
+    # 拖动速度线（只在侧面、真有速度时出现，很淡）
+    if energy > 0.25 and facing == "side":
+        d = ImageDraw.Draw(canvas)
+        dirn = 1 if face_right else -1
+        body = sprite.getbbox() or (0, 0, sprite.width, sprite.height)
+        for k, frac in enumerate((0.34, 0.52, 0.70)):
+            ln = int((12 + 30 * energy) * (1.0 - 0.18 * abs(k - 1)) * scale)
+            y0 = y + body[1] + int((body[3] - body[1]) * frac)
+            x0 = (x + body[0] - int(4 * scale)) if dirn > 0 else (x + body[2] + int(4 * scale))
+            d.line([(x0, y0), (x0 - dirn * ln, y0)],
+                   fill=(255, 255, 255, int(80 * energy)), width=max(1, int(2 * scale)))
+    canvas.alpha_composite(sprite, (x, y))
+
+    # ---- 气泡
+    if mode == "thinking":
+        text = "思考中" + "." * (1 + int(now * 2.2) % 3)
+        alpha = 1.0
+    elif not text or text == PLACEHOLDER:
+        return canvas
+    else:
+        age = now - float(getattr(pet, "enter_at", 0.0) or 0.0)
+        alpha = min(1.0, max(0.0, age / 0.14))
+        until = float(getattr(pet, "bubble_until", 0.0) or 0.0)
+        if until and now > until:
+            alpha *= max(0.0, 1.0 - (now - until) / 0.35)
+    if alpha <= 0.02:
+        return canvas
+
+    font = get_font(max(11, int(round(16 * scale))))
+    pad_x, pad_y = int(16 * scale), int(12 * scale)
+    max_tw = max(120, min(int(420 * scale), W - int(28 * scale) - 2 * pad_x))
+    probe = ImageDraw.Draw(canvas)
+    lines = wrap_cjk(text, font, max_tw, probe)
+    line_h = int(font.size * 1.42) if hasattr(font, "size") else int(23 * scale)
+    tw = max(int(probe.textlength(line, font=font)) for line in lines)
+    bw = min(W - int(16 * scale), max(int(120 * scale), tw + 2 * pad_x))
+    bh = len(lines) * line_h + 2 * pad_y
+
+    fish_cx = x + sprite.width // 2
+    bbox = sprite.getbbox() or (0, 0, sprite.width, sprite.height)
+    head_y = y + bbox[1]                      # 精灵透明边不算，气泡贴着头顶
+    fish_cx = x + (bbox[0] + bbox[2]) // 2
+    by = max(int(8 * scale), head_y + int(2 * scale) - bh)
+    bx = max(int(8 * scale), min(fish_cx - bw // 2, W - bw - int(8 * scale)))
+    tail_h = int(16 * scale)
+    ty = by + bh
+    rise = int((1.0 - alpha) * 6 * scale)
+
+    fill = (253, 249, 240, int(246 * alpha))
+    edge = (216, 168, 74, int(230 * alpha))
+    d = ImageDraw.Draw(canvas)
+    # 尾巴（先画，气泡矩形盖住上沿）；尖端追着鱼头中心走
+    tip_x = min(max(fish_cx, bx + int(bw * 0.24)), bx + int(bw * 0.76))
+    tw = max(6, int(10 * scale))
+    tail = [(tip_x - tw, ty - 2), (tip_x + tw, ty - 2),
+            (tip_x, min(ty + tail_h, head_y + int(20 * scale)) + rise)]
+    d.polygon(tail, fill=fill)
+    d.line([tail[0], tail[2]], fill=edge, width=max(1, int(1.4 * scale)))
+    d.line([tail[1], tail[2]], fill=edge, width=max(1, int(1.4 * scale)))
+    # 阴影 + 气泡
+    d.rounded_rectangle([bx + 2, by + rise + 4, bx + bw + 2, by + rise + bh + 4],
+                        radius=int(16 * scale), fill=(0, 0, 0, int(60 * alpha)))
+    d.rounded_rectangle([bx, by + rise, bx + bw, by + rise + bh],
+                        radius=int(16 * scale), fill=fill, outline=edge,
+                        width=max(1, int(1.5 * scale)))
+    color = (110, 116, 135, int(255 * alpha)) if mode == "thinking" else (32, 34, 44, int(255 * alpha))
+    text_y = by + rise + pad_y
+    for line in lines:
+        d.text((bx + pad_x, text_y), line, font=font, fill=color)
+        text_y += line_h
+    return canvas
+
+
 # ---------------------------------------------------------------- Win32
 ULW_ALPHA = 0x02
 AC_SRC_OVER = 0x00
@@ -814,9 +956,12 @@ WM_HOTKEY = 0x0312
 WM_EXITSIZEMOVE = 0x0232
 WDA_NONE = 0x00000000
 WDA_EXCLUDEFROMCAPTURE = 0x00000011   # Win10 2004+：录屏/采集里看不到这个窗
+WM_NCHITTEST = 0x0084
 WM_SETCURSOR = 0x0020
 WM_MOUSEWHEEL = 0x020A
 HTCAPTION = 2
+HTCLIENT = 1
+HTTRANSPARENT = -1
 HTBOTTOMRIGHT = 17
 IDC_SIZEALL = 32646
 IDC_SIZENWSE = 32642
@@ -833,6 +978,7 @@ SWP_NOSIZE = 0x0001
 SWP_NOMOVE = 0x0002
 SWP_NOZORDER = 0x0004
 SWP_SHOWWINDOW = 0x0040
+SWP_NOACTIVATE = 0x0010
 
 
 class BLENDFUNCTION(ctypes.Structure):
@@ -1019,6 +1165,7 @@ class StreamerWindow:
         self._transparent = bool(click_through)
         self._watch_stop = threading.Event()
         self._memdc = None
+        self._hit_alpha = None
         self._hbmp = None
         self._dib = None
         self._dib_size = (0, 0)
@@ -1028,8 +1175,9 @@ class StreamerWindow:
         self._wndproc = WNDPROC(self._proc)  # 保引用，否则回调被回收会崩
         # 尺寸优先级：命令行 --scale > 上次拖出来的 > 系统 DPI
         saved = self._load_state()
-        self.scale = self._clamp_scale(scale or float(saved.get("scale") or dpi_scale()))
-        _w, _h = int(BASE_W * self.scale), int(420 * self.scale)
+        self.scale = self._clamp_scale(scale or float(saved.get("scale") or self._default_scale()))
+        base_w, base_h = self._base_wh()
+        _w, _h = int(base_w * self.scale), int(base_h * self.scale)
         if pos:
             self.pos = self._clamp(*pos, _w, _h)
         elif saved.get("x") is not None:
@@ -1041,6 +1189,37 @@ class StreamerWindow:
         self._cls = f"StS2Streamer{os.getpid()}"
         self._register()
         self._create()
+
+    # ---- 形态钩子：面板（默认）/ 桌宠（PetWindow 覆盖）
+    @staticmethod
+    def _base_wh() -> tuple[int, int]:
+        return BASE_W, 420
+
+    @staticmethod
+    def _default_scale() -> float:
+        return dpi_scale()
+
+    @staticmethod
+    def _state_path() -> str:
+        return STATE_FILE
+
+    @staticmethod
+    def _title() -> str:
+        return "大肥鱼 · 主播模式"
+
+    def _render_frame(self, text: str, status: dict, scale: float, talk: float,
+                      layout_text: str | None = None, chip: bool = False) -> Image.Image:
+        return render(text, status, scale, talk, chip=chip, layout_text=layout_text)
+
+    def _is_animating(self, now: float) -> bool:
+        return now < max(self.talk_until, self.enter_at + 0.32)
+
+    def _frame_interval(self, now: float) -> float:
+        return 0.033
+
+    def _run_hint(self) -> str:
+        return ("主播模式已启动：左键拖 · 右下角拖=缩放 · 滚轮=缩放 · 右键菜单 · "
+                "穿透时点右下 ☰ · Ctrl+Alt+D 穿透 · Ctrl+Alt+S 声音 · Ctrl+Alt+H 隐藏 · Ctrl+Alt+Q 退出")
 
     @staticmethod
     def _game_window_center() -> tuple[int, int]:
@@ -1076,11 +1255,10 @@ class StreamerWindow:
             ex |= WS_EX_TOPMOST
         if self.click_through:
             ex |= WS_EX_TRANSPARENT
-        img = render(self.text or PLACEHOLDER, self.status, self.scale,
-                     chip=self.click_through)
+        img = self._render_at(self.scale)
         x, y = self.pos
         self._hwnd = user32.CreateWindowExW(
-            ex, self._cls, "大肥鱼 · 主播模式", WS_POPUP,
+            ex, self._cls, self._title(), WS_POPUP,
             x, y, img.width, img.height, None, None, self._hinst, None,
         )
         if not self._hwnd:
@@ -1117,6 +1295,26 @@ class StreamerWindow:
         # 以前这里是 if self.click_through: return 0 —— 穿透开着就永远点不到，弹窗成了死的。
         blocked = self.click_through and not self._hot
         try:
+            if msg == WM_NCHITTEST and not self.click_through:
+                # 透明像素不吃鼠标：桌宠窗口是 560×500 的矩形，鱼只占下面一块，
+                # 空白处若照样接收点击，打游戏时点到空气也会点到窗口。
+                # 返回 HTTRANSPARENT 让点击落到底下的游戏/OBS 上；右下缩放手把例外。
+                try:
+                    sx = ctypes.c_short(lparam & 0xFFFF).value
+                    sy = ctypes.c_short((lparam >> 16) & 0xFFFF).value
+                    pt = wintypes.POINT(sx, sy)
+                    user32.ScreenToClient(hwnd, ctypes.byref(pt))
+                    hit = getattr(self, "_hit_alpha", None)
+                    if hit:
+                        hw, hh, alpha = hit
+                        grip = max(10, int(RESIZE_GRIP * self.scale))
+                        in_grip = pt.x >= hw - grip and pt.y >= hh - grip
+                        if not in_grip and 0 <= pt.x < hw and 0 <= pt.y < hh:
+                            if alpha[pt.y * hw + pt.x] < 20:
+                                return HTTRANSPARENT
+                except Exception:
+                    pass
+                return HTCLIENT
             if msg == WM_LBUTTONDOWN:
                 if blocked:
                     return 0
@@ -1287,7 +1485,7 @@ class StreamerWindow:
                 self.tick_interaction()
             except Exception:
                 pass
-            self._watch_stop.wait(0.05)
+            self._watch_stop.wait(0.03)
 
     def toggle_visible(self):
         if user32.IsWindowVisible(self._hwnd):
@@ -1304,6 +1502,7 @@ class StreamerWindow:
     # ---- 画面
     def _paint(self, img: Image.Image, at: tuple[int, int] | None = None, resize: bool = True):
         w, h = img.size
+        self._hit_alpha = (w, h, img.getchannel("A").tobytes())
         hdc_screen = user32.GetDC(None)
         if self._memdc is None:
             self._memdc = gdi32.CreateCompatibleDC(hdc_screen)
@@ -1480,8 +1679,8 @@ class StreamerWindow:
         if os.environ.get("STS2_STREAMER_DEBUG"):
             print(f"frame mode={mode} ct={self.click_through} layout={None if not layout_text else len(layout_text)}",
                   flush=True)
-        img = render(text, self.status, self.scale, talk, chip=self.click_through,
-                     layout_text=layout_text)
+        img = self._render_frame(text, self.status, self.scale, talk,
+                                 layout_text=layout_text, chip=self.click_through)
         # 入场：滑 6px + 渐显（对应 CSS slidein .32s）
         dt = now - self.enter_at
         if 0 <= dt < 0.32 and self.text:
@@ -1497,13 +1696,14 @@ class StreamerWindow:
 
     # ---- 尺寸（右下角拖动 / 滚轮）
     def _render_at(self, scale: float) -> Image.Image:
-        return render(self.display_text(self.presence.state), self.status, scale,
-                      chip=self.click_through)
+        return self._render_frame(self.display_text(self.presence.state), self.status,
+                                  scale, 0.0, chip=self.click_through)
 
-    @staticmethod
-    def _clamp_scale(scale: float) -> float:
+    @classmethod
+    def _clamp_scale(cls, scale: float) -> float:
         screen_w = user32.GetSystemMetrics(0)
-        hi = min(MAX_SCALE, screen_w * 0.95 / BASE_W)
+        base_w = cls._base_wh()[0]
+        hi = min(MAX_SCALE, screen_w * 0.95 / base_w)
         return max(MIN_SCALE, min(hi, float(scale)))
 
     def zoom(self, factor: float):
@@ -1512,7 +1712,7 @@ class StreamerWindow:
     def _resize_to_cursor(self, cursor_x: int):
         """拖动把手时的换算：宽度跟手走，高度跟宽度走（等比）。"""
         x0, left, top, w0 = self._resize_start
-        self.apply_scale((w0 + (cursor_x - x0)) / BASE_W, anchor=(left, top))
+        self.apply_scale((w0 + (cursor_x - x0)) / self._base_wh()[0], anchor=(left, top))
 
     def apply_scale(self, scale: float, anchor: tuple[int, int] | None = None):
         """改整体大小：等比缩，宽度决定，高度按新字号重算。"""
@@ -1540,10 +1740,9 @@ class StreamerWindow:
         return self._hit_test_point(pt.x, pt.y, rect, self.scale)
 
     # ---- 位置/尺寸记忆
-    @staticmethod
-    def _load_state() -> dict:
+    def _load_state(self) -> dict:
         try:
-            with open(STATE_FILE, encoding="utf-8") as f:
+            with open(self._state_path(), encoding="utf-8") as f:
                 d = json.load(f)
             return d if isinstance(d, dict) else {}
         except Exception:
@@ -1601,8 +1800,9 @@ class StreamerWindow:
         try:
             rect = wintypes.RECT()
             user32.GetWindowRect(self._hwnd, ctypes.byref(rect))
-            os.makedirs(os.path.dirname(STATE_FILE), exist_ok=True)
-            with open(STATE_FILE, "w", encoding="utf-8") as f:
+            path = self._state_path()
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w", encoding="utf-8") as f:
                 json.dump({"x": rect.left, "y": rect.top, "scale": round(self.scale, 3)}, f)
         except Exception:
             pass
@@ -1622,8 +1822,7 @@ class StreamerWindow:
             pass
 
     def run(self):
-        print("主播模式已启动：左键拖 · 右下角拖=缩放 · 滚轮=缩放 · 右键菜单 · "
-              "穿透时点右下 ☰ · Ctrl+Alt+D 穿透 · Ctrl+Alt+S 声音 · Ctrl+Alt+H 隐藏 · Ctrl+Alt+Q 退出")
+        print(self._run_hint())
         print("（默认不出现在录屏里：WDA_EXCLUDEFROMCAPTURE，要拍就加 --capture）")
         last = 0.0
         last_guard = 0.0
@@ -1643,16 +1842,250 @@ class StreamerWindow:
             if now - last_guard > 2.0:
                 last_guard = now
                 self._ensure_on_screen()
-            animating = now < max(self.talk_until, self.enter_at + 0.32)
+            animating = self._is_animating(now)
             if self.dirty or animating:
                 if animating or now - last > 0.05:
                     self._paint(self.frame())
                     self.dirty = False
                     last = now
-                time.sleep(0.033)   # 30fps 够用：Pillow 每帧 ~10ms，别再翻倍烧 CPU
+                time.sleep(self._frame_interval(now))   # 面板 30fps；桌宠空闲会降帧
             else:
                 time.sleep(0.05)
         self._save_pos()
+
+
+# ---------------------------------------------------------------- 桌宠形态
+class PetWindow(StreamerWindow):
+    """用三视图精灵的桌面桌宠：拖动换朝向 + 实时形变，说话走漫画气泡。
+
+    「鼠标往对应方向拖动」不是播动画，而是按窗口位移实时选朝向：
+    左右 → 侧面（自动镜像）、向上 → 背面、向下 → 正面；同时按速度倾斜/压扁/拉长，
+    松手回正，带一点回弹。精灵本身只有三张静态图，动态都是画出来的。
+    """
+
+    def __init__(self, *args, **kwargs):
+        self.pet_facing = "front"
+        self.pet_face_right = False
+        self.pet_lean = 0.0
+        self.pet_energy = 0.0
+        self.bubble_until = 0.0
+        self._drag_prev: tuple[int, int] | None = None
+        self._drag_until = 0.0
+        self._release_at = 0.0
+        # 原生 HTCAPTION 拖动会让系统模态移动循环卡住本线程的主循环，
+        # 拖动过程中一帧都画不出来。桌宠改成自己 SetWindowPos，消息循环不断。
+        self._dragging = False
+        self._drag_anchor = (0, 0)
+        self._drag_origin = (0, 0)
+        self._drag_last_cursor = (0, 0)
+        super().__init__(*args, **kwargs)
+        # 初始按「鼠标在鱼身上」算：先保证可交互，第一帧轮询再把空白区域设成穿透
+        self._hot = True
+        self._transparent = False
+        self._apply_transparent(False)
+
+    # ---- 形态
+    @staticmethod
+    def _base_wh() -> tuple[int, int]:
+        return PET_BASE_W, PET_BASE_H
+
+    @staticmethod
+    def _default_scale() -> float:
+        # 桌宠别跟着 175% DPI 长到半个屏：默认封顶 1.15×，用户仍可滚轮放大
+        return min(1.15, dpi_scale())
+
+    @staticmethod
+    def _state_path() -> str:
+        return PET_STATE_FILE
+
+    @staticmethod
+    def _title() -> str:
+        return "大肥鱼 · 桌宠"
+
+    def _render_frame(self, text: str, status: dict, scale: float, talk: float,
+                      layout_text: str | None = None, chip: bool = False) -> Image.Image:
+        return render_pet(text, self.presence.state, scale, time.perf_counter(), self)
+
+    def display_text(self, mode: str) -> str:
+        if mode == "thinking":
+            return "思考中…"
+        return self.text or ""
+
+    def _is_animating(self, now: float) -> bool:
+        return True   # 呼吸/摇摆是常驻的
+
+    def _frame_interval(self, now: float) -> float:
+        if now < self._drag_until or now < self.talk_until:
+            return 0.025
+        return 0.05
+
+    # ---- 拖动 → 朝向 / 形变
+    def _proc(self, hwnd, msg, wparam, lparam):
+        """桌宠自己拖：不调 HTCAPTION，否则系统移动循环会卡住渲染主循环。"""
+        if msg == WM_LBUTTONDOWN and (not self.click_through or self._hot) \
+                and self._hit_test() != HTBOTTOMRIGHT:
+            pt = wintypes.POINT()
+            user32.GetCursorPos(ctypes.byref(pt))
+            rect = wintypes.RECT()
+            user32.GetWindowRect(hwnd, ctypes.byref(rect))
+            self._dragging = True
+            self._drag_anchor = (pt.x, pt.y)
+            self._drag_origin = (rect.left, rect.top)
+            self._drag_last_cursor = (pt.x, pt.y)
+            self._drag_prev = (rect.left, rect.top)
+            user32.SetCapture(hwnd)
+            return 0
+        if msg == WM_MOUSEMOVE and self._dragging:
+            self._manual_drag()
+            return 0
+        if msg == WM_LBUTTONUP and self._dragging:
+            self._dragging = False
+            self._drag_prev = None
+            self._release_at = time.perf_counter()
+            user32.ReleaseCapture()
+            self._save_pos()
+            return 0
+        return super()._proc(hwnd, msg, wparam, lparam)
+
+    def _manual_drag(self) -> None:
+        pt = wintypes.POINT()
+        user32.GetCursorPos(ctypes.byref(pt))
+        dx = pt.x - self._drag_anchor[0]
+        dy = pt.y - self._drag_anchor[1]
+        user32.SetWindowPos(self._hwnd, None, self._drag_origin[0] + dx,
+                            self._drag_origin[1] + dy, 0, 0,
+                            SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE)
+        sx = pt.x - self._drag_last_cursor[0]
+        sy = pt.y - self._drag_last_cursor[1]
+        self._drag_last_cursor = (pt.x, pt.y)
+        if abs(sx) + abs(sy) >= 1:
+            now = time.perf_counter()
+            self.pet_energy = min(1.0, (abs(sx) + abs(sy)) / 10.0)
+            if abs(sx) >= abs(sy) * 0.85:
+                self.pet_facing = "side"
+                self.pet_face_right = sx > 0
+                self.pet_lean = max(-14.0, min(14.0, -sx * 2.0))
+            else:
+                self.pet_facing = "back" if sy < 0 else "front"
+                self.pet_lean = max(-8.0, min(8.0, -sx * 0.5))
+            self._drag_until = now + 0.18
+            self.dirty = True
+
+    def _track_drag(self, now: float) -> None:
+        if self._dragging:
+            return
+        try:
+            pt = wintypes.POINT()
+            user32.GetCursorPos(ctypes.byref(pt))
+            rect = wintypes.RECT()
+            user32.GetWindowRect(self._hwnd, ctypes.byref(rect))
+        except Exception:
+            return
+        down = bool(user32.GetAsyncKeyState(0x01) & 0x8000)
+        margin = int(40 * self.scale)
+        inside = (rect.left - margin <= pt.x <= rect.right + margin
+                  and rect.top - margin <= pt.y <= rect.bottom + margin)
+        prev = self._drag_prev
+        moved = False
+        if down and inside and prev is not None:
+            dx = rect.left - prev[0]
+            dy = rect.top - prev[1]
+            if abs(dx) + abs(dy) >= 1:
+                moved = True
+                self.pet_energy = min(1.0, (abs(dx) + abs(dy)) / 6.0)
+                if abs(dx) >= abs(dy) * 0.85:
+                    self.pet_facing = "side"
+                    self.pet_face_right = dx > 0
+                    self.pet_lean = max(-14.0, min(14.0, -dx * 2.2))
+                else:
+                    self.pet_facing = "back" if dy < 0 else "front"
+                    self.pet_lean = max(-8.0, min(8.0, -dx * 0.5))
+                self._drag_until = now + 0.18
+        if down and inside:
+            self._drag_prev = (rect.left, rect.top)
+        else:
+            if prev is not None:
+                self._release_at = now
+            self._drag_prev = None
+        if not moved:
+            self.pet_lean *= 0.86
+            self.pet_energy *= 0.88
+        if now > self._drag_until and now > self._release_at + 0.45:
+            self.pet_facing = "front"
+            self.pet_face_right = False
+
+    def _hot_zone_point(self, px: int, py: int, rect, scale: float) -> bool:
+        """穿透时只有「鱼身+右下把手」能临时点：别整窗吃鼠标。"""
+        grip = max(10, int(RESIZE_GRIP * scale))
+        if px >= rect.right - grip and py >= rect.bottom - grip:
+            return True
+        w, h = rect.right - rect.left, rect.bottom - rect.top
+        fx, fy = rect.left + w * 0.18, rect.top + h * 0.32
+        return fx <= px <= fx + w * 0.64 and fy <= py <= rect.bottom
+
+    def _cursor_on_pet(self) -> bool:
+        """光标是否压在鱼/气泡的不透明像素上（含右下缩放手把）。"""
+        hit = self._hit_alpha
+        if not hit:
+            return True
+        try:
+            pt = wintypes.POINT()
+            user32.GetCursorPos(ctypes.byref(pt))
+            rect = wintypes.RECT()
+            user32.GetWindowRect(self._hwnd, ctypes.byref(rect))
+            w, h = rect.right - rect.left, rect.bottom - rect.top
+            hw, hh, alpha = hit
+            grip = max(10, int(RESIZE_GRIP * self.scale))
+            x, y = pt.x - rect.left, pt.y - rect.top
+            if x >= w - grip and y >= h - grip:
+                return True
+            if not (0 <= x < hw and 0 <= y < hh):
+                return False
+            return alpha[y * hw + x] >= 20
+        except Exception:
+            return True
+
+    def tick_interaction(self) -> bool:
+        """非穿透模式下也让透明像素穿透：只有鱼身/气泡吃鼠标。
+
+        窗口是 560×500 的矩形，鱼只占下面一块；不做逐像素判定的话，
+        鱼头顶上的空白会挡游戏点击。用 50ms 轮询切 WS_EX_TRANSPARENT，
+        比 WM_NCHITTEST 的 HTTRANSPARENT 跨进程更可靠。
+        """
+        if self.click_through:
+            return super().tick_interaction()
+        want = bool(self._menu_open or self._resizing or self._cursor_on_pet())
+        if want != self._hot:
+            self._hot = want
+            self._apply_transparent(not want)
+            self.dirty = True
+            if os.environ.get("STS2_STREAMER_DEBUG"):
+                print(f"桌宠交互区：{'进入' if want else '离开'}")
+        return want
+
+    def frame(self) -> Image.Image:
+        now = time.perf_counter()
+        self._track_drag(now)
+        mode = self.tick_presence()
+        if self.presence.dirty:
+            self.presence.dirty = False
+        return render_pet(self.display_text(mode), mode, self.scale, now, self)
+
+    def start_talking(self, duration: float, text: str = ""):
+        super().start_talking(duration, text)
+        if self.text and (not text or text == self.text):
+            self.bubble_until = max(self.bubble_until,
+                                    time.perf_counter() + max(1.0, float(duration or 0)) + 1.6)
+
+    def push(self, thought: str, meme: str, status: dict | None = None):
+        super().push(thought, meme, status)
+        if self.text:
+            self.bubble_until = time.perf_counter() + 4.5
+
+    def _run_hint(self) -> str:
+        return ("桌宠已启动：左键拖（左右/上下换朝向，带倾斜和速度线）· 滚轮/右下角=缩放 · "
+                "右键菜单 · 穿透时鼠标贴鱼身 · Ctrl+Alt+D 穿透 · Ctrl+Alt+S 声音 · "
+                "Ctrl+Alt+H 隐藏 · Ctrl+Alt+Q 退出")
 
 
 # ---------------------------------------------------------------- 数据
@@ -1740,7 +2173,9 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="主播模式：可拖动的透明弹幕窗")
     ap.add_argument("--port", type=int, default=PORT)
     ap.add_argument("--scale", type=float, default=0.0,
-                    help="缩放 0.42~1.8（默认用上次拖出来的大小，没有就跟系统 DPI；1.0=1180px 宽）")
+                    help="缩放 0.5~1.8（默认用上次拖出来的大小；桌宠 1.0≈560px 宽，面板 1.0=1180px 宽）")
+    ap.add_argument("--panel", action="store_true",
+                    help="用旧版横向弹幕面板（默认是桌宠：三视图精灵 + 漫画气泡）")
     ap.add_argument("--pos", help="初始位置 x,y")
     ap.add_argument("--click-through", action="store_true", help="启动即点击穿透")
     ap.add_argument("--demo", action="store_true", help="先放一条示例弹幕（不接游戏也能试位置）")
@@ -1775,18 +2210,33 @@ def main() -> int:
         return user32.GetSystemMetrics(0)
 
     screen_w = _target_screen_w()
-    if PANEL_W * scale > screen_w * 0.9:
-        scale = screen_w * 0.9 / PANEL_W
+    base_w = PANEL_W if a.panel else PET_BASE_W
+    if base_w * scale > screen_w * 0.9:
+        scale = screen_w * 0.9 / base_w
         print(f"窗口比屏幕宽，缩到 {scale:.2f}×")
 
     if a.preview:
-        # --think / --click-through 也能进预览：验收截图要看到「思考中……」和 ☰ 菜单钮
-        mode = "thinking" if a.think else "speaking"
-        text = THINKING_TEXT if a.think else "它 21，我最多挡 15。差 6，嗨呀。"
-        img = render(text, {"character": "铁甲战士", "ascension": 10, "floor": 8,
-                            "hp": 23, "max_hp": 80, "gold": 20}, scale,
-                     chip=a.click_through,
-                     layout_text=None if mode != "thinking" else "它 21，我最多挡 15。差 6，嗨呀。")
+        # --think / --click-through 也能进预览：验收截图要看到「思考中……」和气泡
+        if a.panel:
+            mode = "thinking" if a.think else "speaking"
+            text = THINKING_TEXT if a.think else "它 21，我最多挡 15。差 6，嗨呀。"
+            img = render(text, {"character": "铁甲战士", "ascension": 10, "floor": 8,
+                                "hp": 23, "max_hp": 80, "gold": 20}, scale,
+                         chip=a.click_through,
+                         layout_text=None if mode != "thinking" else "它 21，我最多挡 15。差 6，嗨呀。")
+        else:
+            fake = type("_PreviewPet", (), {})()
+            fake.pet_facing = "front"
+            fake.pet_face_right = False
+            fake.pet_lean = 0.0
+            fake.pet_energy = 0.0
+            fake.enter_at = time.perf_counter() - 1.0
+            fake.bubble_until = time.perf_counter() + 30.0
+            fake.talk_start_at = 0.0
+            fake.talk_until = 0.0
+            text = "思考中…" if a.think else "它 21，我最多挡 15。差 6，嗨呀。"
+            img = render_pet(text, "thinking" if a.think else "speaking",
+                             scale, time.perf_counter(), fake)
         img.save(a.preview)
         print(f"PREVIEW {a.preview} {img.width}x{img.height}")
         return 0
@@ -1805,9 +2255,10 @@ def main() -> int:
             print("--pos 需要 x,y")
             return 2
 
-    win = StreamerWindow(scale=a.scale, pos=pos, click_through=a.click_through,
-                         toolwindow=not a.taskbar, volume=a.vol, muted=a.mute,
-                         exclude_capture=not a.capture, voice=a.voice)
+    cls = StreamerWindow if a.panel else PetWindow
+    win = cls(scale=a.scale, pos=pos, click_through=a.click_through,
+              toolwindow=not a.taskbar, volume=a.vol, muted=a.mute,
+              exclude_capture=not a.capture, voice=a.voice)
     stop = threading.Event()
     th = threading.Thread(target=poll_loop, args=(win, a.port, stop, a.demo), daemon=True)
     th.start()

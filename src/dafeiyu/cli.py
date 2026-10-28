@@ -249,6 +249,15 @@ def cmd_doctor(args) -> int:
         f"clients={ping.get('clients')} seq={ping.get('seq')}" if ping.get("ok")
         else f"离线（{ping.get('error')}）")
 
+    try:
+        from dafeiyu.stream import replay
+
+        rr = replay.scan()
+        total = sum(r["size_bytes"] for r in rr)
+        add("OK", "replay", f"{len(rr)} 局 · {replay.human_size(total)}")
+    except Exception as exc:
+        add("WARN", "replay", f"{type(exc).__name__}: {exc}")
+
     db = paths.GAMES / "slay-the-spire-2" / "corpus" / "db" / "sts2.db"
     add("OK" if db.exists() else "BAD", "corpus", f"{db.stat().st_size // 1024} KB" if db.exists() else f"缺 {db}")
 
@@ -299,6 +308,93 @@ def cmd_setup(args) -> int:
     paths.ensure_dirs()
     print(f"logs  {paths.LOGS}")
     return 0 if ok else 1
+
+
+def cmd_replay(args) -> int:
+    """录像回放：按游戏分目录、一局一个 run.mp4。"""
+    from dafeiyu.stream import replay
+
+    action = args.action
+    if action == "list":
+        rows = replay.scan(args.game)
+        if args.json:
+            _print_json(rows)
+            return 0
+        if not rows:
+            print("还没有录像。开一局：python dafeiyu.py replay start")
+            return 0
+        print(f"{'局':>5}  {'游戏':<18} {'角色':<10} {'进阶':<5} {'结果':<22} {'大小':>9}")
+        for r in rows:
+            asc = f"A{r['ascension']}" if r["ascension"] is not None else "—"
+            print(f"{r['run'] or '—':>5}  {r['game']:<18} {r['character'] or '—':<10} "
+                  f"{asc:<5} {(r['result'] or r['note'] or '—'):<22} "
+                  f"{replay.human_size(r['size_bytes']):>9}")
+        return 0
+
+    if action == "new":
+        run_dir = replay.create_run(args.game, args.run, args.character,
+                                    args.ascension, args.note)
+        print(run_dir)
+        return 0
+
+    if action == "start":
+        run_dir = Path(args.path).expanduser() if args.path else replay.get_current()
+        if not run_dir or not run_dir.is_dir():
+            run_dir = replay.create_run(args.game, args.run, args.character,
+                                        args.ascension, args.note)
+        replay.set_current(run_dir)
+        print(f"RUN {run_dir}")
+        try:
+            replay.start_recording(run_dir)
+            print("RECORDING（OBS 已开录；结束后 python dafeiyu.py replay stop --result ...）")
+        except Exception as exc:
+            print(f"WARN OBS 没开录（{type(exc).__name__}: {exc}）")
+            print("     目录已建好；OBS 恢复后重跑 replay start，或手动把录像放进该目录的 run.mp4")
+            return 1
+        return 0
+
+    if action == "stop":
+        run_dir = Path(args.path).expanduser() if args.path else replay.get_current()
+        if not run_dir or not run_dir.is_dir():
+            print("ERR 没有正在录的局（先 replay start）")
+            return 1
+        try:
+            dst = replay.stop_recording(run_dir, args.result, args.note)
+            print(f"OK {dst}（{replay.human_size(dst.stat().st_size)}）")
+        except Exception as exc:
+            print(f"WARN 停止 OBS 失败（{type(exc).__name__}: {exc}）")
+            if not replay.video_path(run_dir):
+                return 1
+            try:
+                dst = replay.finalize(run_dir, None, args.result, args.note, force=args.force)
+            except Exception as exc2:
+                print(f"ERR 收尾失败：{exc2}")
+                return 1
+            print(f"OK 已收尾 {dst}")
+        replay.clear_current()
+        replay.write_index()
+        return 0
+
+    if action == "index":
+        p = replay.write_index()
+        print(p)
+        return 0
+
+    if action == "migrate":
+        moved = replay.migrate_legacy(force=args.force)
+        print(f"moved {len(moved)}")
+        for m in moved:
+            print(m)
+        replay.write_index()
+        return 0
+
+    if action == "path":
+        cur = replay.get_current()
+        print(cur or "（没有当前局）")
+        return 0 if cur else 1
+
+    print(f"unknown replay action: {action}")
+    return 2
 
 
 # ---------------------------------------------------------------- 入口
@@ -355,6 +451,47 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("setup", help="建 db/、tools/data/ 兼容链接")
     p.set_defaults(func=cmd_setup)
+
+    p = sub.add_parser("replay", help="录像回放：按游戏分目录，一局一个 run.mp4")
+    rs = p.add_subparsers(dest="action", required=True)
+    q = rs.add_parser("list", help="列出现有录像")
+    q.add_argument("--game", default=None)
+    q.add_argument("--json", action="store_true")
+    q.set_defaults(func=cmd_replay)
+
+    q = rs.add_parser("new", help="建一局的空目录（不录像）")
+    q.add_argument("--game", default="slay-the-spire-2")
+    q.add_argument("--run", type=int, default=None)
+    q.add_argument("--character", default="")
+    q.add_argument("--ascension", type=int, default=None)
+    q.add_argument("--note", default="")
+    q.set_defaults(func=cmd_replay)
+
+    q = rs.add_parser("start", help="开录一局（OBS 目录指到该局）")
+    q.add_argument("--path", default="", help="指定已有局目录（默认用 / 新建当前局）")
+    q.add_argument("--game", default="slay-the-spire-2")
+    q.add_argument("--run", type=int, default=None)
+    q.add_argument("--character", default="")
+    q.add_argument("--ascension", type=int, default=None)
+    q.add_argument("--note", default="")
+    q.set_defaults(func=cmd_replay)
+
+    q = rs.add_parser("stop", help="停录并收进 <局>/run.mp4")
+    q.add_argument("--path", default="")
+    q.add_argument("--result", default="")
+    q.add_argument("--note", default="")
+    q.add_argument("--force", action="store_true", help="覆盖已有 run.mp4")
+    q.set_defaults(func=cmd_replay)
+
+    q = rs.add_parser("index", help="重写 recordings/INDEX.md")
+    q.set_defaults(func=cmd_replay)
+
+    q = rs.add_parser("migrate", help="把根目录散放的旧 mp4 收进分游戏目录")
+    q.add_argument("--force", action="store_true")
+    q.set_defaults(func=cmd_replay)
+
+    q = rs.add_parser("path", help="打印当前局目录")
+    q.set_defaults(func=cmd_replay)
 
     return ap
 

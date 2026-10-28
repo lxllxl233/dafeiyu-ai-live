@@ -6,6 +6,8 @@ build-backend = "setuptools.build_meta"
 name = "dafeiyu-ai-live"
 version = "2.0.0"
 description = "大肥鱼直播姬 · 可换游戏 / 性格 / 声音的 AI 直播工具"
+license = {text = "MIT"}
+authors = [{name = "lxllxl233"}]
 readme = "README.md"
 requires-python = ">=3.10"
 keywords = ["ai", "live-streaming", "obs", "tts", "slay-the-spire"]

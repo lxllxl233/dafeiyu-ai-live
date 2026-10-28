@@ -1,28 +1,24 @@
-# 录像分 P（一次爬塔一集）
+# 录像回放
 
-> 一局一集，文件在 `recordings/`。旧文件是早期整段录的，名字里的 runNN 是当时的局号。
+> 一局一个文件夹，默认一个 `run.mp4`；这个文件由 `python dafeiyu.py replay index` 生成。
+> 视频不进 Git（`.gitignore` 只放行本文件和 README）。
 
-| 分P | 文件 | 结果 | 大小 |
-|---|---|---|---|
-| P68 | sts2_ironclad_a10_run68_lose_floor17.mp4 | 杂怪/精英死 | 1.0 GB |
-| P69 | sts2_ironclad_a10_run69_lose_floor17.mp4 | 杂怪/精英死 | 1.2 GB |
-| P70 | sts2_ironclad_a10_run70_abandoned_floor1.mp4 | 放弃 | 0.1 GB |
-| P71 | sts2_ironclad_a10_run71_lose_act2boss.mp4 | 第二幕 Boss 死 | 2.1 GB |
-| P72 | sts2_ironclad_a10_run72_lose_act2boss.mp4 | 第二幕 Boss 死 | 2.7 GB |
-| P73 | sts2_ironclad_a10_run73_lose_act1boss.mp4 | 第一幕 Boss 死 | 1.2 GB |
-| P74 | sts2_ironclad_a10_run74_lose_floor11.mp4 | 杂怪/精英死 | 0.8 GB |
-| P75 | sts2_ironclad_a10_run75_lose_floor9elite.mp4 | 杂怪/精英死 | 0.9 GB |
-| P76 | sts2_ironclad_a10_run76_lose_act1boss.mp4 | 第一幕 Boss 死 | 1.2 GB |
-| P? | 2026-10-27 08-41-29.mp4 | 未标注 | 6.0 GB |
-| P? | sts2_ironclad_a10_runs77-79_bosses.mp4 | 第一幕 Boss 集锦 | 4.9 GB |
+## 杀戮尖塔 2（`slay-the-spire-2`）
 
-新的一局：`python tools/rec_episode.py start`；结束：`python tools/rec_episode.py finish --run 82 --result win_a10`（会自动改名 + 写本表）。
-| P81 | sts2_ironclad_a10_run81_lose_act2elite.mp4 | lose_act2elite | 7.2 GB |
-| P82 | sts2_ironclad_a10_run82_LOSS_SANDWORM_f33.mp4 | LOSS_SANDWORM_f33 | 3.1 GB |
-| P83 | sts2_ironclad_a10_run83_ABANDONED_f10.mp4 | ABANDONED_f10 | 0.5 GB |
-| P84 | sts2_ironclad_a10_run84_ABANDONED_saved_f1.mp4 | ABANDONED_saved_f1 | 1.0 GB |
-| P85 | sts2_ironclad_a10_run85_DEFEAT.mp4 | act2 f22 双螨虫（模型验证局） | 1.9 GB |
-| P86 | sts2_ironclad_a10_run86_lose_floor23.mp4 | act2 f23 产卵虫（测量局：中间指标 ±1 82.7% / 假斩杀 5 / batch 1） | 2.5 GB |
-| P94 | sts2_ironclad_a10_run94_lose_f17_act1boss.mp4 | lose_f17_act1boss | 1.0 GB |
-| P95 | sts2_ironclad_a10_run95_abandon_f6_forced_elite.mp4 | abandon_f6_forced_elite | 0.4 GB |
-| P96 | sts2_ironclad_a10_run96_through_r106_best_f17act1boss.mp4 | through_r106_best_f17act1boss | 11.5 GB |
+| 局 | 角色 | 进阶 | 结果 | 大小 | 文件 |
+|---|---|---|---|---|---|
+| 94 | ironclad | A10 | lose_f17_act1boss | 988.7 MB | `slay-the-spire-2/run-0094/run.mp4` |
+| 92 | ironclad | A10 | lose_floor17_act1boss | 1.6 GB | `slay-the-spire-2/run-0092/run.mp4` |
+| 91 | ironclad | A10 | lose_floor17_act1boss | 1.3 GB | `slay-the-spire-2/run-0091/run.mp4` |
+| 89 | ironclad | A10 | lose_floor17_act1boss | 832.7 MB | `slay-the-spire-2/run-0089/run.mp4` |
+| 88 | ironclad | A10 | lose_floor17_act1boss | 1.2 GB | `slay-the-spire-2/run-0088/run.mp4` |
+| 86 | ironclad | A10 | lose_floor23 | 2.4 GB | `slay-the-spire-2/run-0086/run.mp4` |
+| 85 | ironclad | A10 | DEFEAT | 1.9 GB | `slay-the-spire-2/run-0085/run.mp4` |
+| 84 | ironclad | A10 | ABANDONED_saved_f1 | 1.0 GB | `slay-the-spire-2/run-0084/run.mp4` |
+| 83 | ironclad | A10 | ABANDONED_f10 | 521.8 MB | `slay-the-spire-2/run-0083/run.mp4` |
+| 82 | ironclad | A10 | LOSS_SANDWORM_f33 | 3.1 GB | `slay-the-spire-2/run-0082/run.mp4` |
+| 76 | ironclad | A10 | lose_act1boss | 1.2 GB | `slay-the-spire-2/run-0076/run.mp4` |
+| 75 | ironclad | A10 | lose_floor9elite | 954.3 MB | `slay-the-spire-2/run-0075/run.mp4` |
+| 73 | ironclad | A10 | lose_act1boss | 1.2 GB | `slay-the-spire-2/run-0073/run.mp4` |
+| 72 | ironclad | A10 | lose_act2boss | 2.7 GB | `slay-the-spire-2/run-0072/run.mp4` |
+| 71 | ironclad | A10 | lose_act2boss | 2.1 GB | `slay-the-spire-2/run-0071/run.mp4` |
