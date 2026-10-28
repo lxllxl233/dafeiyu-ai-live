@@ -15,6 +15,7 @@ import contextlib
 import io
 import json
 import os
+import re
 import sys
 import threading
 import time
@@ -30,6 +31,7 @@ _lock = threading.RLock()
 _thread: threading.Thread | None = None
 _stop = threading.Event()
 _speech_until = 0.0
+_ui_picks: set[str] = set()
 _state: dict = {
     "running": False, "screen": "", "floor": 0, "hp": 0, "max_hp": 0,
     "step": 0, "last": "", "error": "", "started_at": 0, "updated_at": 0,
@@ -406,6 +408,34 @@ def _reward(sts2, state: dict) -> str:
         return "REWARD unknown"
 
 
+def _selection_need(sel: dict) -> int:
+    """这一屏要选几张。
+
+    游戏在「选 2 张普通牌」里会把 min/max 都给 0，只能从 prompt 读；
+    旧实现固定只点第一张，选完还停在 CARD_SELECTION，一屏能卡 20 步。
+    """
+    for key in ("max_select", "max", "min_select", "min"):
+        try:
+            n = int(sel.get(key) or 0)
+        except (TypeError, ValueError):
+            n = 0
+        if n > 0:
+            return n
+    prompt = re.sub(r"\[[^\]]*\]", "", str(sel.get("prompt") or ""))
+    m = re.search(r"选择\s*(\d+)\s*张", prompt)
+    return int(m.group(1)) if m else 1
+
+
+def _blind_selection(sel: dict) -> bool:
+    """mod 对「事件选 N 张」只回 pending、selected_count 永远是 0。"""
+    try:
+        mn = int(sel.get("min_select") or 0)
+        mx = int(sel.get("max_select") or 0)
+    except (TypeError, ValueError):
+        return False
+    return mn == 0 and mx == 0 and _selection_need(sel) >= 2
+
+
 def _card_selection(sts2, state: dict) -> str:
     acts = _acts(state)
     sel = state.get("selection") or {}
@@ -422,15 +452,51 @@ def _card_selection(sts2, state: dict) -> str:
             sts2.act("skip_reward_cards")
             return "CARD skip"
     if "select_deck_card" in acts and cards:
-        mn = int(sel.get("min_select") or 0)
-        for i in range(max(1, min(mn, len(cards)))):
+        need = _selection_need(sel)
+        try:
+            already = int(sel.get("selected_count") or sel.get("selected") or 0)
+        except (TypeError, ValueError):
+            already = 0
+        if _blind_selection(sel) and hasattr(sts2, "ui_pick_cards"):
+            key = f"{state.get('run_id','')}|{sel.get('prompt','')}|" \
+                  f"{','.join(str(c.get('card_id') or c.get('name') or '') for c in cards)}"
+            if key not in _ui_picks:
+                if len(_ui_picks) > 40:
+                    _ui_picks.clear()
+                _ui_picks.add(key)
+                try:
+                    clicked = bool(sts2.ui_pick_cards(need))
+                except Exception:
+                    clicked = False
+                if clicked:
+                    time.sleep(0.8)
+                    now = sts2.get_state()
+                    if "confirm_selection" in _acts(now):
+                        sts2.act("confirm_selection")
+                        now = sts2.get_state()
+                    if _screen(now) != "CARD_SELECTION":
+                        return f"CARD ui {need} -> {_screen(now)}"
+                    _log("ui_pick_still_selection", need=need)
+                    return f"CARD ui wait {need}"
+        if already < need:
+            # 一次只点一张，下一轮重新读 selected_count；一屏要选 2 张时
+            # 不能重复点 index 0（旧实现就是这样原地打转）。
+            idx = min(already, len(cards) - 1)
             try:
-                sts2.act("select_deck_card", option_index=i)
+                sts2.act("select_deck_card", option_index=int(idx))
+                return f"CARD select {already + 1}/{need}"
             except Exception:
-                break
-        if "confirm_selection" in _acts(sts2.get_state()):
+                return "CARD select failed"
+        now = sts2.get_state()
+        if "confirm_selection" in _acts(now):
             sts2.act("confirm_selection")
-        return "CARD select"
+            return "CARD confirm"
+        if _screen(now) != "CARD_SELECTION":
+            return f"CARD -> {_screen(now)}"
+        return f"CARD wait {already}/{need}"
+    if "confirm_selection" in acts:
+        sts2.act("confirm_selection")
+        return "CARD confirm"
     if "skip_reward_cards" in acts:
         sts2.act("skip_reward_cards")
         return "CARD skip"

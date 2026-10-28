@@ -2320,13 +2320,20 @@ class PetWindow(StreamerWindow):
     def start_talking(self, duration: float, text: str = ""):
         super().start_talking(duration, text)
         if self.text and (not text or text == self.text):
-            self.bubble_until = max(self.bubble_until,
-                                    time.perf_counter() + max(1.0, float(duration or 0)) + 1.6)
+            # 音频真的起了：气泡按真实音频长度收尾；不要再被 push 的 15s
+            # 等待窗口绑住，否则短句会多挂十几秒。
+            self.bubble_until = time.perf_counter() + max(1.0, float(duration or 0)) + 1.6
 
     def push(self, thought: str, meme: str, status: dict | None = None):
         super().push(thought, meme, status)
         if self.text:
-            self.bubble_until = time.perf_counter() + 4.5
+            # 曼波 prewarm 实测能到 10s；旧值 4.5s 会让气泡先消失、等音频起了
+            # start_talking 再把它拉回来，看起来就是「同一条弹幕闪两次」。
+            # 静音时不陪等合成，短一点收尾。
+            # 若缓存命中、音频在 super().push() 里已经起播，start_talking 已经
+            # 按真实时长设过 bubble_until，这里不能再用等待窗口盖掉它。
+            if not (self.talk_start_at and self.talk_until > time.perf_counter()):
+                self.bubble_until = time.perf_counter() + (15.0 if self.speaker.enabled else 5.0)
 
     def _run_hint(self) -> str:
         return ("桌宠已启动：左键拖（左右/上下换朝向，带倾斜和速度线）· 滚轮/右下角=缩放 · "

@@ -2590,6 +2590,64 @@ def _sel_progress(s: dict):
     )
 
 
+def ui_pick_cards(count: int = 2, gap: float = 0.35) -> bool:
+    """事件选牌兜底：mod 对这类 `min=max=0` 的选牌只回 pending，点不动。
+
+    正常选牌仍走 `act("select_deck_card")`；这里只在状态机确认是盲区时由
+    自动玩调用，用真实鼠标点前 count 张（按 5+2 的卡面布局归一化坐标）。
+    """
+    if os.name != "nt" or count <= 0:
+        return False
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        user32 = ctypes.windll.user32
+        hwnd = ctypes.c_void_p(0)
+
+        @ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+        def _enum(h, _l):
+            if not user32.IsWindowVisible(h):
+                return True
+            n = user32.GetWindowTextLengthW(h)
+            if n <= 0:
+                return True
+            buf = ctypes.create_unicode_buffer(n + 1)
+            user32.GetWindowTextW(h, buf, n + 1)
+            t = buf.value.lower()
+            if "spire" in t or "杀戮" in t:
+                hwnd.value = h
+                return False
+            return True
+
+        user32.EnumWindows(_enum, 0)
+        if not hwnd.value:
+            return False
+        rect = wintypes.RECT()
+        if not user32.GetClientRect(hwnd, ctypes.byref(rect)):
+            return False
+        origin = wintypes.POINT(0, 0)
+        user32.ClientToScreen(hwnd, ctypes.byref(origin))
+        w, h = max(1, rect.right), max(1, rect.bottom)
+        # 实测布局：上排 5 张、下排最多 3 张；坐标是客户区比例。
+        spots = [(0.163, 0.239), (0.302, 0.239), (0.429, 0.239),
+                 (0.559, 0.239), (0.700, 0.239),
+                 (0.248, 0.573), (0.401, 0.573), (0.554, 0.573)]
+        old = wintypes.POINT()
+        user32.GetCursorPos(ctypes.byref(old))
+        user32.SetForegroundWindow(hwnd)
+        time.sleep(0.25)
+        for fx, fy in spots[:max(1, min(int(count), len(spots)))]:
+            user32.SetCursorPos(origin.x + int(w * fx), origin.y + int(h * fy))
+            user32.mouse_event(0x0002, 0, 0, 0, 0)  # LEFTDOWN
+            user32.mouse_event(0x0004, 0, 0, 0, 0)  # LEFTUP
+            time.sleep(max(0.15, float(gap)))
+        user32.SetCursorPos(old.x, old.y)
+        return True
+    except Exception:
+        return False
+
+
 def wait_selection_settle(before: dict, timeout: float = 3.0) -> dict:
     """点完一张牌后等界面稳定：屏幕离开选牌界面，或已选张数/卡面发生变化。"""
     with perf.stage("wait_selection") as _st:

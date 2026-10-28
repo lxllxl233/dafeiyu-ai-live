@@ -82,6 +82,59 @@ def test_map_follows_route_next_node(tmp_path):
     assert ("choose_map_node", {"option_index": 1}) in fake.calls
 
 
+def test_card_selection_picks_each_required_card_once():
+    base = {
+        "screen": "CARD_SELECTION",
+        "available_actions": ["select_deck_card"],
+        "selection": {
+            "kind": "deck_card_select",
+            "prompt": "选择[blue]2[/blue]张普通牌加入到你的[gold]牌组[/gold]。",
+            "min_select": 0, "max_select": 0, "selected_count": 0,
+            "cards": [{"index": 0, "name": "突破"}, {"index": 1, "name": "全身撞击"}],
+        },
+    }
+    selected = {**base, "selection": {**base["selection"], "selected_count": 1}}
+    ready = {**base, "available_actions": ["confirm_selection"],
+             "selection": {**base["selection"], "selected_count": 2,
+                           "requires_confirmation": True, "can_confirm": True}}
+    fake = _FakeSts2([base, selected, ready])
+    assert play._selection_need(base["selection"]) == 2
+    assert play._card_selection(fake, base) == "CARD select 1/2"
+    assert fake.calls == [("select_deck_card", {"option_index": 0})]
+    # 第二轮已经选过 0，不能再点 0；这里传入 selected 状态验证索引从 1 开始。
+    assert play._card_selection(fake, selected) == "CARD select 2/2"
+    assert fake.calls[-1] == ("select_deck_card", {"option_index": 1})
+    assert play._card_selection(fake, ready) == "CARD confirm"
+    assert fake.calls[-1] == ("confirm_selection", {})
+
+
+def test_blind_multi_select_uses_ui_fallback(monkeypatch):
+    base = {
+        "run_id": "RUN1",
+        "screen": "CARD_SELECTION",
+        "available_actions": ["select_deck_card"],
+        "selection": {
+            "kind": "deck_card_select",
+            "prompt": "选择[blue]2[/blue]张普通牌加入到你的[gold]牌组[/gold]。",
+            "min_select": 0, "max_select": 0, "selected_count": 0,
+            "cards": [{"index": 0, "card_id": "A"}, {"index": 1, "card_id": "B"}],
+        },
+    }
+    fake = _FakeSts2([base, {"screen": "EVENT", "available_actions": ["choose_event_option"]}])
+
+    def ui_pick(n):
+        assert n == 2
+        fake.i = 1
+        return True
+
+    fake.ui_pick_cards = ui_pick
+    monkeypatch.setattr(play.time, "sleep", lambda *_: None)
+    play._ui_picks.clear()
+    assert play._blind_selection(base["selection"]) is True
+    assert play._card_selection(fake, base) == "CARD ui 2 -> EVENT"
+    assert fake.calls == []
+
+
 def test_rest_prefers_heal_when_low():
     state = {
         "screen": "REST", "run": {"current_hp": 20, "max_hp": 80},
