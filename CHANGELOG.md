@@ -39,6 +39,12 @@
   `_error_code()` 归一异常串；旧的 `("CHEST","REST no options",…)` 字面量判断不再生效。
 - `tools/check_skill.py` / `check_caster.py` / `test_rules_in_ctx.py` /
   `test_docs_consistency.py` 改指新位置，并去掉已不存在的 YAML frontmatter 检查。
+- **「让她玩」启动上一局的游戏**：`agent/play.py::_game_id` 以前先读
+  `logs/autoplay.json` 的 `game`，而 toy-duel 验收跑完后这份状态文件一直留着
+  `game: toy-duel`，于是一点「让她玩 ▸ LLM 规划」就去启动玩具决斗并提示
+  「只支持 local 模式」，用户以为 LLM 拉起的是《杀戮尖塔 2》。现在启动以
+  `config.game` 为准，只有状态文件确实 `running` 时才按它停手/看状态；
+  `AutoplayHost.status()` 也不再让上一局的 `game/mode/pace` 盖住当前宿主。
 
 ## [2.2.0] - 2026-10-28
 

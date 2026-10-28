@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 from dafeiyu.agent.host import AutoplayHost
 from dafeiyu.recording import auto
 
@@ -36,6 +38,28 @@ def test_host_status_stop_and_tokens(tmp_path):
     st = host.status()
     assert (st["tokens_in"], st["tokens_out"], st["tokens_total"]) == (200, 50, 250)
     assert (st["llm_calls"], st["tokens_last"]) == (2, 100)
+
+
+def test_status_ignores_stale_game_from_finished_run(tmp_path):
+    """上一局（toy-duel）留下的状态文件不能盖住当前宿主的游戏。"""
+    host = _host(tmp_path)
+    host.reset("demo", mode="llm", pace="normal")
+    host.status_path.write_text(json.dumps({
+        "game": "toy-duel", "mode": "local", "pace": "voice",
+        "running": False, "last": "上一局",
+    }), encoding="utf-8")
+
+    st = host.status()
+    assert st["game"] == "demo"
+    assert st["mode"] == "llm"
+    assert st["last"] == "上一局"        # 上次跑到哪仍然可看
+
+    host.status_path.write_text(json.dumps({
+        "game": "toy-duel", "mode": "local", "running": True,
+    }), encoding="utf-8")
+    st = host.status()
+    assert st["game"] == "toy-duel"     # 真在跑就以文件为准
+    assert st["mode"] == "local"
 
 
 def test_host_recording_lifecycle(tmp_path, monkeypatch):

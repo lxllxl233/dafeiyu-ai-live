@@ -58,3 +58,74 @@ def test_facade_returns_stable_error_when_plugin_is_missing(monkeypatch):
     assert "插件" in out["message"]
     assert play.status()["running"] is False
     assert play.stop_autoplay()["ok"] is True
+
+
+# ---------------------------------------------------------------- 起错游戏（实机反馈）
+class _RecordingRegistry:
+    def __init__(self, runner: _FakeRunner) -> None:
+        self.runner = runner
+        self.asked: list[str] = []
+
+    def load_plugin(self, game_id: str):
+        self.asked.append(game_id)
+        return _FakePlugin(self.runner)
+
+
+def _cfg(game: str = "slay-the-spire-2"):
+    from types import SimpleNamespace
+
+    return SimpleNamespace(game=game, autoplay_mode="llm", autoplay_pace="voice")
+
+
+def test_start_uses_config_game_not_stale_status(monkeypatch):
+    """toy-duel 验收跑完后状态文件还留着 game=toy-duel；点「让她玩」必须启动配置里的游戏。"""
+    runner = _FakeRunner()
+    reg = _RecordingRegistry(runner)
+    monkeypatch.setattr(GameRegistry, "load_plugin", reg.load_plugin)
+    monkeypatch.setattr(play.LiveConfig, "load", lambda: _cfg())
+    monkeypatch.setattr(play, "_read_status",
+                        lambda: {"game": "toy-duel", "running": False})
+
+    out = play.start_autoplay(mode="llm")
+    assert out["ok"] is True
+    assert reg.asked == ["slay-the-spire-2"]
+    assert runner.calls == [("start", "slay-the-spire-2", "llm", None)]
+
+
+def test_status_ignores_stale_status_when_nothing_is_running(monkeypatch):
+    runner = _FakeRunner()
+    reg = _RecordingRegistry(runner)
+    monkeypatch.setattr(GameRegistry, "load_plugin", reg.load_plugin)
+    monkeypatch.setattr(play.LiveConfig, "load", lambda: _cfg())
+    monkeypatch.setattr(play, "_read_status",
+                        lambda: {"game": "toy-duel", "running": False})
+
+    play.status()
+    assert reg.asked == ["slay-the-spire-2"]
+
+
+def test_stop_still_follows_the_running_game(monkeypatch):
+    """停手要停正在跑的那一局，即使 config.game 已经切走。"""
+    runner = _FakeRunner()
+    reg = _RecordingRegistry(runner)
+    monkeypatch.setattr(GameRegistry, "load_plugin", reg.load_plugin)
+    monkeypatch.setattr(play.LiveConfig, "load", lambda: _cfg())
+    monkeypatch.setattr(play, "_read_status",
+                        lambda: {"game": "toy-duel", "running": True})
+
+    out = play.stop_autoplay()
+    assert out["ok"] is True
+    assert reg.asked == ["toy-duel"]
+    assert runner.calls[-1] == ("stop",)
+
+
+def test_explicit_game_still_wins(monkeypatch):
+    runner = _FakeRunner()
+    reg = _RecordingRegistry(runner)
+    monkeypatch.setattr(GameRegistry, "load_plugin", reg.load_plugin)
+    monkeypatch.setattr(play.LiveConfig, "load", lambda: _cfg())
+    monkeypatch.setattr(play, "_read_status", lambda: {"game": "toy-duel",
+                                                       "running": True})
+
+    play.start_autoplay("toy-duel", mode="local")
+    assert reg.asked == ["toy-duel"]

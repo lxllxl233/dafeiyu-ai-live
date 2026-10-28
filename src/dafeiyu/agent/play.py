@@ -25,18 +25,31 @@ def _read_status() -> dict:
         return {}
 
 
-def _game_id(game: str | None = None) -> str:
-    """优先读运行中的状态文件，避免切换 config.game 后停错插件。"""
+def _game_id(game: str | None = None, *, trust_status: bool = False) -> str:
+    """当前该操作哪个游戏。
+
+    - ``start`` 用默认值：以 ``config.game`` 为准。旧版本这里先读
+      ``logs/autoplay.json`` 的 ``game``，而另一个插件跑完验收后这份状态文件会
+      一直留着它的 id，于是「让她玩」会启动错的游戏，还提示该游戏不支持 llm 模式。
+    - ``stop`` 用 ``trust_status=True``：停手要停状态文件里那一局，即使
+      ``config.game`` 已经切走。
+    - ``status`` 用默认值：只有状态文件说 ``running`` 时才信它的 ``game``，
+      否则同样回落到 ``config.game``。
+    """
     if game:
         return str(game).strip()
-    current = _read_status().get("game")
-    if current:
-        return str(current).strip()
-    return str(LiveConfig.load().game or "").strip()
+    state = _read_status()
+    current = str(state.get("game") or "").strip()
+    if trust_status and current:
+        return current
+    if state.get("running") and current:
+        return current
+    cfg_game = str(LiveConfig.load().game or "").strip()
+    return cfg_game or current
 
 
-def _plugin(game: str | None = None):
-    game_id = _game_id(game)
+def _plugin(game: str | None = None, *, trust_status: bool = False):
+    game_id = _game_id(game, trust_status=trust_status)
     if not game_id:
         return None, game_id
     try:
@@ -69,7 +82,7 @@ def _empty_status(game_id: str = "", error: str = "") -> dict[str, Any]:
 def start_autoplay(game: str | None = None, *, mode: str | None = None,
                    pace: str | None = None) -> dict:
     """启动游戏并开始自动玩；实际循环由游戏插件提供。"""
-    plugin, game_id = _plugin(game)
+    plugin, game_id = _plugin(game, trust_status=False)
     if plugin is None:
         return {"ok": False, "game": game_id,
                 "message": f"当前游戏没有可自动玩的插件：{game_id or '未配置'}"}
@@ -82,7 +95,7 @@ def start_autoplay(game: str | None = None, *, mode: str | None = None,
 
 def stop_autoplay() -> dict:
     """跨进程停手；由当前局所属的游戏插件执行收尾。"""
-    plugin, game_id = _plugin()
+    plugin, game_id = _plugin(trust_status=True)
     if plugin is None:
         if _read_status().get("running"):
             return {"ok": False, "game": game_id,

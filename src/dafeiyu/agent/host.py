@@ -154,7 +154,12 @@ class AutoplayHost:
             return dict(self.state)
 
     def status(self) -> dict:
-        """优先读文件，管理端和桌宠进程看到同一份。"""
+        """优先读文件，管理端和桌宠进程看到同一份。
+
+        文件里 ``running`` 为假时是「上一局留下的静态快照」，这时不拿它的
+        ``game/mode/pace`` 覆盖当前宿主——否则另一个插件跑完验收后，控制台会
+        一直显示那个游戏，用户以为当前游戏没起来（实机反馈）。
+        """
         raw = None
         for attempt in range(3):
             try:
@@ -166,8 +171,14 @@ class AutoplayHost:
                 if attempt < 2:
                     time.sleep(0.02)      # 对方可能正在写，稍后重试一次
         if isinstance(raw, dict):
+            live = bool(raw.get("running"))
+            stale_ok = {k: v for k, v in self.state.items()
+                        if k not in ("game", "mode", "pace")}
             with self.lock:
-                self.state.update({k: raw.get(k, v) for k, v in self.state.items()})
+                if live:
+                    self.state.update({k: raw.get(k, v) for k, v in self.state.items()})
+                else:
+                    self.state.update({k: raw.get(k, v) for k, v in stale_ok.items()})
             return {**self.state, "stop_requested": self.stop_path.exists()}
         with self.lock:
             return {**self.state, "stop_requested": self.stop_path.exists()}
