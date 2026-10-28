@@ -4,7 +4,7 @@
 
 - 版本：**v22**（2026-10-28）
 - 适用：v0.107.1 主线（beta v0.111.0 同为参考），A10 双 Boss
-- 配套：`sts2.py`（本地 mod HTTP API 客户端）、`tools/sim.py`（单回合模拟器）、`tools/ctx.py`（局面包）、`tools/act.py`（校验并执行牌序）、OBS 录屏 + 弹幕 overlay；说话系统见另一个 skill `sts2-caster`
+- 配套：`sts2.py`（本地 mod HTTP API 客户端）、`tools/sim.py`（单回合模拟器）、`tools/ctx.py`（局面包）、`tools/act.py`（校验并执行牌序）、OBS 录屏 + 弹幕 overlay；说话系统见 `games/slay-the-spire-2/persona/speech.md`
 
 ## v20 修了什么：把 v19 的「降智」补回来
 
@@ -36,7 +36,7 @@ python tools/act.py --file tmp_plan.json  # ③ 逐步验算后执行，回下�
 
 ## 这是什么
 
-SKILL.md 是常驻上下文，只放**每次决策都要看**的东西：
+OS.md 是常驻上下文，只放**每次决策都要看**的东西：
 
 | 小节 | 内容 |
 |---|---|
@@ -71,8 +71,8 @@ SKILL.md 是常驻上下文，只放**每次决策都要看**的东西：
 把整个目录放到项目（或任意工作区）的 skills 目录下即可：
 
 ```text
-<workspace>/.dsh/skills/sts2-ironclad-ironclad/
-├── SKILL.md
+<workspace>/games/slay-the-spire-2/decision/knowledge/ironclad/
+├── OS.md
 ├── README.md
 └── references/
     ├── archetypes.md

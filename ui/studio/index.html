@@ -187,6 +187,24 @@
   .agent-run:first-child{border-top:0}
   .agent-run .id{font-family:Consolas,monospace;font-size:10.5px;color:var(--muted)}
   .agent-run .goal{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  /* live room */
+  .room-feed{list-style:none;margin:10px 0 0;padding:0;display:flex;flex-direction:column;gap:6px;
+    max-height:540px;overflow:auto}
+  .room-item{border:1px solid var(--line);border-left:3px solid var(--line);border-radius:8px;
+    padding:7px 10px;background:rgba(255,255,255,.02)}
+  .room-item .room-top{display:flex;gap:8px;align-items:center;font-size:10.5px;color:var(--muted)}
+  .room-kind{font-size:10px;border:1px solid var(--line);border-radius:999px;padding:1px 7px;color:var(--muted)}
+  .room-user{color:#cfd7ea;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:38%}
+  .room-time{margin-left:auto;font-family:Consolas,monospace;font-size:10px;color:var(--muted)}
+  .room-text{font-size:12.2px;line-height:1.55;margin-top:3px;word-break:break-word}
+  .room-item.k-chat{border-left-color:var(--fish)}
+  .room-item.k-chat .room-kind{color:var(--fish);border-color:rgba(127,182,255,.4)}
+  .room-item.k-gift,.room-item.k-super_chat,.room-item.k-guard{border-left-color:var(--gold)}
+  .room-item.k-gift .room-kind,.room-item.k-super_chat .room-kind,
+  .room-item.k-guard .room-kind{color:var(--gold);border-color:rgba(244,201,104,.45)}
+  .room-item.k-self{border-left-color:#57d38c}
+  .room-item.k-self .room-kind{color:#57d38c;border-color:rgba(87,211,140,.45)}
+  .chip.on{color:var(--gold);border-color:rgba(244,201,104,.55);background:rgba(244,201,104,.10)}
   footer{position:relative;z-index:1;padding:10px 26px 22px;color:var(--muted);font-size:11.5px;
     max-width:1680px;margin:0 auto;display:flex;gap:16px;flex-wrap:wrap}
   footer code{background:rgba(255,255,255,.04);border:1px solid var(--line);border-radius:6px;
@@ -239,6 +257,8 @@
       <button class="nav-item" type="button" data-view="persona">
         <i>✎</i><span>人设配置</span><b id="navPersona">—</b></button>
       <div class="nav-group">直播</div>
+      <button class="nav-item" type="button" data-view="room">
+        <i>◉</i><span>直播间</span><b id="navRoom">—</b></button>
       <button class="nav-item" type="button" data-view="interaction">
         <i>✉</i><span>互动</span><b id="navSaid">0</b></button>
       <button class="nav-item" type="button" data-view="agent">
@@ -418,6 +438,46 @@
       </div>
     </section>
 
+    <section class="view" data-view="room" id="view-room">
+      <div class="view-head">
+        <div>
+          <span class="eyebrow">LIVE ROOM / BILIBILI</span>
+          <h2>直播间互动</h2>
+          <p>进入 / 关注 / 点赞 / 弹幕 / 礼物 / 上舰，只保留最近 120 条；下面可以直接往直播间发弹幕。</p>
+        </div>
+        <div class="head-actions">
+          <button class="btn ghost" id="roomRefresh" type="button">刷新</button>
+          <a href="#basic">B 站设置 →</a>
+        </div>
+      </div>
+      <div class="grid two">
+        <div class="card">
+          <h2>连接 <span id="roomState">—</span></h2>
+          <div class="kv"><span>房间</span><b id="roomId">—</b></div>
+          <div class="kv"><span>互动条数</span><b id="roomCount">—</b></div>
+          <div class="kv"><span>最近一条</span><b id="roomLast">—</b></div>
+          <div class="kv"><span>分类</span><b id="roomKinds">—</b></div>
+          <div class="hint" id="roomHint" style="line-height:1.75;color:var(--muted);margin-top:10px">
+            监听跑在桌宠进程；只开控制台时这里只显示历史。
+          </div>
+          <div class="field" style="margin-top:14px">
+            <label for="roomText">发弹幕（最多 40 字）</label>
+            <textarea id="roomText" rows="2" maxlength="40" placeholder="这手不亏，稳的。"></textarea>
+          </div>
+          <div class="row" style="display:flex;gap:9px;align-items:center;flex-wrap:wrap">
+            <button class="btn" id="roomSend" type="button">发到直播间</button>
+            <span class="hint" id="roomSendHint" style="font-size:10.5px;color:var(--muted)">需要带 bili_jct 的 Cookie</span>
+          </div>
+        </div>
+        <div class="card">
+          <h2>最近 120 条 <span id="roomSeq">—</span></h2>
+          <div class="chips" id="roomFilters"></div>
+          <ul class="room-feed" id="roomFeed">
+            <li class="empty">还没有互动。桌宠开着监听后这里会实时滚动。</li></ul>
+        </div>
+      </div>
+    </section>
+
     <section class="view" data-view="agent" id="view-agent">
       <div class="view-head">
         <div>
@@ -450,6 +510,19 @@
           <div class="kv"><span>耗时</span><b id="agentDuration">—</b></div>
           <div class="kv"><span>Token</span><b id="agentTokens">—</b></div>
           <div class="kv"><span>轨迹文件</span><b id="agentTracePath">—</b></div>
+        </div>
+        <div class="card">
+          <h2>Token 花费 <span>API 账单</span></h2>
+          <div class="kv"><span>合计</span><b id="tokApiTotal">—</b></div>
+          <div class="kv"><span>输入 / 输出</span><b id="tokApiIO">—</b></div>
+          <div class="kv"><span>LLM 调用</span><b id="tokApiCalls">—</b></div>
+          <div class="kv"><span>最近一步</span><b id="tokApiLast">—</b></div>
+          <div class="hint" id="tokApiHint" style="line-height:1.7;color:var(--muted);margin-top:8px">
+            按 <code>logs/autoplay.jsonl</code> 的真实 usage 累计；重试失败的调用也计入。
+          </div>
+          <div class="hint" id="tokKinds" style="font-size:10.5px;color:var(--muted);margin-top:6px">—</div>
+          <ul class="mini-list" id="tokSteps" style="max-height:240px;margin-top:8px">
+            <li>还没有 LLM 调用。</li></ul>
         </div>
         <div class="card">
           <h2>本次节点 <span id="agentRunId">—</span></h2>
@@ -726,6 +799,8 @@ function renderNav(){
   $("#navGameTip").textContent = game.name || cfg.game || "—";
   $("#navPersona").textContent = DATA?.persona?.id || "—";
   $("#navSaid").textContent = `${said} 句`;
+  const roomCount = (DATA?.bilibili?.events || []).length;
+  $("#navRoom").textContent = roomCount ? `${roomCount} 条` : "—";
   $("#navTokens").textContent = `${tokens} tok`;
   $("#sideVersion").textContent = `内核 v${DATA?.product?.version || "—"} · ${DATA?.product?.codename || ""}`;
 }
@@ -845,11 +920,141 @@ function renderPlay(){
     ? "正在收尾：先停录像并写 chapters.md / timeline.json，再退出。"
     : (running
       ? "运行中切换玩法需先「停手」；播报节奏从下一步生效。"
-      : "玩法/节奏会写本机 config.json；LLM 模式只分析战斗回合，其他界面仍走本地。");
+      : "玩法/节奏会写本机 config.json；LLM 模式每个玩家决策都问模型，过场界面仍走本地。");
 }
 
-async function savePlaySettings(){
+const ROOM_KINDS = {enter:"进入", follow:"关注", share:"分享", like:"点赞",
+  chat:"弹幕", gift:"礼物", super_chat:"醒目留言", guard:"上舰", system:"系统", self:"本机"};
+const ROOM_FILTERS = [["all","全部"], ["chat","弹幕"], ["gift","礼物"],
+  ["super_chat","醒目留言"], ["guard","上舰"], ["enter","进入"], ["follow","关注"],
+  ["like","点赞"], ["system","系统"], ["self","本机"]];
+let ROOM_FILTER = "all";
+let ROOM_SENT = [];
+let ROOM_BUSY = false;
+
+const fmtTok = (n) => Number(n || 0).toLocaleString("zh-CN");
+const roomKind = (e) => ROOM_KINDS[e.kind] || e.label || e.kind || "互动";
+
+function roomEvents(){
+  const b = DATA?.bilibili || {};
+  const seen = new Set();
+  return (b.events || []).concat(ROOM_SENT).filter(e => {
+    const key = [e.kind, e.ts, e.user, e.text].join("|");
+    if(seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  }).sort((a, b) => (a.at || 0) - (b.at || 0)).slice(-120);
+}
+
+function renderRoom(){
+  const b = DATA?.bilibili || {};
+  const events = roomEvents();
+  const filter = ROOM_FILTER;
+  $("#roomState").textContent = b.connected ? "已连接"
+    : (b.enabled ? (b.error ? "连接失败" : "连接中…") : "未开启");
+  $("#roomId").textContent = b.room_id ? String(b.room_id) : "—";
+  $("#roomCount").textContent = `${events.length} / ${b.max || 120}`;
+  $("#roomSeq").textContent = `${events.length} 条`;
+  const last = events[events.length - 1];
+  $("#roomLast").textContent = last
+    ? `${roomKind(last)} · ${last.user || "观众"}`.slice(0, 24) : "—";
+  const counts = b.counts || {};
+  const summary = Object.keys(counts).filter(k => counts[k])
+    .map(k => `${ROOM_KINDS[k] || k} ${counts[k]}`).join(" · ");
+  $("#roomKinds").textContent = summary || "—";
+  $("#roomHint").innerHTML = b.enabled
+    ? (b.connected
+      ? `桌宠已连上房间 ${b.room_id || ""}，互动实时写入最近 ${b.max || 120} 条。`
+      : (b.error ? `连接失败：${esc(b.error)}` : "桌宠正在连接 B 站…"))
+    : "未开启监听：到「基础配置」填房间号并勾选「开启 B 站礼物监听」。";
+  $("#roomSendHint").textContent = b.can_send
+    ? `打到房间 ${b.room_id} · 最多 40 字`
+    : "需要带 bili_jct 的登录 Cookie（基础配置）";
+  $("#roomSend").disabled = ROOM_BUSY;
+
+  const chips = $("#roomFilters");
+  const chipSig = ROOM_FILTERS.map(([id]) => id).join("|") + "#" + filter;
+  if(chips.dataset.sig !== chipSig){
+    chips.innerHTML = ROOM_FILTERS.map(([id, name]) =>
+      `<span class="chip ${id === filter ? "on" : ""}" data-room-filter="${id}">${name}</span>`).join("");
+    chips.dataset.sig = chipSig;
+  }
+
+  const shown = filter === "all" ? events : events.filter(e => e.kind === filter);
+  const feed = $("#roomFeed");
+  const sig = `${shown.length}|${(shown[shown.length - 1] || {}).at || 0}|${filter}`;
+  if(feed.dataset.sig === sig) return;
+  feed.dataset.sig = sig;
+  const keep = feed.scrollTop;
+  feed.innerHTML = shown.length ? shown.slice().reverse().map(e => {
+    const t = new Date((e.at || 0) * 1000).toLocaleTimeString("zh-CN", {hour12:false});
+    const money = e.coin ? ` · ${e.coin} 金瓜子` : "";
+    const count = e.count > 1 ? ` ×${e.count}` : "";
+    return `<li class="room-item k-${esc(e.kind || "")}">
+      <div class="room-top"><span class="room-kind">${esc(roomKind(e))}</span>
+        <span class="room-user">${esc(e.user || "观众")}</span>
+        <span class="time room-time">${t}</span></div>
+      <div class="room-text">${esc(e.text || "")}${esc(count + money)}</div></li>`;
+  }).join("") : `<li class="empty">${filter === "all"
+    ? "还没有互动。桌宠开着监听后这里会实时滚动。"
+    : `最近没有「${ROOM_KINDS[filter] || filter}」记录。`}</li>`;
+  feed.scrollTop = keep;
+}
+
+async function sendRoom(){
+  const text = $("#roomText").value.trim();
+  if(!text){ toast("先写一句弹幕"); return; }
+  if(ROOM_BUSY) return;
+  const btn = $("#roomSend");
+  ROOM_BUSY = true;
+  btn.disabled = true;
   try{
+    const r = await fetch("/api/bili/send", {
+      method:"POST", headers:{"content-type":"application/json"},
+      body: JSON.stringify({text}),
+    });
+    const res = await r.json();
+    if(!res.ok) throw new Error(res.error || "HTTP " + r.status);
+    ROOM_SENT = ROOM_SENT.concat([res.event || {
+      kind:"self", at: Date.now() / 1000, ts: Math.floor(Date.now() / 1000),
+      user:"大肥鱼", text,
+    }]).slice(-40);
+    $("#roomText").value = "";
+    toast("已发到直播间");
+  }catch(e){ toast("发送失败：" + e.message, true); }
+  finally{
+    ROOM_BUSY = false;
+    btn.disabled = false;
+    $("#roomFeed").dataset.sig = "";
+    renderRoom();
+  }
+}
+
+function renderTokens(){
+  const t = (DATA?.agent || {}).tokens || {};
+  const total = Number(t.total || 0);
+  $("#tokApiTotal").textContent = total ? `${fmtTok(total)} tok` : "—";
+  $("#tokApiIO").textContent = total ? `${fmtTok(t.input)} / ${fmtTok(t.output)}` : "—";
+  $("#tokApiCalls").textContent = t.calls ? `${t.calls} 次` : "—";
+  const steps = t.steps || [];
+  const last = steps[steps.length - 1];
+  $("#tokApiLast").textContent = last
+    ? `${fmtTok(last.total)} tok · ${last.note || last.kind || "LLM"}` : "—";
+  const kinds = (t.kinds || []).map(k => `${k.kind} ${fmtTok(k.total)}（${k.calls} 次）`);
+  $("#tokKinds").textContent = kinds.length ? `按类型：${kinds.join(" · ")}` : "—";
+  if(t.path){
+    $("#tokApiHint").innerHTML =
+      `按 <code>${esc(t.path)}</code> 的真实 usage 累计；重试失败的调用也计入。`;
+  }
+  $("#tokSteps").innerHTML = steps.length ? steps.slice().reverse().map(s => {
+    const time = new Date((s.at || 0) * 1000).toLocaleTimeString("zh-CN", {hour12:false});
+    return `<li><div>${esc(s.note || s.kind || "LLM")}</div>
+      <div class="t">${time} · 入 ${fmtTok(s.input)} / 出 ${fmtTok(s.output)} ·
+      <b>${fmtTok(s.total)} tok</b> · 累计 ${fmtTok(s.cumulative)}</div></li>`;
+  }).join("") : `<li>还没有 LLM 调用。</li>`;
+}
+
+async function savePlaySettings(){  try{
     const r = await fetch("/api/config", {
       method:"POST", headers:{"content-type":"application/json"},
       body: JSON.stringify({
@@ -1026,7 +1231,7 @@ function renderSamples(){
 
 function render(){
   renderPills(); renderPersona(); renderVoice(); renderGames(); renderRight(); renderFeed(); renderSamples();
-  renderConfig(); renderTelemetry(); renderAgent(); renderPlay(); renderNav();
+  renderConfig(); renderTelemetry(); renderAgent(); renderPlay(); renderRoom(); renderTokens(); renderNav();
   $("#rootHint").textContent = DATA?.root ? `仓库：${DATA.root}` : "";
 }
 
@@ -1116,7 +1321,7 @@ async function preview(voice){
 }
 
 const VIEW_ALIASES = {settings:"basic", basic:"basic", games:"games", persona:"persona",
-  interaction:"interaction", agent:"agent", telemetry:"telemetry"};
+  room:"room", interaction:"interaction", agent:"agent", telemetry:"telemetry"};
 function setView(name, updateHash){
   const target = VIEW_ALIASES[name] || "basic";
   document.querySelectorAll(".view").forEach(v => v.classList.toggle("active", v.dataset.view === target));
@@ -1141,6 +1346,13 @@ document.addEventListener("click", (ev) => {
   if(quip){ $("#meme").value = quip.dataset.quip; setCounter(); setView("interaction"); return; }
   const fill = ev.target.closest("[data-fill]");
   if(fill){ $("#meme").value = fill.dataset.fill; setCounter(); return; }
+  const rf = ev.target.closest("[data-room-filter]");
+  if(rf){
+    ROOM_FILTER = rf.dataset.roomFilter;
+    $("#roomFeed").dataset.sig = "";
+    renderRoom();
+    return;
+  }
   const pv = ev.target.closest("[data-voice]");
   if(pv){ preview(pv.dataset.voice); }
 });
@@ -1156,6 +1368,11 @@ $("#playStop").addEventListener("click", stopPlay);
 $("#playMode").addEventListener("change", savePlaySettings);
 $("#playPace").addEventListener("change", savePlaySettings);
 $("#playLlmModel").addEventListener("change", savePlaySettings);
+$("#roomSend").addEventListener("click", sendRoom);
+$("#roomRefresh").addEventListener("click", (e) => { e.preventDefault(); refresh(); });
+$("#roomText").addEventListener("keydown", (e) => {
+  if(e.key === "Enter" && !e.shiftKey){ e.preventDefault(); sendRoom(); }
+});
 $("#cfgClearKey").addEventListener("click", clearApiKey);
 $("#reload").addEventListener("click", (e) => { e.preventDefault(); refresh(); });
 ["thought","meme"].forEach(id => $("#" + id).addEventListener("input", setCounter));

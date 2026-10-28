@@ -1,6 +1,6 @@
 # 敌人机制（已并入 skill）
 
-> 完整速查：`.dsh/skills/sts2-ironclad-ironclad/references/enemies.md` v3（按幕/遭遇，87 场，含编成/HP/打法）。
+> 完整速查：`games/slay-the-spire-2/decision/knowledge/ironclad/references/enemies.md` v3（按幕/遭遇，87 场，含编成/HP/打法）。
 > 战斗内以 `state` 的 `MECHANICS` 为准；本文件只留最容易被本地库或旧攻略写错的机制。
 
 | 敌人 | 容易记错的地方 |

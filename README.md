@@ -26,14 +26,14 @@ v1 把四样东西焊在一个「打杀戮尖塔」的工程里；v2 把它们�
 
 - **一键启动**：双击根目录 `start.bat`，或 `python main.py`。
 - **桌宠右键菜单**：置顶 / 点击穿透 / 声音 / 录屏里隐藏 / **语音** / **模型** / **游戏** / **让她玩 ▸ 本地算账 / LLM 规划 / 慢速播报 / 普通节奏** / **让她停手** / **只启动游戏** / **配置 API** / **打开管理端** / 示例 / 关闭。
-- **直播姬控制台** `http://127.0.0.1:8730/studio`：左侧经典管理端导航（基础配置 / 游戏 / 人设配置 / 互动 / Agent 流程 / 决策与日志），含语音、模型、游戏切换、决策日志、Token 估算和 Agent 节点轨迹。
+- **直播姬控制台** `http://127.0.0.1:8730/studio`：左侧经典管理端导航（基础配置 / 游戏 / 人设配置 / 直播间 / 互动 / Agent 流程 / 决策与日志），含语音、模型、游戏切换、B 站互动、真实 API Token 账单和 Agent 节点轨迹。
 - **OBS 桌宠弹幕**：浏览器源 `/`，大肥鱼精灵 + 漫画气泡，带逐像素 alpha，直接进录像。
 - **桌面桌宠**：Win32 分层窗口，三视图精灵可拖；空闲气泡「吃饭ing」，决策「思考ing」，说话显示台词；默认能被录屏拍到（「录屏里隐藏」默认不勾）。
 - **性格层**：改 `persona/dafeiyu/card.json` 就能换语气/禁语/招牌；通用梗放 `persona/memes/`。
 - **语音层**：曼波语（MamboTTS）为主，引擎不在线时点「启动」/「试听」会自动拉起本地引擎，仍失败才回退动物语。
 - **游戏切换**：桌宠右键「游戏 ▸」或管理端「游戏」页切换，写入 `config.game`，游戏适配器和 Agent 下一轮读取。
 - **游戏启动**：右键「只启动游戏」、管理端按钮或 `python main.py game launch`，按 `game.json` 的 `launch` 拉起 Steam / exe。
-- **让她玩**：右键「让她玩」二级菜单选**本地算账 / LLM 规划**；默认慢速播报，等语音再出下一步。战斗之外（奖励/地图/营火/事件）仍走本地，控制台也能切。自动玩默认自动开 OBS 录像，控制台「Agent 流程」能看到本轮累计 Token 和 LLM 回合数；开局第一张地图会按 BRPS 规划并锁定路线，状态里显示路线代号；开局不主动播报招呼，第一条台词从实际战斗/事件开始。正式实况目前是杀戮尖塔 2；内置 `toy-duel` 用来验收第二游戏的 observe/control/autoplay 链路。
+- **让她玩**：右键「让她玩」二级菜单选**本地算账 / LLM 规划**；默认慢速播报，等语音再出下一步。LLM 规划下**所有玩家决策都由模型做**（战斗牌序 + 地图/事件/营火/商店/奖励/选牌），本地启发式只在模型超时或输出不可执行时兜底；本地算账则全程按 `advisor.py` 的算账走。控制台也能切。自动玩默认自动开 OBS 录像，控制台「Agent 流程」能看到本轮累计 Token 和 LLM 回合数；开局第一张地图会按 BRPS 规划并锁定路线，状态里显示路线代号；开局不主动播报招呼，第一条台词从实际战斗/事件开始。正式实况目前是杀戮尖塔 2；内置 `toy-duel` 用来验收第二游戏的 observe/control/autoplay 链路。
 - **Agent 流程**：LangGraph 把一回合拆成观察 → 规划 → 验算 → 执行 → 反思，节点耗时/token/重试写本机轨迹，控制台「Agent 流程」可看。
 - **录像回放**：自动玩开始即开录（OBS 没开会自动拉起），停止时收成 `recordings/<游戏>/run-NNNN/run.mp4`；同目录 `events.jsonl` / `chapters.md` / `timeline.json` 记录画面、楼层、战斗、台词和对应时间段，方便出混剪；`meta.json` 记角色/进阶/结果。
 - **B 站礼物**：控制台「基础配置」填直播间房间号并勾选监听，桌宠会连 B 站直播 WebSocket，收到 `SEND_GIFT` / 醒目留言 / 上舰就让鱼绕两圈并气泡道谢；匿名被风控时再填可选 Cookie（只存本机，不回显）。
@@ -41,7 +41,7 @@ v1 把四样东西焊在一个「打杀戮尖塔」的工程里；v2 把它们�
 
 ![直播姬控制台](docs/studio.png)
 
-*控制台：左侧管理导航（基础配置 / 游戏 / 人设配置 / 互动 / Agent 流程 / 决策与日志），决策、日志、Token 和语音启动都在这里。*
+*控制台：左侧管理导航（基础配置 / 游戏 / 人设配置 / 直播间 / 互动 / Agent 流程 / 决策与日志），B 站互动、Token 账单、决策日志和语音启动都在这里。*
 
 ![Agent 流程](docs/agent.png)
 
@@ -169,11 +169,14 @@ python main.py replay stop --result win_a10
 python main.py replay list
 ```
 
-控制台左侧是经典管理端导航：**基础配置 / 游戏 / 人设配置 / 互动 / Agent 流程 / 决策与日志**。可以直接：
+控制台左侧是经典管理端导航：**基础配置 / 游戏 / 人设配置 / 直播间 / 互动 / Agent 流程 / 决策与日志**。可以直接：
 
 - 写 `thought` + `meme` → 「只算 lint」看规则 / 「送到直播」推给 OBS 和桌面窗；
+- 看 **直播间**：进入 / 关注 / 点赞 / 弹幕 / 礼物 / 上舰滚动，只留最近 120 条；
+  同一个面板可以直接写一条弹幕发到直播间（需要带 `bili_jct` 的登录 Cookie）；
 - 看 **决策记录**（thought / 实际台词 / token 估算）和 **运行日志**；
-- 看 **Agent 流程**：最近运行的节点耗时、重试次数、token 和轨迹；
+- 看 **Agent 流程**：最近运行的节点耗时、重试次数和 **API Token 账单**
+  （合计 / 输入输出 / 调用次数 / 最近 20 步每步多少 token / 按类型汇总）；
 - 切 **语音**、**模型**、**当前游戏**，配置 **API 提供方 / Base URL / API Key**；
 - 点「只启动游戏」直接拉起 Steam / exe（按 `game.json` 的 `launch` 配置）；点「让她玩」启动后自动跑一局；
 - 曼波离线时点「启动」或「试听」自动拉起本地 MamboTTS；
@@ -204,15 +207,22 @@ python main.py replay list
 - **录屏可见性**：「录屏里隐藏」默认不勾，桌宠默认会进录像；勾上后用 `WDA_EXCLUDEFROMCAPTURE` 排除。要启动即隐藏可加 `--exclude-capture`。
 - `python main.py` 默认桌宠；`--panel` 回旧版横幅，`--preview out.png` 只渲染不上屏。
 
-## B 站礼物
+## B 站直播间
 
 控制台「基础配置」里填 **B 站直播间**（`https://live.bilibili.com/12345` 里的 `12345`），
 勾选「开启 B 站礼物监听」，桌宠进程会：
 
 - 取 B 站 `getDanmuInfo`（带 WBI 签名）并连直播 WebSocket；
 - 心跳保持连接，断线自动重连；
-- 收到 `SEND_GIFT`、醒目留言、上舰时，鱼身绕小圈转两圈 + 金色星星，并气泡道谢；
-- 状态写 `logs/bilibili.json`，控制台会显示「监听中 / 连接失败」。
+- 把 **进入 / 关注 / 分享 / 点赞 / 弹幕 / 礼物 / 醒目留言 / 上舰** 写进
+  `logs/bilibili_events.jsonl`，只保留最近 **120 条**（文件超 200KB 自动压缩）；
+- 收到礼物类事件时，鱼身绕小圈转两圈 + 金色星星，并气泡道谢；
+- 状态写 `logs/bilibili.json`，控制台「直播间」页显示「已连接 / 连接中 / 连接失败」。
+
+控制台「直播间」页读同一份最近 120 条，可以按「弹幕 / 礼物 / 进入 / 点赞…」筛选；
+右侧输入框可以直接往直播间**发弹幕**（`POST /api/bili/send`）：需要在同一张配置卡里
+填带 `SESSDATA` 和 `bili_jct` 的登录 Cookie（发弹幕要 `bili_jct` 做 csrf），
+只有控制台进程发得出去，桌宠不需要重启。
 
 匿名请求被 B 站风控（错误 `-352`）时，在同一张配置卡里填 `SESSDATA` Cookie；
 Cookie 只写本机 `config.json`，接口只返回「已配置」，不会回显。房间号/Cookie
@@ -281,9 +291,15 @@ observe ──► plan ──► validate ──► execute ──► reflect
 
 - `observe` 复用 `games/slay-the-spire-2/decision/ctx.py` 的紧凑局面；`validate` 复用
   `decision/act.py --dry` 的硬护栏；`tools/ctx.py` / `tools/act.py` 只是旧命令的兼容入口；
-- `plan` 可以来自外部 DSH Agent（`--plan`，继续用 `.dsh/skills`）或内置 LLM；
+- `plan` 可以来自外部 DSH Agent（`--plan`，继续用 `games/slay-the-spire-2/decision/knowledge`）或内置 LLM；
 - 默认 dry-run，只有 `python main.py agent run --execute` 才真的出牌；
 - 每个节点的耗时/状态/token/重试写 `logs/agent_trace.jsonl`，控制台左侧「Agent 流程」直接看；
+- **Token 账单**在「Agent 流程」的「Token 花费」卡：合计 / 输入输出 / 调用次数 /
+  按类型（战斗、地图、事件…）/ 最近 20 步每一步多少 token。数据来自
+  `logs/autoplay.jsonl` 里的真实 `usage`，跨进程重启也能读，控制台数值不是估算；
+- **连续玩不继承上一局**：`LLMPlanner` 每次只发 system + 一条 user（`goal/feedback/context`），
+  `context` 由当前局面现场构建，不带聊天历史；换局后模型拿不到上一局的楼层、牌组、
+  台词或 run_id。跨局只共享 5 条硬闸、≤3 张经验卡和提示词——比「上一句摘要」更省；
 - 不走 LangSmith 云端，轨迹只存摘要，不存完整局面和 API Key。
 
 ```powershell
@@ -375,7 +391,7 @@ python main.py games
 
 ```powershell
 python main.py play              # 启动游戏 + 自动跑；Ctrl+C 停
-python main.py play --mode llm   # 战斗回合交给 LLM（需要 API Key）
+python main.py play --mode llm   # 所有玩家决策交给 LLM（需要 API Key）
 python main.py play --pace voice # 慢速，等语音；默认就是 voice
 python main.py play --stop       # 从另一个进程停手
 python main.py play --game toy-duel --mode local  # 第二游戏验收，不启动 Steam
@@ -384,9 +400,13 @@ python main.py play --game toy-duel --mode local  # 第二游戏验收，不启�
 桌宠右键「让她玩」是二级菜单：
 
 - **本地算账**：`games/slay-the-spire-2/decision/advisor.py` 算伤害/格挡/斩杀，不烧 token；
-- **LLM 规划**：战斗回合进 LangGraph `observe → plan → validate → execute`，默认用
+- **LLM 规划**：**所有玩家决策都进模型**——战斗回合走 `observe → plan → validate → execute`
+  （`decision/act.py` 校验 `seq`），界面点击走 `decision/actions.py` 的白名单菜单
+  （地图/事件/营火/商店/宝箱/奖励/选牌，模型只能点当前真正可点的项）。默认用
   `deepseek-chat`（非推理模型，避免长局面把 content 挤空），轨迹仍写
-  `logs/agent_trace.jsonl`；规划/验算/执行失败都会按最新手牌用本地兜底，不再整局停手；
+  `logs/agent_trace.jsonl`；模型超时或输出不可执行才按本地启发式兜底，并记
+  `llm_fallback`（不再是悄悄降级）。主菜单/角色选择/确认框这类过场仍走本地管道，
+  不喂给模型；
 - 右键「模型」会同时改 `llm_model` 和 `autoplay_llm_model`；
   自动玩运行中改，下一个 LLM 回合生效，不用重开；
 - **慢速播报**：按上一句台词长度估算播完时间，至少留 2 秒再出下一步；
@@ -395,13 +415,15 @@ python main.py play --game toy-duel --mode local  # 第二游戏验收，不启�
 管理端「Agent 流程」里的「玩法 / LLM 模型 / 播报节奏」和右键菜单是同一份
 `config.json`。正式实况流程目前只对杀戮尖塔 2 开放，流程是：
 
-- `MAIN_MENU / CHARACTER_SELECT`：没局就开 A10 铁甲战士；
+- `MAIN_MENU / CHARACTER_SELECT`：没局就开 A10 铁甲战士（本地管道）；
 - `COMBAT`：本地模式走 `advisor.py` + `sts2 batch`；LLM 模式走 `run_turn` + `act.py`；
-- `REWARD`：`sts2.py rewards --pick auto` 自动挑牌/空收；
-- `MAP`：用 `sts2.py route` 的路线计划选下一格；
-- `REST / EVENT / SHOP / CHEST`：保守选择（低血休息、事件第一项、商店先离开）；
+- `REWARD`：本地模式 `sts2.py rewards --pick auto`；LLM 模式由模型挑牌/跳过；
+- `MAP`：本地模式用 `sts2.py route` 的路线计划；LLM 模式由模型按血闸选点；
+- `REST / EVENT / SHOP / CHEST / CARD_SELECTION`：LLM 模式由模型在可用项里选
+  （禁用项不进菜单）；本地模式保守选择（低血休息、事件第一项、商店先离开）；
 - `GAME_OVER`：回主菜单开新一局；想停手点「让她停手」；
-- 未知界面：停在那一步并写日志，不猜按钮。
+- 未知界面：停在那一步并写日志，不猜按钮；同一画面同一失败连续 3 次也收手，
+  不再原样重放被拒的动作。
 
 `toy-duel` 不启动游戏、不调用 LLM、不依赖 OBS/语音，只复用同一套
 `AutoplayHost` + `GameTools` 契约做离线验收；它不会走上面这些 STS2 界面。
@@ -409,7 +431,8 @@ python main.py play --game toy-duel --mode local  # 第二游戏验收，不启�
 进展写 `logs/autoplay.json` 和 `logs/autoplay.jsonl`，其中包括 API 实际 token
 （`tokens_in/out/total`、`llm_calls`）和录像状态；可以从另一个进程停：
 `python main.py play --stop`（桌面/管理端都调用它）。本地模式是整局循环；
-LLM 模式只在战斗回合进入 LangGraph，非战斗界面仍走本地，避免每个地图节点都烧 token。
+LLM 模式的每个玩家决策都会问模型（战斗一回合一次、界面一屏一次），
+只有模型失败才本地兜底；过场界面不调用模型。
 
 以《杀戮尖塔 2》为例，一个完整游戏包由这几层组成：
 
@@ -423,7 +446,7 @@ LLM 模式只在战斗回合进入 LangGraph，非战斗界面仍走本地，避
 | `decision/` + `autoplay/` | 控制层 | 局面包、动作协议、本地决策和整局循环；只有需要自动玩的游戏才有 |
 
 适配器 `games/slay-the-spire-2/game-skill/adapter.py` 只做「读状态 → GAME_STATE 事件」，
-不替玩家出牌。出牌/决策仍走兼容层 CLI + 决策技能（`.dsh/skills/sts2-ironclad-ironclad`，v22）。
+不替玩家出牌。出牌/决策仍走兼容层 CLI + 决策手册（`games/slay-the-spire-2/decision/knowledge/ironclad`，v22）。
 `src/dafeiyu/games/` 里只有游戏无关的协议、注册表和演示源。
 
 内置 `games/toy-duel/` 是**第二个完整插件**，专门用来验收「核心不是 STS2 专属」：

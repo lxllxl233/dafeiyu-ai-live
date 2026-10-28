@@ -2485,7 +2485,11 @@ def ensure_server(port: int) -> bool:
 
 
 class GiftBridge:
-    """把 config 里的 B 站房间变成后台监听；配置改了自动重连。"""
+    """把 config 里的 B 站房间变成后台监听；配置改了自动重连。
+
+    每条互动（进入/关注/点赞/弹幕/礼物）落 ``logs/bilibili_events.jsonl``
+    （最近 120 条），控制台「直播间」面板读这份文件；礼物另走桌面动画。
+    """
 
     def __init__(self, win: "PetWindow"):
         self.win = win
@@ -2494,6 +2498,7 @@ class GiftBridge:
         self._listener = None
         self._sig: tuple | None = None
         self._lock = threading.Lock()
+        self.room_log = None
 
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
@@ -2521,7 +2526,7 @@ class GiftBridge:
         while not self._stop.is_set():
             try:
                 from ..core.config import LiveConfig
-                from ..live.bilibili import BilibiliGiftListener
+                from ..live.bilibili import BilibiliGiftListener, RoomLog
 
                 cfg = LiveConfig.load()
                 enabled = bool(cfg.bilibili_enabled)
@@ -2535,8 +2540,11 @@ class GiftBridge:
                     if old is not None:
                         old.stop()
                     if enabled and room > 0:
+                        if self.room_log is None:
+                            self.room_log = RoomLog()
                         listener = BilibiliGiftListener(
                             room, self._on_gift, cookie,
+                            on_event=self._on_event, room_log=self.room_log,
                             logger=lambda text: print(text, flush=True))
                         listener.start()
                         with self._lock:
@@ -2556,6 +2564,11 @@ class GiftBridge:
                                     "error": f"{type(exc).__name__}: {exc}",
                                     "enabled": False})
             self._stop.wait(2.0)
+
+    def _on_event(self, event) -> None:
+        # 进入/点赞这类高频事件只进「最近 120 条」，不刷控制台日志。
+        if getattr(event, "kind", "") in ("chat", "gift", "super_chat", "guard"):
+            print(f"[bilibili] {event.line()[:80]}", flush=True)
 
     def _on_gift(self, event) -> None:
         try:

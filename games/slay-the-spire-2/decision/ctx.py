@@ -768,8 +768,32 @@ def _combat(state: dict, mem: dict) -> dict:
                      "下回合白赚一轮——值得为全挡多花一张牌")
     if warns:
         out["warn"] = warns
+    out["calc"]["line"] = _calc_line(hp, maxhp, calc)
     out.update(_lessons_out(out))
     return out
+
+
+def _calc_line(hp: int, maxhp: int, calc: dict) -> str:
+    """一句话账，放在 calc.line：模型先读这个，别再用 me.blk 和 it.d 自己重算。
+
+    run-0110 之后的实机冒烟里，模型把「当前甲 18」当成「这回合能挡 18」，
+    自己算出净挨 1，dry-run 实际是 18（差点把自己打死）。数字全在这里，
+    模型要做的只是选线。
+    """
+    parts = [f"血{hp}/{maxhp}", f"本回合最多挡{calc.get('blk', 0)}",
+             f"挨{calc.get('inc', 0)}", f"净{calc.get('net', 0)}"]
+    if calc.get("full"):
+        parts.append("可全挡")
+    if calc.get("lethal"):
+        parts.append("杀线" + ",".join(str(i) for i in calc["lethal"]))
+    if calc.get("ttk_all"):
+        parts.append(f"全斩需{calc['ttk_all']}轮")
+    if calc.get("nx_inc") is not None:
+        nx = f"下轮挨{calc['nx_inc']}"
+        parts.append(nx + ("?" if calc.get("nx_part") else ""))
+    if calc.get("dmg"):
+        parts.append(f"本回合最大{calc['dmg']}伤")
+    return " | ".join(parts)
 
 
 _MODS = {

@@ -1,18 +1,22 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Self-check for the sts2-ironclad-ironclad skill pack.
+"""Self-check for the ironclad decision manual (``decision/knowledge/ironclad/OS.md``).
+
+这个文件以前校验 DSH 技能包里的手册；现在手册直接住在游戏包里，
+由 `decision/ctx.py` / `decision/prompts.py` 按需读取。
 
 Checks:
-  1. YAML frontmatter (name/description) — 丢了技能会从目录里消失（run33 踩过）。
+  1. 手册开头的定位行（这是项目内文档，不是 DSH 技能）还在。
   2. 本文件引用的相对路径都存在。
   3. 没有一代旧卡名（煤渣/嗜血/愤怒/灰烬打击…）。
-  4. 关键小节齐全，体量没膨胀（常驻上下文必须精简）。
+  4. 关键小节齐全，体量没膨胀（手册整本 14KB 内，常驻提示词另有限额）。
   5. references/ 由生成器产出、覆盖对应幕/卡池。
   6. **规则覆盖**：v17.1 的阈值/关键词/反模式编号必须还在——压缩只许改写法，
      不许丢规则。少一条就 FAIL，别用「感觉还在」验收。
   7. **协议覆盖**：一回合一条 batch 的关键标记（card_id / 尾部快照 / STOP 处理）。
-  8. **硬闸同步**：games/slay-the-spire-2/decision/hard_rules.py 是 5 条硬闸的唯一来源，SKILL 里的锚点
-     必须还在（改阈值一边忘了另一边 → FAIL），且 SKILL 要标注来源。
+  8. **硬闸同步**：games/slay-the-spire-2/decision/hard_rules.py 是 5 条硬闸的唯一来源，手册里的锚点
+     必须还在（改阈值一边忘了另一边 → FAIL），且手册要标注来源。
+  9. **常驻提示词限额**：`decision/prompts.py` 每回合都在上下文里，超限就 FAIL。
 
 Usage: python tools/check_skill.py
 """
@@ -23,17 +27,19 @@ from pathlib import Path
 ROOT = Path(".").resolve()
 sys.path.insert(0, str(ROOT / "tools"))
 import hard_rules  # noqa: E402
-SKILL_DIR = ROOT / ".dsh" / "skills" / "sts2-ironclad-ironclad"
-SKILL = SKILL_DIR / "SKILL.md"
+SKILL_DIR = ROOT / "games" / "slay-the-spire-2" / "decision" / "knowledge" / "ironclad"
+SKILL = SKILL_DIR / "OS.md"
+PROMPT = ROOT / "games" / "slay-the-spire-2" / "decision" / "prompts.py"
 
 LEGACY = ["煤渣", "嗜血", "灰烬打击", "冲击波", "暴力", "愤怒"]
 SECTIONS = [
     "传输协议", "记忆分层", "三条铁律", "准入闸", "每回合七步", "数值与斩杀",
     "血预算", "路线", "构筑", "敌人", "精英 / Boss", "工具坑", "反模式", "收尾",
 ]
-MAX_BYTES = 14500
+MAX_BYTES = 15000
 MAX_LINES = 215
-MAX_TOKENS = 4400
+MAX_TOKENS = 4600
+MAX_PROMPT_BYTES = 7000
 
 # ---- 规则覆盖：压缩可以改措辞，这些数字/机制/编号不能消失 ----
 CJK = re.compile(r"[\u3400-\u9fff\uff00-\uffef\u3000-\u303f]")
@@ -72,7 +78,7 @@ KEYWORDS = [
     "save_and_quit", "continue_run", "choose_reward_card", "use_potion",
     "--full", "--target", "--option",
     "memory --write", "journal", "sts2.py report",
-    "obsctl stop", "LESSONS.md", "check_skill.py", "check_caster.py", "sts2-caster",
+    "obsctl stop", "LESSONS.md", "check_skill.py", "check_caster.py", "speech.md",
     "playbook.md", "cards.md", "enemies.md",
 ]
 
@@ -100,20 +106,14 @@ def main() -> int:
     lines = text.splitlines()
     size = len(text.encode("utf-8"))
     if size > MAX_BYTES:
-        fail(f"SKILL.md {size} 字节 > {MAX_BYTES}：常驻上下文膨胀，先压细节")
+        fail(f"OS.md {size} 字节 > {MAX_BYTES}：手册膨胀，先压细节")
     if len(lines) > MAX_LINES:
-        fail(f"SKILL.md {len(lines)} 行 > {MAX_LINES} 行")
+        fail(f"OS.md {len(lines)} 行 > {MAX_LINES} 行")
     tok = est_tokens(text)
     if tok > MAX_TOKENS:
-        fail(f"SKILL.md 估算 {tok} token > {MAX_TOKENS}：每回合都在上下文里，先删废话")
-    if not text.startswith("---\n"):
-        fail("SKILL.md 缺少 frontmatter（技能会从 available_skills 消失）")
-    else:
-        fm = text.split("---", 2)[1]
-        if "name:" not in fm or "description:" not in fm:
-            fail("frontmatter 缺 name/description")
-        elif "sts2-ironclad-ironclad" not in fm:
-            fail("frontmatter name 与目录名不一致")
+        fail(f"OS.md 估算 {tok} token > {MAX_TOKENS}：按需读取也要能一屏装下")
+    if not lines or not lines[0].startswith("# 铁甲战士"):
+        fail("OS.md 首行应是「# 铁甲战士 A10 · 决策 OS」标题")
 
     for sec in SECTIONS:
         if sec not in text:
@@ -125,18 +125,19 @@ def main() -> int:
             continue
         for bad in LEGACY:
             if bad in line:
-                fail(f"SKILL.md:{i} 出现一代旧卡名「{bad}」：{line.strip()[:40]}")
+                fail(f"OS.md:{i} 出现一代旧卡名「{bad}」：{line.strip()[:40]}")
 
-    # 引用的文件路径
+    # 引用的文件路径（`references/x.md`、裸文件名、或仓库相对路径）
     refs = set(re.findall(r"`([\w./-]+\.(?:md|py|db|json|mp4))`", text))
     for ref in sorted(refs):
         if ref.startswith("references/"):
-            p = SKILL_DIR / ref
-        elif ref in ("ctx.py", "act.py"):
-            p = ROOT / "tools" / ref
+            cands = [SKILL_DIR / ref]
+        elif "/" not in ref:
+            cands = [SKILL_DIR / "references" / ref, ROOT / ref,
+                     ROOT / "tools" / ref]
         else:
-            p = ROOT / ref
-        if not p.exists():
+            cands = [ROOT / ref]
+        if not any(p.exists() for p in cands):
             fail(f"引用的文件不存在：{ref}")
 
     # 子技能文件
@@ -162,11 +163,23 @@ def main() -> int:
             fail(f"cards.md 只有 {n} 张牌，预期 ≥80（铁甲 87 张）")
 
     # 描述里应该提到两个子文件
-    fm = text.split("---", 2)[1] if text.startswith("---") else ""
-    if "enemies.md" not in fm:
-        warn("description 没提 enemies.md，模型可能不知道要查")
-    if "ctx.py" not in fm:
-        warn("description 没提 ctx.py：模型可能又回去读自然语言快照")
+    head = "\n".join(lines[:16])
+    if "enemies.md" not in text:
+        warn("正文没提 enemies.md，模型可能不知道要查")
+    if "ctx.py" not in head:
+        warn("开头没提 ctx.py：模型可能又回去读自然语言快照")
+
+    # ---- 常驻提示词限额（每回合都在上下文里） ----
+    if not PROMPT.exists():
+        fail(f"缺少 {PROMPT.relative_to(ROOT)}")
+    else:
+        pt = PROMPT.read_text(encoding="utf-8")
+        psize = len(pt.encode("utf-8"))
+        if psize > MAX_PROMPT_BYTES:
+            fail(f"prompts.py {psize} 字节 > {MAX_PROMPT_BYTES}：常驻提示词膨胀")
+        for key in ("calc.line", "calc.inc", "allow_leftover", "context.acts"):
+            if key not in pt:
+                fail(f"prompts.py 缺关键字段：{key}")
 
     # ---- 规则覆盖（v17.1 → v18 不丢规则） ----
     missing = [t for t in THRESHOLDS if t not in text]
@@ -188,15 +201,15 @@ def main() -> int:
         if not m:
             warn(f"反模式 {c} 后面像没有说明文字")
 
-    # ---- 硬闸单一来源：decision/hard_rules.py ↔ SKILL.md ----
+    # ---- 硬闸单一来源：decision/hard_rules.py ↔ OS.md ----
     for e in hard_rules.validate():
         fail(f"硬闸自检：{e}")
     for m in hard_rules.verify_skill(text):
-        fail(f"硬闸与 SKILL.md 不同步：{m}（阈值只改 hard_rules，或两边一起改）")
+        fail(f"硬闸与 OS.md 不同步：{m}（阈值只改 hard_rules，或两边一起改）")
     if "games/slay-the-spire-2/decision/hard_rules.py" not in text:
-        fail("SKILL.md 未标注硬闸唯一来源 `games/slay-the-spire-2/decision/hard_rules.py`")
+        fail("OS.md 未标注硬闸唯一来源 `games/slay-the-spire-2/decision/hard_rules.py`")
     if "rules" not in text:
-        warn("SKILL.md 没提 ctx 的 rules 字段：模型可能不知道每回合都有硬闸")
+        warn("OS.md 没提 ctx 的 rules 字段：模型可能不知道每回合都有硬闸")
 
     return report()
 

@@ -3,7 +3,7 @@
 本地梗库：`db/memes.json`（118 条）；SQLite 表：`db/sts2.db` 的 `memes` 表。
 查询工具：`tools/memedb.py`。
 
-> **2026-10 起：说话规则以 `.dsh/skills/sts2-caster/` 为准**（三拍结构 / 五件武器 / 禁语 / 十四个节点台词卡 / `python tools/check_caster.py --say "…"`）。本文件保留梗库、历史节奏数据与跨局约束（不提前缀、不跨局指代）。
+> **2026-10 起：说话规则以 `games/slay-the-spire-2/persona/` 为准**（三拍结构 / 五件武器 / 禁语 / 十四个节点台词卡 / `python tools/check_caster.py --say "…"`）。本文件保留梗库、历史节奏数据与跨局约束（不提前缀、不跨局指代）。
 
 ## 一、梗库规模
 

@@ -717,6 +717,29 @@ class Handler(BaseHTTPRequestHandler):
                                            ensure_ascii=False).encode("utf-8"),
                            "application/json; charset=utf-8")
             return
+        if self.path == "/api/bili/send":
+            try:
+                n = int(self.headers.get("Content-Length", "0") or 0)
+                payload = json.loads(self.rfile.read(n) or b"{}") if n else {}
+            except Exception:
+                self._send(400, b'{"ok":false,"error":"bad json"}', "application/json")
+                return
+            try:
+                from dafeiyu.ui.studio import get_runtime
+
+                text = str((payload or {}).get("text") or "")
+                result = get_runtime().send_to_room(text)
+                self._send(200, json.dumps(result, ensure_ascii=False).encode("utf-8"),
+                           "application/json; charset=utf-8")
+            except ValueError as exc:
+                self._send(400, json.dumps({"ok": False, "error": str(exc)},
+                                           ensure_ascii=False).encode("utf-8"),
+                           "application/json; charset=utf-8")
+            except Exception as exc:
+                self._send(500, json.dumps({"ok": False, "error": str(exc)},
+                                           ensure_ascii=False).encode("utf-8"),
+                           "application/json; charset=utf-8")
+            return
         if self.path == "/api/play/start":
             try:
                 from dafeiyu.agent.play import start_autoplay

@@ -1,7 +1,7 @@
 """Agent 层：LangGraph 回合流程 + JSONL 轨迹 + 现有游戏工具适配。
 
-这里只做「观察 / 规划 / 验算 / 执行 / 反思」的编排；决策规则仍可来自
-`.dsh/skills`，出牌仍走 `tools/act.py`，人设和语音仍走原内核。
+这里只做「观察 / 规划 / 验算 / 执行 / 反思」的编排；决策规则来自各游戏包自带的
+`decision/knowledge/`，出牌仍走 `tools/act.py`，人设和语音仍走原内核。
 """
 from __future__ import annotations
 

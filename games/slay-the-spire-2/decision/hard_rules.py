@@ -3,7 +3,7 @@
 
 为什么需要这个文件（2026-10-28 审计）
 ------------------------------------
-这 5 条规则原本只写在 `.dsh/skills/sts2-ironclad-ironclad/SKILL.md` 里，靠 `skill`
+这 5 条规则原本只写在 `games/slay-the-spire-2/decision/knowledge/ironclad/OS.md` 里，靠 `skill`
 工具一次性加载进模型上下文。审计 run96–run106 的会话文件时发现：
 
 - skill 只在 20:04 / 21:55 / 22:14 加载过 3 次，之后 3.5 小时没有重载；

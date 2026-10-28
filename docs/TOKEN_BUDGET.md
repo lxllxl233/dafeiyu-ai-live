@@ -104,9 +104,9 @@ python tools/audit_tokens.py --session <新会话 id 前缀>
 
 ```powershell
 # 本机备份（backups/ 不入库）
-Copy-Item backups\SKILL.v17.1.md .dsh\skills\sts2-ironclad-ironclad\SKILL.md -Force
+Copy-Item backups\OS.v17.1.md games\slay-the-spire-2\decision\knowledge\ironclad\OS.md -Force
 # 或者直接退回上一版
-git checkout <本次提交>^ -- .dsh/skills/sts2-ironclad-ironclad/SKILL.md
+git checkout <本次提交>^ -- games/slay-the-spire-2/decision/knowledge/ironclad/OS.md
 ```
 
 `sts2.py batch` 的改动是向后兼容的：不带 `end_turn` 的旧用法照常工作。

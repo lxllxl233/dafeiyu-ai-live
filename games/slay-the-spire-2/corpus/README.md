@@ -60,7 +60,7 @@ python tools/build_enemies_v3.py    # 生成技能敌人表 references/enemies.m
 - 玩法手册：`docs/A10_IRONCLAD.md`、`docs/COMBAT_TURN.md`、`docs/ACT1_PLAYBOOK.md`、
   `docs/NEOW_DECISIONS.md`、`docs/SHOP_DECISIONS.md`、`docs/CAMPFIRE_UPGRADES.md`
 - 复盘与教训：`docs/LESSONS.md`（按局）、`docs/RUN_REVIEW.md`（模板）
-- Agent 技能：`.dsh/skills/sts2-ironclad-ironclad`（决策）、`.dsh/skills/sts2-caster`（说话）
+- Agent 技能：`games/slay-the-spire-2/decision/knowledge/sts2-ironclad-ironclad`（决策）、`games/slay-the-spire-2/decision/knowledge/sts2-caster`（说话）
 - 台词素材：`docs/IRONCLAD_VOICE.md`
 
 ## 来源与边界

@@ -175,9 +175,12 @@ STS2 的决策引擎也已整体迁进游戏包：`ctx.py` / `act.py` / `advisor
 战斗读 `games/slay-the-spire-2/decision/ctx.py` 同源局面：
 
 - `local`：`decision/advisor.py` 本地算伤害/格挡/斩杀，走 `sts2 batch`；
-- `llm`：战斗回合走 LangGraph `run_turn` + `LLMPlanner` + `decision/act.py`，默认模型
-  `deepseek-chat`，非战斗仍本地处理；规划/验算失败本回合本地兜底，执行失败才停手。
-- `GAME_OVER`：回主菜单再开一局；未知界面/长时间没有进展会停手并写 `error`。
+- `llm`：**每个玩家决策都问模型**。战斗回合走 LangGraph `run_turn` + `LLMPlanner` +
+  `decision/act.py`（`seq` 协议）；界面点击走 `autoplay/runner.py::_screen_llm` +
+  `decision/actions.py` 的白名单菜单（只列当前真正可点的项，禁用/越界动作直接拒）。
+  默认模型 `deepseek-chat`；模型超时/输出不可执行才本地兜底并记 `llm_fallback`，
+  执行失败才停手。`MAIN_MENU` / `CHARACTER_SELECT` / `MODAL` 是过场管道，不调用模型。
+- `GAME_OVER`：回主菜单再开一局；未知界面/同一失败连续 3 次会停手并写 `error`。
 
 播报节奏也在同一份配置里：`voice` 按上一句字数估算播完时间（至少 2 秒），
 `normal` 是旧版 0.7 秒。模式/节奏写 `config.json`，桌宠二级菜单、控制台和 CLI 共用；
@@ -290,7 +293,7 @@ observe ──► plan ──► validate ──► execute ──► reflect
 - 兼容 shim 全部在 `tools/`（`sts2.py` / `ctx.py` / `act.py` / `advisor.py` / `sim.py` /
   `streamer.py` / `obsctl.py` / `caster_state.py` / `instance_lock.py` 等），用
   `sys.modules[__name__] = 真模块` 或 `_game_impl.load()` 加载同一份实现；根目录不再有代码文件。
-  2.2 不删 shim：`.dsh/skills`、docs 和旧 runbook 仍引用旧入口；映射和退役条件见
+  2.2 不删 shim：`games/slay-the-spire-2/decision/knowledge`、docs 和旧 runbook 仍引用旧入口；映射和退役条件见
   `tools/README.md`，不要在 `src/dafeiyu/` 里 import shim。
 - `db/`、`tools/data/` 是兼容链接（`python main.py setup` 创建），真实内容在
   `games/slay-the-spire-2/corpus/`。这样 v1 里几十个 `"db/sts2.db"` 相对路径不用逐个改。

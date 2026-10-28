@@ -112,4 +112,23 @@ def status() -> dict:
     return runner.status()
 
 
-__all__ = ["start_autoplay", "stop_autoplay", "status"]
+_USAGE_HOST: AutoplayHost | None = None
+
+
+def token_usage(limit: int = 40) -> dict:
+    """API Token 账单（跨进程读 ``logs/autoplay.jsonl``）：总数 + 每步明细。
+
+    控制台「Agent 流程」用它；不依赖自动玩进程还活着。宿主只建一次，
+    这样 3 秒轮询能命中 ``AutoplayHost`` 里的 (mtime, size) 缓存。
+    """
+    global _USAGE_HOST
+    try:
+        if _USAGE_HOST is None:
+            _USAGE_HOST = AutoplayHost()
+        return _USAGE_HOST.token_usage(limit=limit)
+    except Exception as exc:  # noqa: BLE001
+        return {"total": 0, "input": 0, "output": 0, "calls": 0, "steps": [],
+                "kinds": [], "by_run": [], "error": f"{type(exc).__name__}: {exc}"}
+
+
+__all__ = ["start_autoplay", "stop_autoplay", "status", "token_usage"]

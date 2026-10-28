@@ -26,6 +26,81 @@ DEFAULT_STATE: dict = {
 }
 
 
+def _kind_of(note: str) -> str:
+    """从「战斗 f7 t3」这样的说明里取第一段作为类型。"""
+    text = " ".join(str(note or "").split())
+    if not text:
+        return "未标注"
+    first = text.split(" ", 1)[0]
+    return first if len(first) <= 6 else first[:6]
+
+
+def _usage_from_log(path) -> dict:
+    """解析 ``logs/autoplay.jsonl`` 里的 llm_usage 行，给控制台出 Token 账单。"""
+    steps: list[dict] = []
+    total_in = total_out = total_all = 0
+    running = 0
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            for line in f:
+                if '"llm_usage"' not in line:
+                    continue
+                try:
+                    row = json.loads(line)
+                except ValueError:
+                    continue
+                if not isinstance(row, dict) or row.get("msg") != "llm_usage":
+                    continue
+                try:
+                    total = int(row.get("total") or 0)
+                except (TypeError, ValueError):
+                    total = 0
+                if total <= 0:
+                    continue
+                tin = int(row.get("input") or 0)
+                tout = int(row.get("output") or 0)
+                total_in += tin
+                total_out += tout
+                total_all += total
+                # cumulative 用「本文件内的顺序累计」，跨进程重启也不会倒退。
+                running += total
+                steps.append({
+                    "at": float(row.get("ts") or 0.0),
+                    "run_id": str(row.get("run_id") or ""),
+                    "kind": _kind_of(row.get("note")),
+                    "note": str(row.get("note") or ""),
+                    "step": row.get("step"),
+                    "input": tin,
+                    "output": tout,
+                    "total": total,
+                    "cumulative": running,
+                })
+    except OSError:
+        return {"total": 0, "input": 0, "output": 0, "calls": 0, "all_steps": [],
+                "by_run": []}
+    calls = len(steps)
+    runs: dict[str, dict] = {}
+    for row in steps:
+        key = row["run_id"] or "?"
+        slot = runs.setdefault(key, {"run_id": key, "total": 0, "calls": 0,
+                                     "last_at": 0.0, "note": ""})
+        slot["total"] += row["total"]
+        slot["calls"] += 1
+        slot["last_at"] = row["at"] or slot["last_at"]
+        slot["note"] = row["note"] or slot["note"]
+    by_run = sorted(runs.values(), key=lambda x: -x["last_at"])[:10]
+    return {
+        "total": total_all,
+        "input": total_in,
+        "output": total_out,
+        "calls": calls,
+        "last": steps[-1]["total"] if steps else 0,
+        "all_steps": steps[-4000:],
+        "by_run": by_run,
+        "path": str(path),
+    }
+
+
 class AutoplayHost:
     """一个进程内的一局宿主；路径可替换，方便单测不碰真实直播状态。"""
 
@@ -134,8 +209,13 @@ class AutoplayHost:
             pass
 
     # ---------------------------------------------------------------- Token
-    def add_usage(self, usage: dict | None, run_id: str = "") -> dict:
-        """累计 API 返回的 usage；失败重试的 token 也算，观众看到的是真账单。"""
+    def add_usage(self, usage: dict | None, run_id: str = "", note: str = "",
+                  step: int | None = None) -> dict:
+        """累计 API 返回的 usage；失败重试的 token 也算，观众看到的是真账单。
+
+        ``note`` 是这一步的说明（例如「战斗 f7 t3」「地图 choose_map_node 2」），
+        控制台按它给出「每一步多少 token」。
+        """
         usage = usage if isinstance(usage, dict) else {}
         try:
             tin = int(usage.get("input") or 0)
@@ -153,10 +233,42 @@ class AutoplayHost:
             self.state["tokens_last"] = total
             self._write_locked()
         self.log("llm_usage", run_id=run_id, input=tin, output=tout, total=total,
+                 note=str(note or ""), step=step,
                  cumulative=int(self.state.get("tokens_total") or 0))
         self.event("llm_turn", f"LLM 回合 · {total} tok", run_id=run_id,
                    tokens=total, tokens_in=tin, tokens_out=tout)
         return {"input": tin, "output": tout, "total": total}
+
+    def token_usage(self, limit: int = 40) -> dict:
+        """从 JSONL 汇总 API 账单：总数 + 按类型 + 最近 N 步（每步多少 token）。
+
+        日志是跨进程共享的，控制台读到的和自动玩写的是同一份；
+        用 (mtime, size) 做缓存，3 秒轮询不会反复解析几百 KB。
+        """
+        limit = max(1, int(limit or 40))
+        try:
+            st = self.log_path.stat()
+            sig = (st.st_mtime_ns, st.st_size)
+        except OSError:
+            return {"total": 0, "input": 0, "output": 0, "calls": 0,
+                    "steps": [], "kinds": [], "path": str(self.log_path)}
+        cache = getattr(self, "_usage_cache", None)
+        if cache and cache[0] == sig:
+            summary = dict(cache[1])
+        else:
+            summary = _usage_from_log(self.log_path)
+            self._usage_cache = (sig, summary)
+        steps = [dict(x) for x in summary["all_steps"][-limit:]]
+        kinds: dict[str, dict] = {}
+        for row in summary["all_steps"]:
+            key = str(row.get("kind") or "其它")
+            slot = kinds.setdefault(key, {"kind": key, "total": 0, "calls": 0})
+            slot["total"] += int(row.get("total") or 0)
+            slot["calls"] += 1
+        out = {k: v for k, v in summary.items() if k != "all_steps"}
+        out.update(steps=steps, kinds=sorted(kinds.values(),
+                                             key=lambda x: -x["total"]))
+        return out
 
     # ---------------------------------------------------------------- 录像
     def event(self, kind: str, label: str = "", **extra) -> None:

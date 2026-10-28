@@ -82,7 +82,7 @@ python tools/gates.py --act 2
 `护栏·漏甲` 原来用「回合起手手牌」判断，导致**已经打出两张防御再 end 仍被拦**（run73 实测，等于罚做对了的人）。
 现在 `_played_counts()` 会扣掉这一手已经打出的甲牌（同名多张按张数扣），测试从 10 项扩到 **12 项**。
 
-### 4.4 `.dsh/skills/sts2-ironclad-ironclad/SKILL.md`
+### 4.4 `games/slay-the-spire-2/decision/knowledge/ironclad/OS.md`
 新增 8 条实战规则（全部今晚实测）：
 - **SL 不改变抽牌顺序**（`save_and_quit` → continue 后开局手牌完全一样）→ SL 只能修操作，不能刷牌序；
 - **商店每店只能删 1 张牌**；

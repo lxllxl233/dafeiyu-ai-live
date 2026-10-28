@@ -4,7 +4,7 @@
 import re
 import sqlite3
 
-SKILL = r".dsh/skills/sts2-ironclad-ironclad/SKILL.md"
+SKILL = r"games/slay-the-spire-2/decision/knowledge/ironclad/OS.md"
 
 with open(SKILL, encoding="utf-8") as f:
     s = f.read()

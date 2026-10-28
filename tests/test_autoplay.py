@@ -282,3 +282,267 @@ def test_unknown_screen_does_not_guess_a_button():
     last = play._one_step(fake, None, state)
     assert last == "UNKNOWN SOMETHING_NEW"
     assert fake.calls == []
+
+
+# ---------------------------------------------------------------- 营火：只看可用项
+def test_rest_never_picks_a_disabled_option():
+    """run-0110 原样复现：满血 1/1、牌全升级，「锻造」被游戏禁用，只能点「休息」。"""
+    state = {
+        "screen": "REST", "run": {"current_hp": 1, "max_hp": 1},
+        "available_actions": ["choose_rest_option", "save_and_quit", "use_potion"],
+        "rest": {"options": [
+            {"option_id": "HEAL", "title": "休息", "is_enabled": True,
+             "description": "回复最大生命值的30%（0）。"},
+            {"option_id": "SMITH", "title": "锻造", "is_enabled": False,
+             "description": "你没有可以升级的牌。"},
+        ]},
+    }
+    fake = _FakeSts2([state])
+    last = play._rest(fake, state)
+    assert last == "REST choose_rest_option 0"
+    assert fake.calls == [("choose_rest_option", {"option_index": 0})]
+
+
+def test_rest_falls_back_to_other_enabled_option():
+    """想要的被禁用时退到第一个可用项，而不是死磕禁用项。"""
+    state = {
+        "screen": "REST", "run": {"current_hp": 70, "max_hp": 80},
+        "available_actions": ["choose_rest_option"],
+        "rest": {"options": [
+            {"option_id": "SMITH", "title": "锻造", "is_enabled": False},
+            {"option_id": "HEAL", "title": "休息", "is_enabled": True},
+        ]},
+    }
+    fake = _FakeSts2([state])
+    last = play._rest(fake, state)
+    assert last == "REST choose_rest_option 1"
+    assert fake.calls == [("choose_rest_option", {"option_index": 1})]
+
+
+def test_rest_all_disabled_proceeds_when_possible():
+    state = {
+        "screen": "REST", "run": {"current_hp": 30, "max_hp": 80},
+        "available_actions": ["proceed"],
+        "rest": {"options": [{"option_id": "HEAL", "is_enabled": False},
+                             {"option_id": "SMITH", "is_enabled": False}]},
+    }
+    fake = _FakeSts2([state])
+    assert play._rest(fake, state) == "REST proceed"
+    assert fake.calls == [("proceed", {})]
+
+
+def test_rest_all_disabled_without_proceed_reports_it():
+    state = {
+        "screen": "REST", "run": {"current_hp": 30, "max_hp": 80},
+        "available_actions": ["choose_rest_option"],
+        "rest": {"options": [{"option_id": "SMITH", "is_enabled": False}]},
+    }
+    fake = _FakeSts2([state])
+    assert play._rest(fake, state) == "REST all disabled"
+    assert fake.calls == []
+
+
+def test_rest_option_enabled_reads_client_aliases():
+    assert play._rest_option_enabled({"is_enabled": False}) is False
+    assert play._rest_option_enabled({"enabled": False}) is False
+    assert play._rest_option_enabled({"ok": False}) is False
+    assert play._rest_option_enabled({"title": "休息"}) is True
+    assert play._rest_option_matches({"option_id": "SMITH", "title": "锻造"},
+                                     play._REST_HEAL_WORDS, play._REST_HEAL_IDS) is False
+    assert play._rest_option_matches({"option_id": "SMITH"}, ("睡觉",), ("HEAL",)) is False
+
+
+# ---------------------------------------------------------------- 卡住兜底
+class _RejectAct(_FakeSts2):
+    """游戏拒绝每个 choose_rest_option（invalid_target），模拟 run-0110 的实机行为。"""
+
+    def act(self, action, **params):
+        self.calls.append((action, params))
+        raise RuntimeError("choose_rest_option failed: invalid_target "
+                           "The selected rest option is disabled.")
+
+
+_STUCK_REST = {
+    "screen": "REST", "run": {"current_hp": 1, "max_hp": 1, "floor": 7, "run_id": "r1"},
+    "available_actions": ["choose_rest_option"],
+    "rest": {"options": [{"option_id": "HEAL", "title": "休息", "is_enabled": True}]},
+}
+
+
+def test_stall_key_groups_the_same_failure_across_screens():
+    k1 = play._stall_key("REST", "ERROR RuntimeError: choose_rest_option failed: "
+                                 "invalid_target The selected rest option is disabled.")
+    k2 = play._stall_key("REST", "ERROR RuntimeError: choose_rest_option failed: "
+                                 "invalid_target The selected rest option is disabled.")
+    k3 = play._stall_key("REST", "ERROR RuntimeError: choose_rest_option failed: "
+                                 "invalid_target something else")
+    assert k1 == k2 == k3 == ("REST", "ERROR invalid_target")
+    assert play._stall_key("REST", "REST choose_rest_option 0") is None
+
+
+def test_stall_guard_trips_after_limit_and_resets_on_progress():
+    guard = play._StallGuard(limit=3)
+    key = ("REST", "REST all disabled")
+    assert [guard.hit(key) for _ in range(3)] == [1, 2, 3]
+    guard.clear()
+    assert guard.hit(key) == 1
+    assert play._stall_key("REST", "REST no options") == ("REST", "REST no options")
+
+
+def test_loop_stops_instead_of_replaying_a_rejected_action(monkeypatch):
+    """回归：被拒绝的动作不再重放几百次，3 次原地打转就收手。"""
+    import threading
+
+    fake = _RejectAct([_STUCK_REST])
+    monkeypatch.setattr(play, "_import_tools", lambda: (fake, None))
+    monkeypatch.setattr(play, "_start_autoplay_recording", lambda *a, **k: None)
+    monkeypatch.setattr(play, "_finish_autoplay_recording", lambda *a, **k: None)
+    writes = []
+    monkeypatch.setattr(play, "_write_status",
+                        lambda **kw: writes.append(dict(play._state, **kw)) or dict(kw))
+
+    play._run(play.GAME_ID, mode="local")
+
+    assert len(fake.calls) == 3, fake.calls
+    assert all(c[0] == "choose_rest_option" for c in fake.calls)
+    assert any(w.get("stopping") and "界面" in str(w.get("last") or "") for w in writes)
+    assert play._thread is None
+
+
+# ---------------------------------------------------------------- 界面决策：LLM 优先
+class _FakePlanner:
+    """只回放预设 plan 的假规划器，记录每次收到的 context。"""
+
+    def __init__(self, plans):
+        self.plans = list(plans)
+        self.calls = []
+
+    def plan(self, context, feedback="", goal=""):
+        self.calls.append({"context": context, "feedback": feedback, "goal": goal})
+        plan = self.plans[min(len(self.calls) - 1, len(self.plans) - 1)]
+        if isinstance(plan, dict) and plan.get("__error__"):
+            return {"ok": False, "error": plan["__error__"], "planner": "fake"}
+        return {"ok": True, "plan": plan, "planner": "fake",
+                "usage": {"input": 10, "output": 5, "total": 15}}
+
+
+_EVENT_STATE = {
+    "screen": "EVENT", "run_id": "r1",
+    "run": {"floor": 6, "act_id": "0", "current_hp": 57, "max_hp": 80, "gold": 131,
+            "deck": [{"card_id": "STRIKE_IRONCLAD", "name": "打击",
+                      "energy_cost": 1}],
+            "relics": [], "potions": []},
+    "available_actions": ["choose_event_option"],
+    "event": {"event_id": "TABLET_OF_TRUTH", "title": "真理石板",
+              "options": [{"title": "解读", "description": "失去3点最大生命。随机升级一张牌。"},
+                          {"title": "砸碎", "description": "回复20点生命。"}]},
+}
+
+
+def test_llm_mode_asks_the_model_for_event_choice(monkeypatch):
+    """llm 模式下事件由模型选：它选 1 就点 1（本地兜底才会永远点 0）。"""
+    seen = []
+    monkeypatch.setattr(play, "_remember_speech", lambda t: seen.append(t))
+    fake = _FakeSts2([_EVENT_STATE])
+    planner = _FakePlanner([{"say": ["石板还能砸，回 20 点更稳。"],
+                             "act": "choose_event_option", "i": 1}])
+    last = play._one_step(fake, None, _EVENT_STATE, mode="llm", screen_planner=planner)
+    assert last == "EVENT choose_event_option 1"
+    assert fake.calls == [("choose_event_option", {"option_index": 1})]
+    assert seen and "石板" in seen[-1]
+    ctx = planner.calls[0]
+    assert ctx["goal"].startswith("第 6 层")
+    assert [a["i"] for a in ctx["context"]["acts"]] == [0, 1]
+    assert play._host.state.get("tokens_total", 0) >= 15
+
+
+def test_llm_mode_rejects_actions_outside_the_menu_then_falls_back(monkeypatch):
+    """模型写白名单外的动作 → 拒掉、带原因重问，仍不行才落回本地。"""
+    monkeypatch.setattr(play, "_remember_speech", lambda t: None)
+    fake = _FakeSts2([_EVENT_STATE])
+    planner = _FakePlanner([{"act": "save_and_quit"},
+                            {"act": "choose_event_option", "i": 99}])
+    last = play._one_step(fake, None, _EVENT_STATE, mode="llm", screen_planner=planner)
+    assert last == "EVENT 0"  # 本地兜底
+    assert fake.calls == [("choose_event_option", {"option_index": 0})]
+    assert len(planner.calls) == 2
+    assert "不能执行" in planner.calls[1]["feedback"]
+
+
+def test_llm_mode_retries_once_when_index_is_out_of_range(monkeypatch):
+    monkeypatch.setattr(play, "_remember_speech", lambda t: None)
+    fake = _FakeSts2([_EVENT_STATE])
+    planner = _FakePlanner([{"act": "choose_event_option", "i": 9},
+                            {"act": "choose_event_option", "i": 1}])
+    last = play._one_step(fake, None, _EVENT_STATE, mode="llm", screen_planner=planner)
+    assert last == "EVENT choose_event_option 1"
+    assert fake.calls == [("choose_event_option", {"option_index": 1})]
+
+
+def test_llm_mode_planner_failure_falls_back_without_raising(monkeypatch):
+    monkeypatch.setattr(play, "_remember_speech", lambda t: None)
+    fake = _FakeSts2([_EVENT_STATE])
+    planner = _FakePlanner([{"__error__": "Read timed out"}])
+    last = play._one_step(fake, None, _EVENT_STATE, mode="llm", screen_planner=planner)
+    assert last == "EVENT 0"
+    assert len(planner.calls) == 1
+
+
+def test_local_mode_never_calls_the_screen_planner():
+    fake = _FakeSts2([_EVENT_STATE])
+    planner = _FakePlanner([{"act": "choose_event_option", "i": 1}])
+    last = play._one_step(fake, None, _EVENT_STATE, mode="local", screen_planner=planner)
+    assert last == "EVENT 0"
+    assert planner.calls == []
+
+
+def test_plumbing_screens_stay_local_even_in_llm_mode():
+    """主菜单/角色选择是过场管道，不算决策，不喂给模型。"""
+    planner = _FakePlanner([{"act": "open_character_select"}])
+    state = {"screen": "MAIN_MENU", "available_actions": ["open_character_select"]}
+    fake = _FakeSts2([state])
+    last = play._one_step(fake, None, state, mode="llm", screen_planner=planner)
+    assert last.startswith("START_RUN") or last.startswith("WAIT")
+    assert planner.calls == []
+
+
+# ---------------------------------------------------------------- run-0110 全景回归
+_RUN0110_REST = {
+    "screen": "REST", "run_id": "r0110",
+    "run": {"floor": 7, "act_id": "0", "current_hp": 1, "max_hp": 1, "gold": 0,
+            "deck": [{"card_id": "STRIKE_IRONCLAD", "name": "打击", "energy_cost": 1}],
+            "relics": [], "potions": []},
+    "available_actions": ["save_and_quit", "choose_rest_option", "use_potion",
+                          "discard_potion"],
+    "rest": {"options": [
+        {"index": 0, "option_id": "HEAL", "title": "休息", "is_enabled": True,
+         "description": "回复最大生命值的30%（0）。"},
+        {"index": 1, "option_id": "SMITH", "title": "锻造", "is_enabled": False,
+         "description": "你没有可以升级的牌。"},
+    ]},
+}
+
+
+def test_run0110_rest_state_is_reachable_by_the_llm_layer(monkeypatch):
+    """真机快照能构建局面包，菜单里只剩可用的「休息」。"""
+    monkeypatch.setattr(play, "_remember_speech", lambda t: None)
+    from dafeiyu.games.registry import GameRegistry
+
+    actions = GameRegistry().load_game_module("slay-the-spire-2", "decision.actions")
+    ctxmod = GameRegistry().load_game_module("slay-the-spire-2", "decision.ctx")
+    menu = actions.available(_RUN0110_REST)
+    assert [(e["a"], e["i"]) for e in menu] == [("choose_rest_option", 0)]
+    brief = ctxmod.build(_RUN0110_REST)
+    assert brief.get("screen") == "REST"
+    assert brief.get("v")
+
+
+def test_run0110_model_asking_for_the_disabled_smith_falls_back_to_heal(monkeypatch):
+    """模型偏要「锻造」时：拒掉（禁用项不在菜单）→ 本地兜底点「休息」，不再卡死。"""
+    monkeypatch.setattr(play, "_remember_speech", lambda t: None)
+    fake = _FakeSts2([_RUN0110_REST])
+    planner = _FakePlanner([{"act": "choose_rest_option", "i": 1}])
+    last = play._one_step(fake, None, _RUN0110_REST, mode="llm", screen_planner=planner)
+    assert last == "REST choose_rest_option 0"
+    assert fake.calls == [("choose_rest_option", {"option_index": 0})]
+    assert len(planner.calls) == 2  # 重问一次后才兜底

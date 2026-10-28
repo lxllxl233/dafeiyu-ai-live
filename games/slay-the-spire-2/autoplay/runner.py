@@ -1,10 +1,11 @@
 """让她玩：启动游戏后自动跑一局。
 
-这不是「点一下 Steam 就完事」，而是一个可停止的本地回合循环：
-- 战斗：复用 `tools/advisor.py` 的本地算账（伤害/格挡/斩杀），不靠模型猜；
-- 奖励：复用 `sts2.py rewards` 的自动挑牌/空收；
-- 地图：复用 `sts2.py route` 的路线计划，按下一格坐标选；
-- 事件/营火/商店：保守选择，遇到未知界面就停，不乱按。
+两种模式共用同一个循环，区别只在「谁做决定」：
+
+- ``--mode llm``：**所有玩家决策都交给 LLM**——战斗出牌（`seq` → act.py）和界面点击
+  （`act`/`i` → decision/actions.py）。本地启发式只在 LLM 超时/输出不可执行时兜底，
+  并写 ``llm_fallback`` 进日志；主菜单/角色选择这类过场仍是本地管道，不算决策。
+- ``--mode local``：全走本地（离线验收用），战斗用 `decision/advisor.py` 算账。
 
 所有进展由核心 ``AutoplayHost`` 写 `logs/autoplay.json`，桌面右键和管理端都能看；
 停手通过 `logs/autoplay.stop` 跨进程通知，不依赖同一个 Python 进程。
@@ -24,7 +25,8 @@ from pathlib import Path
 from dafeiyu import paths
 from dafeiyu.agent.host import AutoplayHost
 
-from ..decision.prompts import SYSTEM_PROMPT, combat_goal
+from ..decision.prompts import (NONCOMBAT_PROMPT, SYSTEM_PROMPT, combat_goal,
+                                noncombat_goal, screen_label)
 
 GAME_ID = "slay-the-spire-2"
 
@@ -69,8 +71,10 @@ def _stopping() -> bool:
     return _host.stopping() or _stop.is_set() or STOP_PATH.exists()
 
 
-def _add_llm_usage(usage: dict | None, run_id: str = "") -> dict:
-    return _host.add_usage(usage, run_id)
+def _add_llm_usage(usage: dict | None, run_id: str = "", note: str = "") -> dict:
+    """记一笔 API token；note 说明是哪一步（战斗/地图/事件…），控制台按它出账单。"""
+    return _host.add_usage(usage, run_id, note=note,
+                           step=int(_state.get("step") or 0) + 1)
 
 
 def _pid_alive(pid: int | None) -> bool:
@@ -401,7 +405,10 @@ def _combat_llm(tools, planner, state: dict, game: str) -> str:
     except Exception as exc:  # noqa: BLE001
         _log("llm_failed", error=f"{type(exc).__name__}: {exc}")
         return f"LLM_FAILED {type(exc).__name__}: {exc}"
-    _add_llm_usage(result.get("tokens"), str(result.get("run_id") or ""))
+    floor = int((state.get("run") or {}).get("floor") or 0)
+    turn = int(((state.get("combat") or {}).get("turn")) or state.get("turn") or 0)
+    _add_llm_usage(result.get("tokens"), str(result.get("run_id") or ""),
+                   note=f"战斗 f{floor} t{turn}")
     if _stopping():
         _log("llm_cancelled", run_id=result.get("run_id"))
         return "STOPPED"
@@ -478,6 +485,68 @@ def _combat(sts2, advisor, state: dict, *, mode: str = "local",
             return f"LLM 失败，本地兜底（{local}）"
         return out
     return _combat_local(sts2, advisor, state)
+
+
+# ---------------------------------------------------------------- 界面决策（LLM 优先）
+# 这些屏幕的点击属于「玩家决策」：llm 模式先问模型，模型给不出可执行动作才退回本地启发式。
+# 主菜单/角色选择/确认框是过场管道，不算决策，始终走本地。
+LLM_SCREENS = ("MAP", "EVENT", "REST", "SHOP", "CHEST", "REWARD", "CARD_SELECTION")
+
+
+def _screen_llm(sts2, planner, state: dict, screen: str) -> str:
+    """让 LLM 选一个界面动作并执行；返回空串表示「模型没给出可执行动作」。
+
+    两道保险：菜单只来自 ``decision/actions.available``（白名单，禁用项不进菜单），
+    模型的动作/下标对不上就带着原因重问一次，仍不行才落回本地兜底。
+    """
+    try:
+        from ..decision import actions  # noqa: PLC0415
+        from ..decision import ctx as ctxmod  # noqa: PLC0415
+    except Exception as exc:  # noqa: BLE001
+        _log("screen_llm_unavailable", error=f"{type(exc).__name__}: {exc}")
+        return ""
+    menu = actions.available(state)
+    if not menu:
+        return ""
+    try:
+        brief = ctxmod.build(state)
+    except Exception as exc:  # noqa: BLE001
+        _log("screen_llm_brief_failed", error=f"{type(exc).__name__}: {exc}")
+        return ""
+    brief["acts"] = [{"a": e["a"], "i": e["i"], "n": e.get("n") or "",
+                      "fx": e.get("fx") or ""} for e in menu]
+    goal = noncombat_goal(screen, state)
+    feedback = ""
+    for attempt in (1, 2):
+        _write_status(last=f"LLM 决策（{screen}）…")
+        res = planner.plan(brief, feedback=feedback, goal=goal)
+        if not res.get("ok"):
+            _log("screen_plan_failed", screen=screen, attempt=attempt,
+                 error=str(res.get("error") or "")[:180])
+            return ""
+        plan = res.get("plan") if isinstance(res.get("plan"), dict) else {}
+        entry, err = actions.check(plan, state)
+        if entry is None:
+            feedback = f"上一版不能执行：{err}。只从 context.acts 里挑一项并给对 i。"
+            _log("screen_plan_invalid", screen=screen, attempt=attempt, error=err[:160])
+            continue
+        say = plan.get("say")
+        text = (" ".join(str(x) for x in say if str(x).strip())
+                if isinstance(say, list) else str(say or ""))
+        if text:
+            _remember_speech(text)
+        _add_llm_usage(res.get("usage"), note=f"{screen_label(screen)} {actions.label(entry)}")
+        try:
+            actions.execute(sts2, entry)
+        except Exception as exc:  # noqa: BLE001
+            _log("screen_execute_failed", screen=screen, act=actions.label(entry),
+                 error=f"{type(exc).__name__}: {exc}")
+            return ""
+        _log("llm_screen", screen=screen, act=entry["a"], i=entry.get("i"),
+             tokens=res.get("usage"), say=text[:120])
+        return f"{screen} {actions.label(entry)}"
+    _log("llm_fallback", error=f"{screen} 规划不可用：{feedback}"[:200])
+    return ""
 
 
 # ---------------------------------------------------------------- 非战斗
@@ -592,22 +661,65 @@ def _card_selection(sts2, state: dict) -> str:
     return "CARD unknown"
 
 
+_REST_HEAL_WORDS = ("休息", "睡觉", "回复", "rest", "sleep", "heal")
+_REST_SMITH_WORDS = ("锻造", "升级", "smith", "upgrade")
+_REST_HEAL_IDS = ("HEAL", "REST")
+_REST_SMITH_IDS = ("SMITH",)
+
+
+def _rest_option_enabled(opt: dict) -> bool:
+    """mod 的 REST 选项带 is_enabled（agent 视图叫 enabled，ctx 摘要叫 ok）。"""
+    for key in ("is_enabled", "enabled", "ok"):
+        if key in opt:
+            return bool(opt.get(key))
+    return True
+
+
+def _rest_option_matches(opt: dict, words: tuple[str, ...], ids: tuple[str, ...]) -> bool:
+    """先认 option_id（HEAL/SMITH，不随语言变），再退回标题子串。"""
+    oid = str(opt.get("option_id") or opt.get("id") or "").strip().upper()
+    if oid and oid in ids:
+        return True
+    name = str(opt.get("title") or opt.get("name") or "")
+    low = name.lower()
+    return any(w in name or w in low for w in words)
+
+
 def _rest(sts2, state: dict) -> str:
+    """本地兜底的营火选择：只在游戏允许的选项里挑。
+
+    实机 run-0110：事件把最大生命打到 1（满血）且牌全升级，营火里「休息」可用但
+    回 0 血、「锻造」被游戏禁用。旧实现只按血量比挑标题、完全不看 ``is_enabled``，
+    于是每轮都点那个被禁用的「锻造」，被 409 打回后再重放同一个动作，整局卡死。
+    """
     opts = [o for o in ((state.get("rest") or {}).get("options") or []) if isinstance(o, dict)]
+    acts = _acts(state)
     if not opts:
         # 有些版本选完休息/锻造后 REST 只剩 proceed，不点会原地循环。
-        if "proceed" in _acts(state):
+        if "proceed" in acts:
             sts2.act("proceed")
             return "REST proceed"
         return "REST no options"
     _, hp, mhp = _run_meta(state)
     pct = hp / mhp if mhp else 1.0
-    want = ("休息", "睡觉", "回复", "heal") if pct < 0.70 else ("锻造", "升级", "smith", "upgrade")
-    idx = next((i for i, o in enumerate(opts)
-                if any(w in str(o.get("title") or o.get("name") or "") for w in want)), 0)
-    action = "choose_rest_option" if "choose_rest_option" in _acts(state) else "proceed"
-    sts2.act(action, option_index=idx) if action == "choose_rest_option" else sts2.act(action)
-    return f"REST {action} {idx}"
+    words, ids = ((_REST_HEAL_WORDS, _REST_HEAL_IDS) if pct < 0.70
+                  else (_REST_SMITH_WORDS, _REST_SMITH_IDS))
+    usable = [(i, o) for i, o in enumerate(opts) if _rest_option_enabled(o)]
+    if not usable:
+        # 全被禁用：能走就走，走不了交给主循环的「原地打转」兜底。
+        if "proceed" in acts:
+            sts2.act("proceed")
+            return "REST proceed"
+        return "REST all disabled"
+    # 想要的被禁用时退到第一个可用项（例如满血 + 没牌可升级 → 只能点休息）。
+    idx = next((i for i, o in usable if _rest_option_matches(o, words, ids)), usable[0][0])
+    if "choose_rest_option" in acts:
+        sts2.act("choose_rest_option", option_index=int(idx))
+        return f"REST choose_rest_option {idx}"
+    if "proceed" in acts:
+        sts2.act("proceed")
+        return f"REST proceed {idx}"
+    return "REST no options"
 
 
 def _event(sts2, state: dict) -> str:
@@ -663,7 +775,8 @@ def _modal(sts2, state: dict) -> str:
 
 
 def _one_step(sts2, advisor, state: dict, *, mode: str = "local",
-              llm_tools=None, llm_planner=None, game: str = "") -> str:
+              llm_tools=None, llm_planner=None, screen_planner=None,
+              game: str = "") -> str:
     if _stopping():
         return "STOPPED"
     screen = _screen(state)
@@ -675,6 +788,10 @@ def _one_step(sts2, advisor, state: dict, *, mode: str = "local",
     if screen == "COMBAT":
         return _combat(sts2, advisor, state, mode=mode, llm_tools=llm_tools,
                        llm_planner=llm_planner, game=game)
+    if mode == "llm" and screen_planner is not None and screen in LLM_SCREENS:
+        out = _screen_llm(sts2, screen_planner, state, screen)
+        if out:
+            return out
     if screen == "REWARD":
         return _reward(sts2, state)
     if screen == "CARD_SELECTION":
@@ -692,6 +809,50 @@ def _one_step(sts2, advisor, state: dict, *, mode: str = "local",
     if screen == "MODAL":
         return _modal(sts2, state)
     return f"UNKNOWN {screen}"
+
+
+# ---------------------------------------------------------------- 卡住兜底
+# 这几个返回值表示「这一步没有推进局面」；主循环据此统计原地打转。
+_NO_PROGRESS = ("REST no options", "REST all disabled", "MAP_NO_AVAILABLE",
+                "REWARD_FAILED", "CARD select failed")
+
+
+def _error_code(last: str) -> str:
+    """从 ``xxx failed: invalid_target 说明`` 里取错误码，判断是不是同一种失败。"""
+    m = re.search(r"failed:\s*(\S+)", last or "")
+    return m.group(1) if m else "unknown"
+
+
+def _stall_key(screen: str, last: str) -> tuple[str, str] | None:
+    """把「没有推进」的一步归一成可比较的键；正常推进返回 None。"""
+    if last.startswith("ERROR"):
+        return (screen, "ERROR " + _error_code(last))
+    if last in _NO_PROGRESS:
+        return (screen, last)
+    return None
+
+
+class _StallGuard:
+    """同一画面同一失败连续出现就收尾。
+
+    旧实现只认几个字面量（其中 ``"CHEST"`` 根本不会出现，异常串更不会），
+    所以一个被游戏拒绝的动作可以原样重放几百次，直到 5000 步上限。
+    """
+
+    def __init__(self, limit: int = 3):
+        self.limit = max(1, int(limit))
+        self.key: tuple[str, str] | None = None
+        self.hits = 0
+
+    def hit(self, key: tuple[str, str]) -> int:
+        if key == self.key:
+            self.hits += 1
+        else:
+            self.key, self.hits = key, 1
+        return self.hits
+
+    def clear(self) -> None:
+        self.key, self.hits = None, 0
 
 
 # ---------------------------------------------------------------- 循环
@@ -713,7 +874,7 @@ def _wait_game(sts2, timeout: float = 120.0) -> dict | None:
 
 def _run(game: str, mode: str = "local") -> None:
     global _thread, _speech_until
-    sts2 = advisor = llm_tools = llm_planner = None
+    sts2 = advisor = llm_tools = llm_planner = screen_planner = None
     try:
         sts2, advisor = _import_tools()
         if mode == "llm":
@@ -727,6 +888,14 @@ def _run(game: str, mode: str = "local") -> None:
                 cfg, model=cfg.autoplay_llm_model or cfg.llm_model,
                 timeout=25.0, system_prompt=SYSTEM_PROMPT,
             )
+            screen_planner = LLMPlanner(
+                cfg, model=cfg.autoplay_llm_model or cfg.llm_model,
+                timeout=25.0, system_prompt=NONCOMBAT_PROMPT,
+            )
+            ok, why = screen_planner.available()
+            if not ok:
+                _log("llm_unavailable", error=why)
+                _write_status(last=why, error=why)
         _host.speech_until = 0.0
         _speech_until = 0.0
         _write_status(running=True, game=game, error="", step=0, mode=mode,
@@ -745,7 +914,7 @@ def _run(game: str, mode: str = "local") -> None:
         _pace()
         _log("start", game=game, mode=mode)
         step = 0
-        stalled = 0
+        guard = _StallGuard()
         while not _stopping():
             if step >= 5000:
                 _write_status(running=False, last="达到步数上限，停手")
@@ -777,7 +946,8 @@ def _run(game: str, mode: str = "local") -> None:
                 return
             try:
                 last = _one_step(sts2, advisor, state, mode=mode,
-                                 llm_tools=llm_tools, llm_planner=llm_planner, game=game)
+                                 llm_tools=llm_tools, llm_planner=llm_planner,
+                                 screen_planner=screen_planner, game=game)
             except BaseException as exc:  # noqa: BLE001
                 last = f"ERROR {type(exc).__name__}: {exc}"
                 _log("step_error", error=last)
@@ -799,15 +969,14 @@ def _run(game: str, mode: str = "local") -> None:
                 _write_status(error=last, last="LLM 执行失败，正在收尾…", stopping=True)
                 _log("llm_stop", last=last)
                 return
-            if last in ("CHEST", "REST no options", "MAP_NO_AVAILABLE", "REWARD_FAILED"):
-                stalled += 1
-                if stalled >= 4:
-                    _write_status(error=f"界面没有进展：{last}",
-                                  last="界面卡住，正在收尾…", stopping=True)
-                    _log("stalled", last=last)
-                    return
-            else:
-                stalled = 0
+            key = _stall_key(_screen(state), last)
+            if key is None:
+                guard.clear()
+            elif guard.hit(key) >= guard.limit:
+                _write_status(error=f"界面没有进展：{last}",
+                              last="界面卡住，正在收尾…", stopping=True)
+                _log("stalled", last=last, screen=_screen(state), hits=guard.hits)
+                return
             _pace()
         _write_status(last="正在收尾…", stopping=True)
         _log("stop")

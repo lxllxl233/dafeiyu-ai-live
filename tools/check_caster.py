@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Check the sts2-caster skill pack + lint a banner line before sending.
+"""Check the streaming persona docs (``games/slay-the-spire-2/persona/``) + lint a banner line.
+
+以前这是 DSH 技能包；现在说话 OS 直接住在游戏包里：
+``persona/speech.md``（主文档）、``persona/lines.md``（分节点台词）、
+``persona/quips.md``（招牌稿，由 tools/caster_quips.py 生成）。
 
 Usage:
-  python tools/check_caster.py                                  # 验证技能文件
+  python tools/check_caster.py                                  # 验证人设文档
   python tools/check_caster.py --say "它 21，我最多挡 15。这回合交 6 点税。"
   python tools/check_caster.py --thought "它 21，我最多挡 15" --meme "交 6 点税"
 
@@ -19,12 +23,14 @@ from pathlib import Path
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 ROOT = Path(".").resolve()
-SKILL_DIR = ROOT / ".dsh" / "skills" / "sts2-caster"
-SKILL = SKILL_DIR / "SKILL.md"
-LINES = SKILL_DIR / "references" / "lines.md"
+SKILL_DIR = ROOT / "games" / "slay-the-spire-2" / "persona"
+SKILL = SKILL_DIR / "speech.md"
+LINES = SKILL_DIR / "lines.md"
+QUIPS_PATH = SKILL_DIR / "quips.md"
 
-MAX_BYTES = 9000
-SECTIONS = ["三条铁律", "两个通道", "三拍", "五件武器", "招牌稿", "反效果", "节奏", "出口前三问", "台词 lint"]
+MAX_BYTES = 12000
+SECTIONS = ["三条铁律", "两个通道", "三拍", "五件武器", "反效果", "节奏",
+            "出口前三问", "台词 lint"]
 
 BANNED_PREFIX = ["大肥鱼", "DeepSeek", "AI:", "AI：", "鱼哥："]
 LABELS = ["战斗：", "路线：", "分析：", "结论：", "思路：", "决策："]
@@ -110,22 +116,16 @@ def check_skill() -> int:
     text = SKILL.read_text(encoding="utf-8")
     size = len(text.encode("utf-8"))
     if size > MAX_BYTES:
-        errors.append(f"SKILL.md {size} 字节 > {MAX_BYTES}：常驻上下文膨胀")
-    if not text.startswith("---\n"):
-        errors.append("缺少 frontmatter（技能会从目录消失）")
-    else:
-        fm = text.split("---", 2)[1]
-        if "name:" not in fm or "description:" not in fm:
-            errors.append("frontmatter 缺 name/description")
-        elif "sts2-caster" not in fm:
-            errors.append("frontmatter name 与目录名不一致")
-        if "lines.md" not in fm:
-            warnings.append("description 没提 references/lines.md")
+        errors.append(f"speech.md {size} 字节 > {MAX_BYTES}：人设文档膨胀")
+    if not text.startswith("# 实况"):
+        errors.append("speech.md 首行应是「# 实况「说话」OS」标题")
+    if "lines.md" not in text:
+        warnings.append("speech.md 没提 lines.md：写台词时找不到例句库")
     for sec in SECTIONS:
         if sec not in text:
             errors.append(f"缺少小节：{sec}")
     if not LINES.exists():
-        errors.append("缺少 references/lines.md")
+        errors.append("缺少 lines.md")
     else:
         lt = LINES.read_text(encoding="utf-8")
         count = len([l for l in lt.splitlines() if l.startswith("- ")])
@@ -135,7 +135,7 @@ def check_skill() -> int:
             if node not in lt:
                 errors.append(f"lines.md 缺节点：{node}")
 
-    quips = SKILL_DIR / "references" / "quips.md"
+    quips = QUIPS_PATH
     if not quips.exists():
         errors.append("缺少 references/quips.md（跑 python tools/caster_quips.py）")
     else:

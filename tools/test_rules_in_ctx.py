@@ -1,14 +1,14 @@
 # -*- coding: utf-8 -*-
 """硬闸注入自测：5 条规则必须随每份局面包进入模型输入。
 
-背景（2026-10-28 审计 run96–run106）：规则只写在 SKILL.md 里，靠 skill 一次性
+背景（2026-10-28 审计 run96–run106）：规则只写在决策手册里，靠一次性
 加载；会话被压缩 20 次后规则掉出上下文，run104 T2（21 点不挡）、run105 f7
 （30% 血进精英）都发生在规则不在输入里的回合。
 
 本测试守三件事：
   1. ctx 战斗 / 非战斗局面包都带 `rules`，内容与 tools/hard_rules.py 逐字一致；
-  2. 构建过程**不读任何 skill 文件**——skill 不重载、被压缩都不影响注入；
-  3. SKILL.md 与 hard_rules.py 没漂移（改阈值只改一边会 FAIL）。
+  2. 构建过程**不读任何知识库文件**——手册不重载、被压缩都不影响注入；
+  3. 决策手册（decision/knowledge/ironclad/OS.md）与 hard_rules.py 没漂移。
 
 用法：python tools/test_rules_in_ctx.py
 """
@@ -34,7 +34,8 @@ import hard_rules  # noqa: E402
 # 别把测试写进真实的 intent_memory.json
 ctx.MEM_PATH = os.path.join(tempfile.gettempdir(), "sts2_test_rules_mem.json")
 
-SKILL = os.path.join(ROOT, ".dsh", "skills", "sts2-ironclad-ironclad", "SKILL.md")
+SKILL = os.path.join(ROOT, "games", "slay-the-spire-2", "decision", "knowledge",
+                     "ironclad", "OS.md")
 
 ok = True
 
@@ -118,14 +119,14 @@ check("与战斗同源", dm.get("rules"), d.get("rules"))
 check("MAP 血量确实低（run105 场景）", (dm.get("run") or {}).get("hp"), 24)
 
 print()
-print("=== 3) 不依赖 skill 重载：构建时读 skill 文件就失败 ===")
+print("=== 3) 不依赖手册重载：构建时读知识库文件就失败 ===")
 _real_open = builtins.open
 
 
 def _guard(file, *a, **k):
     p = str(file).replace("\\", "/")
-    if "SKILL.md" in p or "/.dsh/" in p:
-        raise AssertionError(f"构建局面包时读了 skill 文件：{p}")
+    if "/knowledge/" in p or "OS.md" in p:
+        raise AssertionError(f"构建局面包时读了知识库文件：{p}")
     return _real_open(file, *a, **k)
 
 
@@ -138,7 +139,7 @@ except AssertionError as e:  # pragma: no cover
     ok3, err3, d2 = False, str(e), {}
 finally:
     builtins.open = _real_open
-check("构建期间零 skill 读取", ok3, True)
+check("构建期间零手册读取", ok3, True)
 if not ok3:
     print("  ", err3)
 check("仍带 5 条", len((d2 or {}).get("rules") or []), 5)
@@ -155,11 +156,11 @@ check("act._next_ctx 带 rules", len(c.get("rules") or []), 5)
 check("act 与 ctx 同源", c.get("rules"), d.get("rules"))
 
 print()
-print("=== 5) SKILL.md 与硬闸没漂移 ===")
+print("=== 5) 决策手册与硬闸没漂移 ===")
 text = open(SKILL, encoding="utf-8").read()
 bad = hard_rules.verify_skill(text)
-check("锚点全部还在 SKILL", bad, [])
-check("SKILL 标注了唯一来源", "games/slay-the-spire-2/decision/hard_rules.py" in text, True)
+check("锚点全部还在手册里", bad, [])
+check("手册标注了唯一来源", "games/slay-the-spire-2/decision/hard_rules.py" in text, True)
 
 print()
 print("=== 6) 唯一来源自检 ===")

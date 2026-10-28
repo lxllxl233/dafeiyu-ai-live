@@ -44,7 +44,7 @@ python tools/release_check.py --ci
 
 `tools/release_check.py --metadata-only` 可以只查这一组，不跑测试。
 
-> 注意：`.dsh/skills/sts2-ironclad-ironclad` 的 `v22` 是**决策技能版本**，不是产品
+> 注意：`games/slay-the-spire-2/decision/knowledge/sts2-ironclad-ironclad` 的 `v22` 是**决策技能版本**，不是产品
 > 版本；两者不要互相覆盖。
 
 ## 3. 实机验收（发布前手动）

@@ -1,5 +1,45 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- **界面决策也走 LLM**：新增 `games/slay-the-spire-2/decision/actions.py`——把
+  地图/事件/营火/商店/宝箱/奖励/选牌的可点项做成白名单菜单，模型只回
+  `{"say": [...], "act": "...", "i": N}`；禁用项、越界下标、买不起的货、
+  `save_and_quit` / `use_potion` 这类越界动作全部拒绝。`runner.py::_screen_llm`
+  在 `--mode llm` 下先问模型，带原因重问一次，仍不行才落本地兜底并记 `llm_fallback`。
+- **非战斗提示词**：`decision/prompts.py` 新增 `NONCOMBAT_PROMPT` / `noncombat_goal`，
+  写清事件不可逆代价、血闸路线、营火/商店/奖励取舍和 `say` 的数字纪律。
+- **决策手册与人设落位**：DSH 技能目录删除，内容拆进项目：
+  `decision/knowledge/ironclad/OS.md` + `references/`、`decision/knowledge/defect/OS.md`、
+  `persona/speech.md` / `persona/lines.md` / `persona/quips.md`、`docs/LIVE_OPS.md`；
+  新增两份目录说明和 `tests/test_knowledge_layout.py`（无 `.dsh` 路径、文件齐全、提示词限额）。
+- 测试：`tests/test_actions.py`（菜单/校验/执行）、`tests/test_autoplay.py` 增补
+  「llm 先问模型 / 拒绝越界动作 / 重问一次 / 规划失败兜底 / 过场不过模型」5 条。
+- **B 站直播间互动**：监听从「只收礼物」扩到进入 / 关注 / 分享 / 点赞 / 弹幕 /
+  礼物 / 醒目留言 / 上舰（含 `INTERACT_WORD_V2` 的 base64 protobuf 解码），
+  写 `logs/bilibili_events.jsonl`，**只保留最近 120 条**（超 200KB 自动压缩）。
+  控制台新增「直播间」页：类型筛选、最近一条、分类计数；右侧输入框可直接发弹幕
+  （`POST /api/bili/send` → `live.bilibili.send_danmu`，需要带 `bili_jct` 的 Cookie）。
+- **Token 账单**：`AutoplayHost.add_usage` 增加 `note`/`step`，`token_usage()` 汇总
+  `logs/autoplay.jsonl` 的 `llm_usage`；控制台「Agent 流程 → Token 花费」显示
+  合计 / 输入输出 / 调用次数 / 按类型 / 最近 20 步每步 token（含跨进程累计）。
+  战斗回合记 `战斗 f7 t3`，界面决策记 `地图 choose_map_node 2` 这类说明。
+- **跨局上下文隔离**：新增 `tests/test_context_isolation.py`，证明每次规划只发
+  system + 当前 `goal/feedback/context`，换局后不带上一局的 run_id、楼层、牌组、
+  台词或聊天历史。
+
+### Fixed
+
+- **营火卡死（run-0110）**：`_rest` 以前只按血量挑标题、不看 `is_enabled`，满血 1/1 且牌
+  全升级时每轮都点被禁用的「锻造」，被 409 打回后原样重放 1628 次。现在只在可用项里选，
+  全禁用时走 `proceed` 或报 `REST all disabled`。
+- **主循环原地打转**：新增 `_StallGuard`（同画面同失败连续 3 次即收手），失败键用
+  `_error_code()` 归一异常串；旧的 `("CHEST","REST no options",…)` 字面量判断不再生效。
+- `tools/check_skill.py` / `check_caster.py` / `test_rules_in_ctx.py` /
+  `test_docs_consistency.py` 改指新位置，并去掉已不存在的 YAML frontmatter 检查。
+
 ## [2.2.0] - 2026-10-28
 
 ### Added

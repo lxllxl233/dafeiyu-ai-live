@@ -55,7 +55,7 @@
       "strategy_rules": 226
     },
     "docs": ["docs/GAME_DB.md", "docs/A10_IRONCLAD.md", "docs/COMBAT_TURN.md", "docs/LESSONS.md"],
-    "skills": ["game-skill", ".dsh/skills/sts2-ironclad-ironclad", ".dsh/skills/sts2-caster"],
+    "skills": ["game-skill", "games/slay-the-spire-2/decision/knowledge/sts2-ironclad-ironclad", "games/slay-the-spire-2/decision/knowledge/sts2-caster"],
     "rebuild": ["python tools/build_cards_v3.py", "python tools/build_enemies_v3.py", "python tools/build_memes.py", "python tools/build_strategy.py"]
   }
 }

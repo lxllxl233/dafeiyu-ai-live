@@ -49,7 +49,7 @@ python main.py agent graph          # Mermaid
 ```
 
 控制台「Agent 流程」会显示最近运行；真实局面默认只 dry-run，确认后再加 `--execute`。
-外部 DSH Agent 可用 `--plan plan.json` 注入计划，继续复用 `.dsh/skills` 的决策。
+外部 DSH Agent 可用 `--plan plan.json` 注入计划，继续复用 `games/slay-the-spire-2/decision/knowledge` 的决策。
 
 桌面桌宠：
 
@@ -94,15 +94,17 @@ python main.py game state   # 走游戏注册表读状态
 
 ```powershell
 python main.py play              # 启动 + 自动跑；Ctrl+C 停
-python main.py play --mode llm   # 战斗回合交给 LLM（需 API Key）
+python main.py play --mode llm   # 所有玩家决策交给 LLM（需 API Key）
 python main.py play --pace voice # 慢速等语音（默认）
 python main.py play --pace normal # 旧版快节奏
 python main.py play --stop       # 另一个进程里停手
 ```
 
 右键「让她玩」二级菜单、管理端「Agent 流程」和 CLI 是同一套控制。默认 **本地算账 +
-慢速播报**：每一步至少留 2 秒，台词更长时会等估算播完再动。LLM 模式只把战斗回合交给
-LangGraph，地图/奖励/事件仍本地处理。自动玩默认自动开 OBS 录像（OBS 没开会拉起），
+慢速播报**：每一步至少留 2 秒，台词更长时会等估算播完再动。LLM 模式把所有玩家决策交给
+模型：战斗牌序走 `decision/act.py`，地图/事件/营火/商店/宝箱/奖励/选牌走
+`decision/actions.py` 的白名单菜单；模型超时或输出不可执行才本地兜底（记
+`llm_fallback`），主菜单/角色选择/确认框仍是本地管道。自动玩默认自动开 OBS 录像（OBS 没开会拉起），
 停止时先把录像收进 `recordings/<游戏>/run-NNNN/run.mp4`，并在同目录写
 `events.jsonl` / `chapters.md` / `timeline.json`（画面、楼层、战斗、台词和对应
 时间段，方便混剪）；控制台「Agent 流程」会显示本轮实际 Token（输入/输出/合计）

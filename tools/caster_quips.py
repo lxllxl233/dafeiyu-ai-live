@@ -14,7 +14,7 @@ from pathlib import Path
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 DB = Path("db/sts2.db")
-OUT = Path(".dsh/skills/sts2-caster/references/quips.md")
+OUT = Path("games/slay-the-spire-2/persona/quips.md")
 
 HEADER = """# 招牌稿 · 大肥鱼口头禅
 

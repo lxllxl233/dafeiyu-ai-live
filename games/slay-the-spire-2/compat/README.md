@@ -58,6 +58,6 @@ CLI 的 `--thought/--meme` 会把台词推给 overlay；新链路也可以用
 
 ## 边界
 
-- 出牌/决策仍由兼容层 CLI + 决策 OS（`.dsh/skills/sts2-ironclad-ironclad`）负责。
+- 出牌/决策仍由兼容层 CLI + 决策 OS（`games/slay-the-spire-2/decision/knowledge/sts2-ironclad-ironclad`）负责。
 - 适配器不会替你点「继续」，也不改游戏文件。
 - mod 是第三方二进制，升级游戏后需要重新验证（见 `game.json` 的 `compat.checks`）。

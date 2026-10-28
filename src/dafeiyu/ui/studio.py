@@ -24,6 +24,7 @@ from ..voice import build_router
 
 _GAME_CACHE_TTL = 6.0
 _VOICE_CACHE_TTL = 5.0
+_ROOM_MAX = 120
 
 
 class StudioRuntime:
@@ -38,6 +39,8 @@ class StudioRuntime:
         self._lock = threading.Lock()
         self._games_cache: tuple[float, list[dict]] = (0.0, [])
         self._voice_cache: tuple[float, dict] = (0.0, {})
+        self._room_cache: tuple[tuple, list[dict]] = ((0, 0), [])
+        self._bili_sent: list[dict] = []
         self._said = 0
         self._pushed = 0
         self._last: dict = {}
@@ -119,7 +122,7 @@ class StudioRuntime:
             last = dict(self._last)
             voice_state = dict(self._voice_state)
         from ..agent.trace import agent_summary
-        from ..agent.play import status as play_status
+        from ..agent.play import status as play_status, token_usage
 
         return {
             "ok": True,
@@ -140,7 +143,7 @@ class StudioRuntime:
                 "usage": overlay.get("usage", {}),
             },
             "studio": {"said": said, "pushed": pushed, "last": last, "voice": voice_state},
-            "agent": agent_summary(),
+            "agent": {**agent_summary(), "tokens": token_usage(40)},
             "play": play_status(),
             "bilibili": self._bilibili_status(),
             "samples": list(card.openers[:2]) + list(card.quips[:4]),
@@ -160,13 +163,67 @@ class StudioRuntime:
         except OSError:
             return 0
 
-    @staticmethod
-    def _bilibili_status() -> dict:
+    def _room_events(self) -> list[dict]:
+        """最近 120 条 B 站互动；按文件 mtime/size 缓存，3 秒轮询不重复解析。"""
+        log_path = paths.LOGS / "bilibili_events.jsonl"
+        try:
+            st = log_path.stat()
+            sig = (st.st_mtime_ns, st.st_size)
+        except OSError:
+            return []
+        if sig == self._room_cache[0]:
+            return [dict(x) for x in self._room_cache[1]]
+        from ..live.bilibili import RoomLog
+
+        rows = RoomLog(log_path).recent(_ROOM_MAX)
+        self._room_cache = (sig, rows)
+        return [dict(x) for x in rows]
+
+    def _bilibili_status(self) -> dict:
+        """桌宠写的 bilibili.json（连接状态）+ 本地最近 120 条互动。"""
         try:
             raw = json.loads((paths.LOGS / "bilibili.json").read_text(encoding="utf-8"))
-            return raw if isinstance(raw, dict) else {}
         except (OSError, ValueError):
-            return {}
+            raw = {}
+        if not isinstance(raw, dict):
+            raw = {}
+        room = int(self.cfg.bilibili_room_id or 0)
+        cookie = str(self.cfg.bilibili_cookie or "")
+        events = self._room_events()
+        with self._lock:
+            sent = [dict(x) for x in self._bili_sent]
+        merged = (events + sent)[-_ROOM_MAX:]
+        raw.update({
+            "events": merged,
+            "seq": merged[-1].get("at") if merged else 0,
+            "room_id": room or int(raw.get("room_id") or 0),
+            "enabled": bool(self.cfg.bilibili_enabled),
+            "cookie_set": bool(cookie),
+            "can_send": bool(room and "bili_jct=" in cookie),
+            "max": _ROOM_MAX,
+        })
+        return raw
+
+    def send_to_room(self, text: str) -> dict:
+        """控制台发一条弹幕进直播间；需要带 bili_jct 的登录 Cookie。"""
+        self._sync_config()
+        clean = " ".join(str(text or "").split())
+        if not clean:
+            raise ValueError("弹幕不能为空")
+        room = int(self.cfg.bilibili_room_id or 0)
+        if room <= 0:
+            raise ValueError("先在「基础配置」填 B 站直播间号")
+        from ..live.bilibili import send_danmu
+
+        send_danmu(room, clean, self.cfg.bilibili_cookie)
+        event = {"at": time.time(), "kind": "self", "label": "本机发送",
+                 "user": "大肥鱼", "uid": 0, "text": clean,
+                 "gift": "", "count": 0, "coin": 0, "room_id": room,
+                 "ts": int(time.time()), "local": True}
+        with self._lock:
+            self._bili_sent.append(event)
+            self._bili_sent = self._bili_sent[-40:]
+        return {"ok": True, "text": clean, "event": event}
 
     def _sync_config(self) -> None:
         """桌宠右键菜单也会写 config.json；控制台下一次轮询要跟上。"""

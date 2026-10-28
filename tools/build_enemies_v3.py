@@ -13,7 +13,7 @@ import json
 import sqlite3
 import sys
 
-OUT = ".dsh/skills/sts2-ironclad-ironclad/references/enemies.md"
+OUT = "games/slay-the-spire-2/decision/knowledge/ironclad/references/enemies.md"
 
 NAME_FIX = {
     "TEST_SUBJECT": "实验体",

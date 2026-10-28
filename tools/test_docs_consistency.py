@@ -6,11 +6,12 @@
 （tools/test_all.py 会自动带上它。）
 
 为什么要有这个文件：run96–run105 的复盘里出现过「同归于尽」「五连败」这类
-和账本矛盾的结论，版本串也漂过（SKILL v21 / NEXT_PROMPT v20 / README v20），
-阈值抄了三份（NEXT_PROMPT 的 HP<35% 与 SKILL 的 <60% 冲突）。
+和账本矛盾的结论，版本串也漂过（决策手册 v21 / NEXT_PROMPT v20 / README v20），
+阈值抄了三份（NEXT_PROMPT 的 HP<35% 与手册的 <60% 冲突）。
 这些都是「文字写得比证据多」。本测试把三类漂移钉死：
 
-  1. 版本串只有 v22 一个值（SKILL.md ↔ skill README ↔ NEXT_PROMPT ↔ README.md）；
+  1. 版本串只有 v22 一个值（decision/knowledge/ironclad/OS.md ↔ 同目录 README ↔
+     NEXT_PROMPT ↔ README.md）；
   2. 血闸数字只认 games/slay-the-spire-2/decision/hard_rules.py（别处出现 35% 这类旧值就 FAIL）；
   3. run96–run106 每局都有复盘文件，且不再出现已被账本推翻的结论。
 """
@@ -20,7 +21,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(".").resolve()
-SKILL_DIR = ROOT / ".dsh" / "skills" / "sts2-ironclad-ironclad"
+SKILL_DIR = ROOT / "games" / "slay-the-spire-2" / "decision" / "knowledge" / "ironclad"
 
 fails = []
 passes = 0
@@ -47,19 +48,19 @@ def one(pattern: str, text: str) -> str | None:
 
 
 def main() -> int:
-    skill_md = read(SKILL_DIR / "SKILL.md")
+    skill_md = read(SKILL_DIR / "OS.md")
     skill_readme = read(SKILL_DIR / "README.md")
     next_prompt = read(ROOT / "games" / "slay-the-spire-2" / "game-skill" / "NEXT_PROMPT.txt")
     root_readme = read(ROOT / "README.md")
     lessons = read(ROOT / "docs" / "LESSONS.md")
 
     print("=== 1) 版本串：四处必须是同一个 vN ===")
-    skill_v = one(r"决策OS v(\d+)", skill_md)
+    skill_v = one(r"决策\s*OS v(\d+)", skill_md)
     skill_readme_v = one(r"版本：\*\*v(\d+)\*\*", skill_readme)
     next_v = one(r"决策 OS v(\d+)", next_prompt)
-    root_v = one(r"sts2-ironclad-ironclad`，v(\d+)", root_readme)
-    check("SKILL.md 版本唯一", skill_v is not None, True)
-    check("skill README 版本唯一", skill_readme_v is not None, True)
+    root_v = one(r"knowledge/ironclad`，v(\d+)", root_readme)
+    check("决策手册版本唯一", skill_v is not None, True)
+    check("knowledge README 版本唯一", skill_readme_v is not None, True)
     check("NEXT_PROMPT 版本唯一", next_v is not None, True)
     check("README.md 版本唯一", root_v is not None, True)
     versions = {skill_v, skill_readme_v, next_v, root_v}

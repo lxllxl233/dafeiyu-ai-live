@@ -21,7 +21,7 @@ game-skill/
 ```
 
 - 兼容层本体仍在 `../compat/`（客户端 `sts2.py` + mod DLL），语料库在 `../corpus/`；
-- 游戏专属梗、台词、路线规则放本目录或 `.dsh/skills/`，通用梗放
+- 游戏专属梗、台词、路线规则放本目录或 `games/slay-the-spire-2/decision/knowledge/`，通用梗放
   `persona/memes/`。
 
 ## 常用命令

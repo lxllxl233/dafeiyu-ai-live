@@ -79,7 +79,7 @@ python tools/audit_guards.py --last 120
 - `tools/sim.py`：`parse_card` 输出 `ltx`（引擎实时牌面）
 - `tools/test_act_guards.py`（新）、`tools/audit_guards.py`（新）
 - `tools/test_ctx_act.py` / `tools/test_draw_boundary.py`：旧用例补 `allow_*`（它们本身就是"换血/留费"场景）
-- `.dsh/skills/sts2-ironclad-ironclad/SKILL.md`：协议里写明护栏、`hand_n`、`stale_ctx`
+- `games/slay-the-spire-2/decision/knowledge/ironclad/OS.md`：协议里写明护栏、`hand_n`、`stale_ctx`
 
 ## 已知限制
 

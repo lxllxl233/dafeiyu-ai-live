@@ -47,7 +47,7 @@ message / retryable / data`）。图入口用 `as_action_result()` 归一化，�
 
 | 模式 | 命令 | 适用 |
 |---|---|---|
-| 外部 plan | `python main.py agent run --plan tmp_plan.json` | DSH Agent 继续用 `.dsh/skills` 决策；图只负责验算/执行/轨迹 |
+| 外部 plan | `python main.py agent run --plan tmp_plan.json` | DSH Agent 继续用 `games/slay-the-spire-2/decision/knowledge` 决策；图只负责验算/执行/轨迹 |
 | 内置 LLM | `python main.py agent run` | 想对比「模型自己打」和「技能 + 工具」的差距 |
 | 离线演示 | `python main.py agent run --demo` | 不碰游戏、不调 API，验证图本身 |
 
@@ -124,17 +124,25 @@ python main.py agent graph
 
 `python main.py play` / 右键「让她玩 ▸ 本地算账」先走 `src/dafeiyu/agent/play.py`
 这个 facade，再转给游戏包的 `autoplay/runner.py`（当前是
-`games/slay-the-spire-2/`）。它是一个**整局循环**，不是每个动作都过 LangGraph。
-原因是整局包含大量不需要 LLM 的界面切换（地图、奖励、营火、商店），每一步都进图
-会慢且费 token。状态/停止/录像/说话节奏由核心 `src/dafeiyu/agent/host.py`
-提供，游戏包只保留界面分派和决策。
+`games/slay-the-spire-2/`）。它是一个**整局循环**：战斗回合过 LangGraph，
+界面点击直接问一次模型（`_screen_llm`），不走图——看图只为一次点击没有意义。
+状态/停止/录像/说话节奏由核心 `src/dafeiyu/agent/host.py` 提供，
+游戏包只保留界面分派和决策。
 
-右键「让她玩 ▸ LLM 规划」只把**战斗回合**交给图：游戏包里的 `_combat_llm` 调
-`run_turn(..., tools=Sts2Tools, planner=LLMPlanner, dry_run=False)`，所以战斗决策、验算、
-执行和轨迹都能在「Agent 流程」看到；地图/奖励等仍由本地循环处理。默认用
-`deepseek-chat`（非推理模型），避免长局面把 reasoning 预算吃完、content 为空。
+右键「让她玩 ▸ LLM 规划」把**每个玩家决策**都交给模型，分两条路：
+
+- **战斗**：`_combat_llm` 调 `run_turn(..., tools=Sts2Tools, planner=LLMPlanner,
+  dry_run=False)`，所以战斗决策、验算、执行和轨迹都能在「Agent 流程」看到；
+- **界面**（`MAP/EVENT/REST/SHOP/CHEST/REWARD/CARD_SELECTION`）：`_screen_llm` 用
+  `decision/actions.py` 的 `available()` 生成白名单菜单，`ctx.build()` 出局面包，
+  模型只回 `{"say": [...], "act": "...", "i": N}`；`actions.check()` 对不上就带原因
+  重问一次，仍不行才落本地兜底（`llm_fallback`）。
+  `MAIN_MENU / CHARACTER_SELECT / MODAL` 是过场管道，始终本地。
+
+默认用 `deepseek-chat`（非推理模型），避免长局面把 reasoning 预算吃完、content 为空。
 游戏 System Prompt 不再放在核心：`LLMPlanner` 通过构造参数接收，来源是游戏插件的
-`prompt("decision")`（STS2 在 `games/slay-the-spire-2/decision/prompts.py`）。
+`prompt("decision")`；STS2 的战斗提示是 `decision/prompts.py::SYSTEM_PROMPT`，
+界面提示是 `NONCOMBAT_PROMPT`，完整手册在 `decision/knowledge/ironclad/OS.md`。
 
 两者共用同一套工具边界：
 
@@ -145,14 +153,15 @@ python main.py agent graph
 | 轨迹 | `logs/autoplay.jsonl` | `logs/agent_trace.jsonl` |
 | 控制 | `logs/autoplay.stop` | `--execute` 显式开关 |
 
-如果要把整局自动玩法的战斗段再升级，最小改法是改 `_combat_llm` 里的 goal / 模型，
-或把 `LLMPlanner` 换成外部计划；保留 `run_turn` 的观察/验算/执行和 trace。先不要把整局
-所有界面都塞进图里。
+如果要把战斗段再升级，最小改法是改 `_combat_llm` 里的 goal / 模型，
+或把 `LLMPlanner` 换成外部计划；保留 `run_turn` 的观察/验算/执行和 trace。
+界面决策不要再塞进图里：一屏一次点击用 `_screen_llm` 直连更便宜，也更容易做
+「动作白名单 + 一次重问 + 本地兜底」这三件事。
 
 ## 7. 和 DeepSeek Harness 的分工
 
-- **DSH Harness**：外层 Agent 运行时。负责加载 `.dsh/skills`、理解人设、决定
-  「这回合想做什么」，也可以直接调用现有 CLI。
+- **DSH Harness**：外层 Agent 运行时。负责读 `games/slay-the-spire-2/decision/knowledge`
+  与 `persona/`、理解人设、决定「这回合想做什么」，也可以直接调用现有 CLI。
 - **LangGraph**：内层一回合的状态机。负责把「观察 → 规划 → 验算 → 执行」拆开、
   重试、记录，让过程可观察。
 - 两者不是二选一：`--plan` 模式就是 DSH 出计划、LangGraph 跑验算/执行/轨迹。

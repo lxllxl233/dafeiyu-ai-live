@@ -37,11 +37,11 @@
 
 ## 退役条件
 
-当前版本（2.2）**不删除 shim**，因为 `.dsh/skills`、`docs/` 和旧 runbook 仍引用
+当前版本（2.2）**不删除 shim**，因为 `games/slay-the-spire-2/decision/knowledge`、`docs/` 和旧 runbook 仍引用
 `python tools/ctx.py` / `tools/act.py`。退役必须同时满足：
 
 1. 至少经过一个发布周期（2.2 → 2.3）；
-2. `.dsh/skills/`、`docs/`、`games/*/game-skill/` 不再出现旧入口；
+2. `games/slay-the-spire-2/decision/knowledge/`、`docs/`、`games/*/game-skill/` 不再出现旧入口；
 3. `tools/test_engine_migration.py` 的 shim 断言能直接删掉，而不是改成跳过；
 4. `tools/release_check.py` 与 CI 全绿。
 

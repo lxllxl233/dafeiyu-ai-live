@@ -10,7 +10,7 @@ import re
 import sqlite3
 import sys
 
-OUT = ".dsh/skills/sts2-ironclad-ironclad/references/cards.md"
+OUT = "games/slay-the-spire-2/decision/knowledge/ironclad/references/cards.md"
 
 RE_TPL = re.compile(r"\{[^{}]*\}")
 RE_UP = re.compile(r"\{IfUpgraded:show:([^|{}]*)\|([^{}]*)\}")
