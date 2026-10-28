@@ -112,6 +112,45 @@ class GameAdapter:
 - `GameState.digest()` 决定去重：只有字段变化才发事件。
 - 适配器挂掉 = 游戏离线，不是直播故障；`LiveSession.status()` 会带上错误。
 
+### 游戏插件
+
+`game.json` 的 `entry` 指向插件类（P1 起是 `plugin.py:Sts2Plugin`），
+`src/dafeiyu/games/registry.py` 用合成包名加载带连字符的游戏目录，因此游戏包内部
+可以正常使用相对 import。插件实现 `dafeiyu.games.contracts.GamePlugin`：
+
+| 能力 | 契约 | 当前用途 |
+|---|---|---|
+| 适配器 | `adapter(**kwargs)` | 只读状态，仍复用原 adapter |
+| 决策工具 | `tools()` → `GameTools` | 读局面 / 验算 / 执行；统一返回 `ActionResult` |
+| 自动玩 | `runner()` → `AutoplayRunner` | `start` / `stop` / `status` |
+| 提示词 | `prompt("decision")` | 交给 `LLMPlanner`，核心不内置游戏规则 |
+
+核心 `agent/` 只保留跨游戏的编排、协议和演示工具；`Sts2Tools`、整局循环和
+游戏 System Prompt 都在 `games/slay-the-spire-2/`。`agent/play.py` 是 facade：
+按配置/状态文件找插件，创建 `AutoplayHost` 并通过 `plugin.runner(host)` 注入，
+再转发 `start_autoplay / stop_autoplay / status`。
+
+工具返回值统一走 `dafeiyu.games.contracts.ActionResult`（`ok / action / code /
+message / retryable / data`）。迁移期 LangGraph 入口仍接受旧 `{ok, err}` dict，
+通过 `as_action_result()` 归一化；旧调用方也可以用 `ActionResult.to_legacy()`
+拿回摊平的 dict。这样新插件不需要复制一套错误字段约定，旧脚本也不会立刻坏。
+
+STS2 的决策引擎也已整体迁进游戏包：`ctx.py` / `act.py` / `advisor.py` /
+`sim.py` / `gates.py` / `dps.py` / `path.py` / `noncombat.py` / `mech.py` /
+`decision_log.py`，以及它们依赖的 `hard_rules.py` / `lesson_index.py` / `perf.py`，
+都在 `games/slay-the-spire-2/decision/`。`tools/` 下同名文件只是兼容 shim，
+用旧模块名加载同一份实现；老命令（`python tools/ctx.py` 等）和旧 skill 不受影响。
+
+`games/toy-duel/` 是第二个完整插件，也是跨游戏门禁的活样例：`adapter.py` 只读
+`logs/toy_duel_state.json`，`engine.py` 的 `ToyTools` 返回 `ActionResult`，
+`runner.py` 用同一个 `AutoplayHost` 自动玩 12 步；不启动 Steam、不读 STS2 状态。
+它证明 `GameRegistry` / facade / host / 工具协议没有绑定《杀戮尖塔 2》。
+
+`games/catalog.py` 负责跨游戏的“身份”查询：默认游戏、别名、显示名和旧环境变量
+前缀都从 `games/registry.json` + `game.json` 读取。`LiveConfig.game` 为空时自动
+选默认游戏；录像目录、`replay --game` 和 `DAFEIYU_*` / 旧 `<ALIAS>_*` 环境变量
+也走同一个解析，核心不再写死游戏 id 或显示名。
+
 ### 启动游戏
 
 `game.json` 的 `launch` 是唯一启动配置，`src/dafeiyu/games/launch.py` 负责执行：
@@ -127,11 +166,16 @@ class GameAdapter:
 
 ### 让她玩
 
-`src/dafeiyu/agent/play.py` 是整局自动循环：先 `launch_game`，再按 `screen` 分派战斗/奖励/
-地图/营火/事件/商店/宝箱。战斗读 `tools/ctx.py` 同源局面：
+`src/dafeiyu/agent/play.py` 是只负责转发的 facade；真正整局循环在游戏包的
+`autoplay/runner.py`。STS2 先 `launch_game`，再按 `screen` 分派战斗/奖励/地图/
+营火/事件/商店/宝箱；`toy-duel` 不启动外部程序，只在自己的状态文件上跑
+`observe → plan → execute`。通用生命周期由 `src/dafeiyu/agent/host.py` 的
+`AutoplayHost` 提供：状态文件、停止文件、OBS 录像、token 累计、说话等待和步骤日志；
+游戏 runner 只调用 host，不再关心这些 I/O。
+战斗读 `games/slay-the-spire-2/decision/ctx.py` 同源局面：
 
-- `local`：`tools/advisor.py` 本地算伤害/格挡/斩杀，走 `sts2 batch`；
-- `llm`：战斗回合走 LangGraph `run_turn` + `LLMPlanner` + `tools/act.py`，默认模型
+- `local`：`decision/advisor.py` 本地算伤害/格挡/斩杀，走 `sts2 batch`；
+- `llm`：战斗回合走 LangGraph `run_turn` + `LLMPlanner` + `decision/act.py`，默认模型
   `deepseek-chat`，非战斗仍本地处理；规划/验算失败本回合本地兜底，执行失败才停手。
 - `GAME_OVER`：回主菜单再开一局；未知界面/长时间没有进展会停手并写 `error`。
 
@@ -196,10 +240,10 @@ observe ──► plan ──► validate ──► execute ──► reflect
 
 | 节点 | 实现 | 边界 |
 |---|---|---|
-| `observe` | `Sts2Tools.observe` → `tools/ctx.py` | 只读局面 |
+| `observe` | 游戏插件的 `tools().observe()` → `games/slay-the-spire-2/decision/ctx.py` | 只读局面 |
 | `plan` | `ProvidedPlanner` / `LLMPlanner` | 输出 `{say, seq}`，不直接操作游戏 |
-| `validate` | `tools/act.py --dry` | 费用/目标/斩杀/硬护栏 |
-| `execute` | `tools/act.py`（默认 dry-run） | 唯一出牌路径 |
+| `validate` | `games/slay-the-spire-2/decision/act.py --dry` | 费用/目标/斩杀/硬护栏 |
+| `execute` | `games/slay-the-spire-2/decision/act.py`（默认 dry-run） | 唯一出牌路径 |
 | `reflect` | `TraceRecorder` | 写轨迹，状态回给下一轮 |
 
 - `src/dafeiyu/agent/` 只做编排、重试和轨迹；不复制 `ctx.py` / `act.py` 的逻辑。
@@ -215,9 +259,10 @@ observe ──► plan ──► validate ──► execute ──► reflect
 | 换人设/语气/禁语/招牌 | `persona/<id>/card.json` |
 | 换开场/收尾/口头禅 | 同上 `openers` / `closers` / `quips` |
 | 换动物语音色 | `voice/animal/scale.json` |
-| 换曼波参考音 | `voice/mambo/ref.json` 或 `STS2_TTS_REF` |
+| 换曼波参考音 | `voice/mambo/ref.json` 或 `DAFEIYU_TTS_REF` |
 | 换默认语音/音量/间奏 | `config.json` 或 `DAFEIYU_*` 环境变量 |
-| 加游戏 | `games/<id>/` + `game-skill/adapter.py` + `games/registry.json` |
+| 换默认游戏/别名 | `games/registry.json` + `game.json` 的 `aliases` |
+| 加游戏 | `games/<id>/` + `plugin.py:Plugin` + `games/registry.json`（最小完整示例：`games/toy-duel/`） |
 | 加 UI 面板 | `ui/studio/index.html` + `/api/studio` 字段 |
 | 换 OBS 场景/采集源名 | `games/<id>/game-skill/obs.json` |
 | 换桌宠精灵 | `src/dafeiyu/ui/assets/pet/`（正面/侧面/背面） |
@@ -233,17 +278,25 @@ observe ──► plan ──► validate ──► execute ──► reflect
   - 游戏：注册表、manifest 路径、离线适配器、语料库行数
   - 会话：推送 payload、事件顺序、状态合并
 - `tools/test_*.py`：v1 的决策/渲染/overlay 回归，继续保留；`tools/` 下的同名 shim
-  保证 `import streamer` / `import sts2` 不变。
+  保证 `import ctx` / `import act` / `import sts2` 不变，`tests/test_engine_migration.py`
+  钉住它们确实加载 `games/slay-the-spire-2/decision/` 的实现。
 - `python main.py doctor`：环境层自检（人设/UI/两种语音/overlay/语料/游戏）。
+- `tools/release_check.py`：发布门禁（版本串 + `tests/` + 关键 tools + 编译）；
+  `--ci` 给 GitHub Actions，`--full` 加 `tools/test_all.py`。实机验收步骤在
+  `docs/RELEASE.md`，不在 CI 里伪造游戏/OBS/直播间。
 
 ## 9. 兼容与迁移
 
-- 兼容 shim 全部在 `tools/`（`sts2.py` / `streamer.py` / `obsctl.py` / `caster_state.py` /
-  `instance_lock.py`），用 `sys.modules[__name__] = 真模块`；根目录不再有代码文件。
+- 兼容 shim 全部在 `tools/`（`sts2.py` / `ctx.py` / `act.py` / `advisor.py` / `sim.py` /
+  `streamer.py` / `obsctl.py` / `caster_state.py` / `instance_lock.py` 等），用
+  `sys.modules[__name__] = 真模块` 或 `_game_impl.load()` 加载同一份实现；根目录不再有代码文件。
+  2.2 不删 shim：`.dsh/skills`、docs 和旧 runbook 仍引用旧入口；映射和退役条件见
+  `tools/README.md`，不要在 `src/dafeiyu/` 里 import shim。
 - `db/`、`tools/data/` 是兼容链接（`python main.py setup` 创建），真实内容在
   `games/slay-the-spire-2/corpus/`。这样 v1 里几十个 `"db/sts2.db"` 相对路径不用逐个改。
-- 迁移只搬文件、不改业务逻辑；唯一的行为修复是桌面窗 `push` / `start_talking` 对
-  `presence` 缺省值的容错（单测用 `__new__` 构造窗口时没有该属性）。
+- 迁移只搬文件、不改业务逻辑；决策引擎（P6）迁移时只把路径基准从仓库根改为
+  游戏包 `corpus/`，算法、阈值和动作协议未改。桌面窗 `push` / `start_talking` 对
+  `presence` 缺省值的容错仍是唯一的行为修复（单测用 `__new__` 构造窗口时没有该属性）。
 
 ## 10. 已知取舍
 

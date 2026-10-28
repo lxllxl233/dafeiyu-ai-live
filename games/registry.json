@@ -12,6 +12,16 @@
       "notes": "铁甲战士 A10 实况；mod 本地 HTTP :8080 只读状态，出牌走兼容层 CLI。"
     },
     {
+      "id": "toy-duel",
+      "name": "玩具决斗",
+      "platform": "内置",
+      "status": "ready",
+      "pack": "toy-duel",
+      "adapter": "adapter.py:ToyAdapter",
+      "tags": ["内置", "验收", "无需游戏", "第二游戏"],
+      "notes": "完全离线的可控小游戏，用来验证 observe/control/autoplay 的非 STS2 全链路；不启动 Steam，不依赖 OBS。"
+    },
+    {
       "id": "demo",
       "name": "演示信号源",
       "platform": "内置",

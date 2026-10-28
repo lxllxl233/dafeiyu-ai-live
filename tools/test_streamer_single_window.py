@@ -39,7 +39,7 @@ def ok(cond, what):
 
 
 def windows():
-    """[(pid, rect)]：所有可见的 StS2Streamer* 窗口。"""
+    """[(pid, rect)]：所有可见的 DafeiyuStreamer* 窗口。"""
     found = []
 
     @ctypes.WINFUNCTYPE(w.BOOL, w.HWND, w.LPARAM)
@@ -48,7 +48,7 @@ def windows():
             return True
         b = ctypes.create_unicode_buffer(128)
         u32.GetClassNameW(h, b, 128)
-        if b.value.startswith("StS2Streamer"):
+        if b.value.startswith("DafeiyuStreamer"):
             pid = w.DWORD()
             u32.GetWindowThreadProcessId(h, ctypes.byref(pid))
             r = w.RECT()

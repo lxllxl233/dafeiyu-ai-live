@@ -11,7 +11,7 @@
 这些都是「文字写得比证据多」。本测试把三类漂移钉死：
 
   1. 版本串只有 v22 一个值（SKILL.md ↔ skill README ↔ NEXT_PROMPT ↔ README.md）；
-  2. 血闸数字只认 tools/hard_rules.py（别处出现 35% 这类旧值就 FAIL）；
+  2. 血闸数字只认 games/slay-the-spire-2/decision/hard_rules.py（别处出现 35% 这类旧值就 FAIL）；
   3. run96–run106 每局都有复盘文件，且不再出现已被账本推翻的结论。
 """
 import json
@@ -49,7 +49,7 @@ def one(pattern: str, text: str) -> str | None:
 def main() -> int:
     skill_md = read(SKILL_DIR / "SKILL.md")
     skill_readme = read(SKILL_DIR / "README.md")
-    next_prompt = read(ROOT / "NEXT_PROMPT.txt")
+    next_prompt = read(ROOT / "games" / "slay-the-spire-2" / "game-skill" / "NEXT_PROMPT.txt")
     root_readme = read(ROOT / "README.md")
     lessons = read(ROOT / "docs" / "LESSONS.md")
 
@@ -66,7 +66,7 @@ def main() -> int:
     check("四处版本一致", len(versions), 1)
 
     print()
-    print("=== 2) 血闸数字只认 tools/hard_rules.py ===")
+    print("=== 2) 血闸数字只认 decision/hard_rules.py ===")
     sys.path.insert(0, str(ROOT / "tools"))
     import hard_rules  # noqa: E402
 
@@ -85,8 +85,8 @@ def main() -> int:
 
     print()
     print("=== 3) 阈值不复制：SKILL/NEXT_PROMPT 必须指向 hard_rules ===")
-    check("NEXT_PROMPT 指向 hard_rules", "tools/hard_rules.py" in next_prompt, True)
-    check("SKILL.md 指向 hard_rules", "tools/hard_rules.py" in skill_md, True)
+    check("NEXT_PROMPT 指向 hard_rules", "games/slay-the-spire-2/decision/hard_rules.py" in next_prompt, True)
+    check("SKILL.md 指向 hard_rules", "games/slay-the-spire-2/decision/hard_rules.py" in skill_md, True)
     check("skill README 提到硬闸单一源", "hard_rules" in skill_readme, True)
     check("NEXT_PROMPT 声明不另抄数字", "不要在这份 prompt" in next_prompt, True)
 

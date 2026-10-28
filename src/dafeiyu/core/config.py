@@ -5,10 +5,10 @@
     DAFEIYU_VOICE=animal        语音层首选（mambo / animal / off）
     DAFEIYU_VOLUME=0.8          音量
     DAFEIYU_PERSONA=dafeiyu     性格层人设卡
-    DAFEIYU_GAME=slay-the-spire-2
+    DAFEIYU_GAME=<game-id>      游戏包 id；空 = 用目录里的默认游戏
     DAFEIYU_OVERLAY=http://127.0.0.1:8730
     DAFEIYU_TTS_URL=http://127.0.0.1:9880
-    STS2_TTS_*                  兼容旧工程的环境变量
+    <ALIAS>_TTS_*               游戏包声明的旧前缀继续兼容
 """
 
 from __future__ import annotations
@@ -21,8 +21,34 @@ from pathlib import Path
 from .. import paths
 
 
-def _env_key(name: str) -> str:
-    return name.upper()
+_ENV_FIELDS = {
+    "PERSONA": "persona",
+    "VOICE": "voice",
+    "FALLBACK_VOICE": "fallback_voice",
+    "GAME": "game",
+    "VOLUME": "volume",
+    "MIN_GAP": "min_gap",
+    "AUTOPLAY_MODE": "autoplay_mode",
+    "AUTOPLAY_LLM_MODEL": "autoplay_llm_model",
+    "AUTOPLAY_PACE": "autoplay_pace",
+    "BILIBILI_ENABLED": "bilibili_enabled",
+    "BILIBILI_ROOM_ID": "bilibili_room_id",
+    "BILIBILI_COOKIE": "bilibili_cookie",
+    "HOST": "host",
+    "PORT": "port",
+    "OVERLAY_PORT": "port",
+    "OVERLAY": "overlay_url",
+    "TTS_URL": "tts_url",
+    "TTS_REF": "tts_ref",
+    "TTS_PROMPT": "tts_prompt",
+    "TTS_SPEED": "tts_speed",
+    "TTS_TIMEOUT": "tts_timeout",
+    "MAMBO_DIR": "mambo_dir",
+    "LLM_PROVIDER": "llm_provider",
+    "LLM_BASE_URL": "llm_base_url",
+    "LLM_MODEL": "llm_model",
+    "LLM_API_KEY": "llm_api_key",
+}
 
 
 @dataclass(slots=True)
@@ -31,7 +57,7 @@ class LiveConfig:
     persona: str = "dafeiyu"
     voice: str = "mambo"
     fallback_voice: str = "animal"
-    game: str = "slay-the-spire-2"
+    game: str = ""
 
     # 音量 / 节奏
     volume: float = 0.55
@@ -72,6 +98,12 @@ class LiveConfig:
     bilibili_cookie: str = ""       # 可选：需要登录态时填 SESSDATA 等；只写本机
     extra: dict = field(default_factory=dict)
 
+    def __post_init__(self) -> None:
+        if not self.game:
+            from ..games.catalog import default_game_id
+
+            self.game = default_game_id()
+
     # ---------------------------------------------------------------- 读取
     @classmethod
     def load(cls, path: str | os.PathLike[str] | None = None) -> "LiveConfig":
@@ -85,6 +117,9 @@ class LiveConfig:
             except (OSError, ValueError):
                 pass
         cfg._apply_env()
+        from ..games.catalog import resolve_game_id
+
+        cfg.game = resolve_game_id(cfg.game)
         return cfg
 
     def _merge(self, raw: dict) -> None:
@@ -96,44 +131,11 @@ class LiveConfig:
                 self.extra[key] = value
 
     def _apply_env(self) -> None:
-        pairs = {
-            "DAFEIYU_PERSONA": "persona",
-            "DAFEIYU_VOICE": "voice",
-            "DAFEIYU_FALLBACK_VOICE": "fallback_voice",
-            "DAFEIYU_GAME": "game",
-            "DAFEIYU_VOLUME": "volume",
-            "DAFEIYU_MIN_GAP": "min_gap",
-            "DAFEIYU_AUTOPLAY_MODE": "autoplay_mode",
-            "DAFEIYU_AUTOPLAY_LLM_MODEL": "autoplay_llm_model",
-            "DAFEIYU_AUTOPLAY_PACE": "autoplay_pace",
-            "DAFEIYU_BILIBILI_ENABLED": "bilibili_enabled",
-            "DAFEIYU_BILIBILI_ROOM_ID": "bilibili_room_id",
-            "DAFEIYU_BILIBILI_COOKIE": "bilibili_cookie",
-            "DAFEIYU_HOST": "host",
-            "DAFEIYU_PORT": "port",
-            "DAFEIYU_OVERLAY": "overlay_url",
-            "DAFEIYU_TTS_URL": "tts_url",
-            "DAFEIYU_TTS_REF": "tts_ref",
-            "DAFEIYU_TTS_PROMPT": "tts_prompt",
-            "DAFEIYU_TTS_SPEED": "tts_speed",
-            "DAFEIYU_TTS_TIMEOUT": "tts_timeout",
-            "DAFEIYU_MAMBO_DIR": "mambo_dir",
-            "DAFEIYU_LLM_PROVIDER": "llm_provider",
-            "DAFEIYU_LLM_BASE_URL": "llm_base_url",
-            "DAFEIYU_LLM_MODEL": "llm_model",
-            "DAFEIYU_LLM_API_KEY": "llm_api_key",
-            # 旧工程的环境变量，继续认
-            "STS2_TTS_URL": "tts_url",
-            "STS2_TTS_REF": "tts_ref",
-            "STS2_TTS_PROMPT": "tts_prompt",
-            "STS2_TTS_SPEED": "tts_speed",
-            "STS2_OVERLAY": "overlay_url",
-            "STS2_OVERLAY_PORT": "port",
-            "STS2_MAMBO_DIR": "mambo_dir",
-        }
-        for env, attr in pairs.items():
-            val = os.environ.get(env)
-            if val is None or val == "":
+        from ..games.catalog import env_value, legacy_env_prefixes
+
+        for suffix, attr in _ENV_FIELDS.items():
+            val = env_value(suffix)
+            if val == "":
                 continue
             cur = getattr(self, attr)
             try:
@@ -147,7 +149,14 @@ class LiveConfig:
                     setattr(self, attr, val)
             except (TypeError, ValueError):
                 continue
-        if "STS2_OVERLAY_PORT" in os.environ and "DAFEIYU_OVERLAY" not in os.environ:
+        # 只改了旧端口、没显式给 OVERLAY 时，让 overlay_url 跟着新端口走。
+        has_overlay = bool(os.environ.get("DAFEIYU_OVERLAY")) or any(
+            os.environ.get(f"{prefix}_OVERLAY", "") for prefix in legacy_env_prefixes()
+        )
+        has_port = bool(os.environ.get("DAFEIYU_OVERLAY_PORT")) or any(
+            f"{prefix}_OVERLAY_PORT" in os.environ for prefix in legacy_env_prefixes()
+        )
+        if has_port and not has_overlay:
             self.overlay_url = f"http://{self.host}:{self.port}"
 
     # ---------------------------------------------------------------- 输出

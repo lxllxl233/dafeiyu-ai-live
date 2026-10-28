@@ -159,7 +159,7 @@ print("=== 5) SKILL.md 与硬闸没漂移 ===")
 text = open(SKILL, encoding="utf-8").read()
 bad = hard_rules.verify_skill(text)
 check("锚点全部还在 SKILL", bad, [])
-check("SKILL 标注了唯一来源", "tools/hard_rules.py" in text, True)
+check("SKILL 标注了唯一来源", "games/slay-the-spire-2/decision/hard_rules.py" in text, True)
 
 print()
 print("=== 6) 唯一来源自检 ===")

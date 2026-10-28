@@ -103,7 +103,7 @@ skill 里的命令默认项目目录里有一套工具：
 
 ### v22（2026-10-28）
 
-- **5 条硬闸单一源**：`tools/hard_rules.py`（`VERSION = 1`）是伤害/血闸/自伤/药水/Boss 五条闸的
+- **5 条硬闸单一源**：`games/slay-the-spire-2/decision/hard_rules.py`（`VERSION = 1`）是伤害/血闸/自伤/药水/Boss 五条闸的
   唯一出处；`tools/ctx.py` 每回合把 `rules_v` + 5 条 `rules` 注进局面包（约 330 B），
   规则不再依赖「SKILL.md 这次有没有被读进上下文」。
 - **动作回执**：`cmd_batch` 每步按前后状态差分判 `applied / no_effect / unverified`，
@@ -117,7 +117,7 @@ skill 里的命令默认项目目录里有一套工具：
 - **历史回放审计**：`tools/replay_audit.py` 拿 `decisions.jsonl` 每行的原始 `state` 重放，
   量四个数：规则触发/违反、经验命中、`forecast` vs 落地偏差、今天护栏对历史牌序的判定
   （0 误伤 / 0 放行才算没退化）。账本 v22 起多记 `input.allow`，否则分不清「护栏漏」和「显式豁免」。
-- 阈值只有 `tools/hard_rules.py` 一处；SKILL.md、`games/slay-the-spire-2/game-skill/NEXT_PROMPT.txt`、README 只写指针，不复制数字。
+- 阈值只有 `games/slay-the-spire-2/decision/hard_rules.py` 一处；SKILL.md、`games/slay-the-spire-2/game-skill/NEXT_PROMPT.txt`、README 只写指针，不复制数字。
 
 ### v21（2026-10-27）
 

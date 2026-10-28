@@ -4,6 +4,20 @@
   "name_en": "Slay the Spire 2",
   "platform": "Steam · 2868840",
   "status": "ready",
+  "schema": 2,
+  "version": "2.2.0",
+  "aliases": ["sts2", "spire2"],
+  "capabilities": {
+    "observe": true,
+    "control": true,
+    "autoplay": true,
+    "replay": true,
+    "commentary": true,
+    "modes": ["local", "llm"],
+    "state_schema": "sts2.state/v1",
+    "action_schema": "sts2.action/v1"
+  },
+  "entry": "plugin.py:Sts2Plugin",
   "adapter": "game-skill/adapter.py:Sts2Adapter",
   "launch": {
     "type": "steam",

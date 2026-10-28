@@ -20,10 +20,10 @@
 4. python main.py obs start（从选人开始录；只要游戏画面+游戏音频，mic/桌面静音）。
 5. python tools/sts2.py do open_character_select；确认 IRONCLAD、A10、can_embark。
 6. python tools/sts2.py do embark；Neow 按 docs/NEOW_DECISIONS.md 比较稀缺性（商店能补的删牌降权；变2牌在血线能兜住时优先），不要默认安全。
-7. 进地图先 python tools/sts2.py route，把路线发到 overlay，再选第一格；血闸直接照 `ctx.rules` 执行（唯一源 `tools/hard_rules.py`，别自己另记一套数字）。
+7. 进地图先 python tools/sts2.py route，把路线发到 overlay，再选第一格；血闸直接照 `ctx.rules` 执行（唯一源 `games/slay-the-spire-2/decision/hard_rules.py`，别自己另记一套数字）。
 
 战斗/操作硬规则（v22：结构化输入 + 结构化输出 + 5 条硬闸）：
-- **5 条硬闸只有一处出处 `tools/hard_rules.py`**：`ctx.py` 每回合把 `rules` 注入局面包，
+- **5 条硬闸只有一处出处 `games/slay-the-spire-2/decision/hard_rules.py`**：`ctx.py` 每回合把 `rules` 注入局面包，
   照它执行即可；**不要在这份 prompt 或 SKILL 里另抄一套数字**（跑 `python tools/check_skill.py`
   和 `python tools/test_docs_consistency.py` 校验不漂移）。
 - **每回合读局面包，再写牌序**（一回合 1 次请求）：
@@ -55,7 +55,7 @@
 - 只信稳定玩家回合：play_card/end_turn 不在 available_actions 就等，不在过渡态发 end_turn。
 - HP<50% 下一格必须营火；商店先写“最缺/预算/必买/不买”，第二次进店没有目标就离开；不买便宜但不解决主要矛盾的牌。
 - 篝火 HP≥70% 且有关键质变升级就锻造；不连敲两张打击/防御。
-- Act1 目标：2 AOE、1–2 易伤、2–3 优质防御、1–2 运转、1 收尾，牌组≤15、最多 1 精英、Boss 前花光金币；Boss 前 **HP≥70% + 2 张 8+ 甲 + 药水先验过**（硬闸原文 `tools/hard_rules.py`）。
+- Act1 目标：2 AOE、1–2 易伤、2–3 优质防御、1–2 运转、1 收尾，牌组≤15、最多 1 精英、Boss 前花光金币；Boss 前 **HP≥70% + 2 张 8+ 甲 + 药水先验过**（硬闸原文 `games/slay-the-spire-2/decision/hard_rules.py`）。
 - 解说 banner 只写一句自然中文，不写“大肥鱼/DeepSeek/AI:”前缀，不拆 tag/黄字，整句同色；适度社区梗，不要每句都玩梗。
 - 配音不必每刀配：进精英/Boss/低血时用
   `python tools/sts2.py quip "句1" "句2" "句3"` 一次埋 3–5 句（并行预热 TTS，页面排队播），

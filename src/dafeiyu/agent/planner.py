@@ -14,15 +14,6 @@ import requests
 
 from ..core.config import LiveConfig
 
-_SYSTEM = """你是《杀戮尖塔 2》的回合决策器。只输出一个 JSON 对象，不要 markdown、不要解释。
-格式：{"say":["一句中文解说"],"seq":[{"c":"CARD_ID","t":0},{"end":1}]}
-规则：
-- seq 最后必须是 {"end":1}；c 用卡牌 id；t 是敌人下标，AOE/无目标可省略。
-- 先看 context 里的 rules / mechanics / incoming；能斩杀就斩杀，不能斩杀先挡满。
-- 不要输出未在 hand 里出现的牌；药水/遗物不是 c，不要写进 seq；不确定就少打，别硬凑。
-- say 只写一句，带数字，符合大肥鱼口吻（认真算账、偶尔自嘲）。"""
-
-
 def _extract_plan(text: str) -> dict:
     raw = (text or "").strip()
     if raw.startswith("```"):
@@ -55,10 +46,11 @@ class LLMPlanner:
     name = "llm"
 
     def __init__(self, cfg: LiveConfig | None = None, *, timeout: float = 60.0,
-                 model: str | None = None) -> None:
+                 model: str | None = None, system_prompt: str = "") -> None:
         self.cfg = cfg or LiveConfig.load()
         self.timeout = timeout
         self.model = str(model or self.cfg.llm_model or "deepseek-chat")
+        self.system_prompt = str(system_prompt or "").strip()
 
     def _url(self) -> str:
         base = (self.cfg.llm_base_url or "https://api.deepseek.com/v1").rstrip("/")
@@ -74,10 +66,13 @@ class LLMPlanner:
         ok, why = self.available()
         if not ok:
             return {"ok": False, "error": why, "planner": self.name}
+        if not self.system_prompt:
+            return {"ok": False, "planner": self.name,
+                    "error": "没有决策提示词；应由游戏插件提供 system_prompt"}
         payload = {
             "model": self.model,
             "messages": [
-                {"role": "system", "content": _SYSTEM},
+                {"role": "system", "content": self.system_prompt},
                 {"role": "user", "content": json.dumps({
                     "goal": goal or "打一回合，先别死，能赢就赢",
                     "feedback": feedback,

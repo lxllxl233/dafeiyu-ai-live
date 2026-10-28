@@ -90,7 +90,7 @@ python tools/logstats.py replay暴露的四类算错已进代码+回归（tools/
 ## 0.8 记忆分层
 
 - L1 sts2.py memory --write：开局/换幕/新session/每4–5层。
-- L2 每回合ctx.py（`rules`=5条硬闸，源 `tools/hard_rules.py`）；下回合用act.py返回值，不state。
+- L2 每回合ctx.py（`rules`=5条硬闸，源 `games/slay-the-spire-2/decision/hard_rules.py`）；下回合用act.py返回值，不state。
 - L3 journal --floor N --last 20复盘用；logs/run_*.jsonl/战报不进上下文；每幕memory --write后开新会话。
 
 ## 1. 三条铁律

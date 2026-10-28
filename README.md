@@ -3,7 +3,7 @@
 > 一个可换游戏、可换性格、可换声音的 **AI 直播工具**。
 > 第一视角是《杀戮尖塔 2》铁甲战士 A10——但它只是「游戏列表」里的第一个包。
 
-`v2.1` · Python 3.10+ · Windows（桌宠 / OBS） · 中文
+`v2.2` · Python 3.10+ · Windows（桌宠 / OBS） · 中文
 
 ---
 
@@ -33,7 +33,7 @@ v1 把四样东西焊在一个「打杀戮尖塔」的工程里；v2 把它们�
 - **语音层**：曼波语（MamboTTS）为主，引擎不在线时点「启动」/「试听」会自动拉起本地引擎，仍失败才回退动物语。
 - **游戏切换**：桌宠右键「游戏 ▸」或管理端「游戏」页切换，写入 `config.game`，游戏适配器和 Agent 下一轮读取。
 - **游戏启动**：右键「只启动游戏」、管理端按钮或 `python main.py game launch`，按 `game.json` 的 `launch` 拉起 Steam / exe。
-- **让她玩**：右键「让她玩」二级菜单选**本地算账 / LLM 规划**；默认慢速播报，等语音再出下一步。战斗之外（奖励/地图/营火/事件）仍走本地，控制台也能切。自动玩默认自动开 OBS 录像，控制台「Agent 流程」能看到本轮累计 Token 和 LLM 回合数；开局第一张地图会按 BRPS 规划并锁定路线，状态里显示路线代号；开局不主动播报招呼，第一条台词从实际战斗/事件开始。当前只支持杀戮尖塔 2。
+- **让她玩**：右键「让她玩」二级菜单选**本地算账 / LLM 规划**；默认慢速播报，等语音再出下一步。战斗之外（奖励/地图/营火/事件）仍走本地，控制台也能切。自动玩默认自动开 OBS 录像，控制台「Agent 流程」能看到本轮累计 Token 和 LLM 回合数；开局第一张地图会按 BRPS 规划并锁定路线，状态里显示路线代号；开局不主动播报招呼，第一条台词从实际战斗/事件开始。正式实况目前是杀戮尖塔 2；内置 `toy-duel` 用来验收第二游戏的 observe/control/autoplay 链路。
 - **Agent 流程**：LangGraph 把一回合拆成观察 → 规划 → 验算 → 执行 → 反思，节点耗时/token/重试写本机轨迹，控制台「Agent 流程」可看。
 - **录像回放**：自动玩开始即开录（OBS 没开会自动拉起），停止时收成 `recordings/<游戏>/run-NNNN/run.mp4`；同目录 `events.jsonl` / `chapters.md` / `timeline.json` 记录画面、楼层、战斗、台词和对应时间段，方便出混剪；`meta.json` 记角色/进阶/结果。
 - **B 站礼物**：控制台「基础配置」填直播间房间号并勾选监听，桌宠会连 B 站直播 WebSocket，收到 `SEND_GIFT` / 醒目留言 / 上舰就让鱼绕两圈并气泡道谢；匿名被风控时再填可选 Cookie（只存本机，不回显）。
@@ -97,16 +97,17 @@ dafeiyu-ai-live/
 ├── voice/                       # 语音层资产：动物语音阶、曼波参考音配置
 ├── games/                       # 游戏列表
 │   ├── registry.json
-│   └── slay-the-spire-2/
-│       ├── game.json            # 游戏包清单
-│       ├── game-skill/          # 游戏技能层：adapter.py + 实况 runbook
-│       ├── compat/              # 游戏兼容层：sts2.py 客户端 + mod + 补丁
-│       └── corpus/              # 游戏语料库：sts2.db + 英文数据
+│   ├── slay-the-spire-2/
+│   │   ├── game.json            # 游戏包清单
+│   │   ├── game-skill/          # 游戏技能层：adapter.py + 实况 runbook
+│   │   ├── compat/              # 游戏兼容层：sts2.py 客户端 + mod + 补丁
+│   │   └── corpus/              # 游戏语料库：sts2.db + 英文数据
+│   └── toy-duel/                # 第二游戏验收包：离线观察/控制/自动玩
 ├── recordings/                  # 录像回放：按游戏分目录，一局一个 run.mp4
 │   ├── README.md
 │   ├── INDEX.md
 │   └── slay-the-spire-2/run-0094/{run.mp4,meta.json}
-├── tools/                       # 决策/运维工具（A10 工作台、体检、TTS 看护、兼容 shim）
+├── tools/                       # 运维工具 + 旧决策入口 shim（真实现在 games/.../decision/）
 ├── docs/                        # 玩法手册、复盘、教训
 └── tests/                       # 直播姬单元测试
 ```
@@ -122,8 +123,9 @@ dafeiyu-ai-live/
 | 性格层 | `persona/` + `src/dafeiyu/persona/` | 人设卡与 meme 是数据，lint/节奏是代码 |
 | 语音层 | `voice/` + `src/dafeiyu/voice/` | 动物语 / 曼波语，路由负责回退 |
 | 游戏列表 | `games/registry.json` | 每个游戏 = 一个包 |
-| Agent 层 | `src/dafeiyu/agent/` | LangGraph 图 + 本机轨迹；工具仍走 `tools/ctx.py` / `tools/act.py` |
-| 杀戮尖塔 2 | `games/slay-the-spire-2/` | `game-skill/` + `compat/` + `corpus/` |
+| Agent 层 | `src/dafeiyu/agent/` | LangGraph 图 + 本机轨迹；工具边界在 `games/slay-the-spire-2/decision/`（`tools/` 同名文件是 shim） |
+| 杀戮尖塔 2 | `games/slay-the-spire-2/` | `decision/` 决策引擎 + `autoplay/` 整局循环 + `game-skill/` + `compat/` + `corpus/` |
+| 玩具决斗 | `games/toy-duel/` | 第二个完整插件：离线 `adapter` / `ToyTools` / 12 步 runner，用于验收非 STS2 链路 |
 | 录制 | `src/dafeiyu/recording/` + `recordings/` | 代码在 src，成品按游戏分目录 |
 | 录像回放 | `recordings/<游戏>/run-NNNN/` | 一局一个 `run.mp4` + `meta.json` |
 
@@ -277,7 +279,8 @@ observe ──► plan ──► validate ──► execute ──► reflect
               └──────────┴────────────┘   验算/执行失败 → 回 plan 重试
 ```
 
-- `observe` 复用 `tools/ctx.py` 的紧凑局面；`validate` 复用 `tools/act.py --dry` 的硬护栏；
+- `observe` 复用 `games/slay-the-spire-2/decision/ctx.py` 的紧凑局面；`validate` 复用
+  `decision/act.py --dry` 的硬护栏；`tools/ctx.py` / `tools/act.py` 只是旧命令的兼容入口；
 - `plan` 可以来自外部 DSH Agent（`--plan`，继续用 `.dsh/skills`）或内置 LLM；
 - 默认 dry-run，只有 `python main.py agent run --execute` 才真的出牌；
 - 每个节点的耗时/状态/token/重试写 `logs/agent_trace.jsonl`，控制台左侧「Agent 流程」直接看；
@@ -337,7 +340,7 @@ python main.py voice status
 ```
 
 - 曼波引擎不在仓库里（模型太大）：起引擎后把参考音频填进 `voice/mambo/ref.json` 的 `ref_wav`，
-  或设 `STS2_TTS_REF`；合成结果缓存在 `logs/tts_cache/`。
+  或设 `DAFEIYU_TTS_REF`（旧游戏前缀也继续兼容）；合成结果缓存在 `logs/tts_cache/`。
 - 引擎没起时，桌宠语音菜单 / 控制台「启动 / 试听」会调用 `src/dafeiyu/voice/startup.py`：
   默认从 `D:\MamboTTS\app\MamboTTS-v1.2.1-full` 拉起 `run_engine.py`；目录不同就设
   `DAFEIYU_MAMBO_DIR`（或控制台「MamboTTS 目录」）。
@@ -351,6 +354,7 @@ python main.py voice status
 ```powershell
 python main.py games
 # ○ 离线  杀戮尖塔 2     slay-the-spire-2   Steam · 2868840
+# ● 在线  玩具决斗       toy-duel           内置
 # ● 在线  演示信号源     demo               内置
 ```
 
@@ -364,8 +368,8 @@ python main.py games
 ```
 
 支持 `steam`（Steam App ID）、`exe`（相对游戏包目录或绝对路径）、`url`；没写 `launch` 的游戏
-（例如内置演示）会明确报「未配置启动方式」。游戏专属代码仍放各自 `game-skill/`，注册表在
-`games/registry.json`。
+（例如内置演示）会明确报「未配置启动方式」。游戏专属代码仍放各自游戏包
+（技能层如 `game-skill/`），注册表在 `games/registry.json`。
 
 ### 让她玩（自动跑一局）
 
@@ -374,11 +378,12 @@ python main.py play              # 启动游戏 + 自动跑；Ctrl+C 停
 python main.py play --mode llm   # 战斗回合交给 LLM（需要 API Key）
 python main.py play --pace voice # 慢速，等语音；默认就是 voice
 python main.py play --stop       # 从另一个进程停手
+python main.py play --game toy-duel --mode local  # 第二游戏验收，不启动 Steam
 ```
 
 桌宠右键「让她玩」是二级菜单：
 
-- **本地算账**：`tools/advisor.py` 算伤害/格挡/斩杀，不烧 token；
+- **本地算账**：`games/slay-the-spire-2/decision/advisor.py` 算伤害/格挡/斩杀，不烧 token；
 - **LLM 规划**：战斗回合进 LangGraph `observe → plan → validate → execute`，默认用
   `deepseek-chat`（非推理模型，避免长局面把 content 挤空），轨迹仍写
   `logs/agent_trace.jsonl`；规划/验算/执行失败都会按最新手牌用本地兜底，不再整局停手；
@@ -388,7 +393,7 @@ python main.py play --stop       # 从另一个进程停手
 - **普通节奏**：旧版 0.7 秒，适合静音或只想快进。
 
 管理端「Agent 流程」里的「玩法 / LLM 模型 / 播报节奏」和右键菜单是同一份
-`config.json`。当前只对杀戮尖塔 2 开放，流程是：
+`config.json`。正式实况流程目前只对杀戮尖塔 2 开放，流程是：
 
 - `MAIN_MENU / CHARACTER_SELECT`：没局就开 A10 铁甲战士；
 - `COMBAT`：本地模式走 `advisor.py` + `sts2 batch`；LLM 模式走 `run_turn` + `act.py`；
@@ -398,29 +403,42 @@ python main.py play --stop       # 从另一个进程停手
 - `GAME_OVER`：回主菜单开新一局；想停手点「让她停手」；
 - 未知界面：停在那一步并写日志，不猜按钮。
 
+`toy-duel` 不启动游戏、不调用 LLM、不依赖 OBS/语音，只复用同一套
+`AutoplayHost` + `GameTools` 契约做离线验收；它不会走上面这些 STS2 界面。
+
 进展写 `logs/autoplay.json` 和 `logs/autoplay.jsonl`，其中包括 API 实际 token
 （`tokens_in/out/total`、`llm_calls`）和录像状态；可以从另一个进程停：
 `python main.py play --stop`（桌面/管理端都调用它）。本地模式是整局循环；
 LLM 模式只在战斗回合进入 LangGraph，非战斗界面仍走本地，避免每个地图节点都烧 token。
 
-以《杀戮尖塔 2》为例，一个游戏包只有三份东西：
+以《杀戮尖塔 2》为例，一个完整游戏包由这几层组成：
 
-| 目录 | 职责 | 内容 |
+| 文件/目录 | 职责 | 内容 |
 |---|---|---|
+| `game.json` | 清单 | id、版本、`entry`、能力、`adapter`、别名、启动配置 |
+| `plugin.py` | 插件入口 | 实现 `GamePlugin`：adapter / tools / runner / prompt |
 | `game-skill/` | 游戏技能层 | `adapter.py`（读状态 → `GAME_STATE`）、A10 runbook、游戏专属梗 |
 | `compat/` | 游戏兼容层 | `sts2.py` 客户端、mod DLL、兼容补丁、状态字段约定 |
 | `corpus/` | 游戏语料库 | `sts2.db`（626 卡 / 127 敌 / 311 遗物 / 118 梗 / 226 条规则）、英文数据 |
+| `decision/` + `autoplay/` | 控制层 | 局面包、动作协议、本地决策和整局循环；只有需要自动玩的游戏才有 |
 
 适配器 `games/slay-the-spire-2/game-skill/adapter.py` 只做「读状态 → GAME_STATE 事件」，
-不替玩家出牌。出牌/决策仍走兼容层 CLI + 决策技能（`.dsh/skills/sts2-ironclad-ironclad`）。
+不替玩家出牌。出牌/决策仍走兼容层 CLI + 决策技能（`.dsh/skills/sts2-ironclad-ironclad`，v22）。
 `src/dafeiyu/games/` 里只有游戏无关的协议、注册表和演示源。
+
+内置 `games/toy-duel/` 是**第二个完整插件**，专门用来验收「核心不是 STS2 专属」：
+它没有 Steam、mod、OBS、语音或语料依赖，`adapter` / `ToyTools` / `runner` 全部离线。
+见 [games/toy-duel/README.md](games/toy-duel/README.md)。
 
 ### 加一个新游戏
 
-1. 在 `games/<新游戏>/` 放 `game.json` + `game-skill/` + `compat/` + `corpus/`；
-2. 在 `game-skill/adapter.py` 实现 `GameAdapter`（`available()` / `snapshot()` / 可选 `events()`）；
-3. 在 `games/registry.json` 注册 `adapter: "game-skill/adapter.py:类名"`；
-4. `python main.py games` 能看到、`status()` 能连上即可。
+1. 在 `games/<新游戏>/game.json` 声明 id/version/`entry`/`adapter`/`capabilities`；
+2. 在 `plugin.py` 实现 `GamePlugin`（观察型游戏可以只返回 adapter，`tools/runner` 返回 `None`）；
+3. 控制型游戏实现 `GameTools.observe/validate/execute`，自动玩再实现 `AutoplayRunner.start/stop/status`；
+4. 在 `games/registry.json` 注册 `pack` 与 `adapter`；
+5. 用 `python main.py games`、`game state --game <id>`、`play --game <id>` 验收。
+
+`toy-duel` 就是按这五步接进来的最小完整例子；加它没有改任何 STS2 代码。
 
 ---
 
@@ -431,8 +449,8 @@ LLM 模式只在战斗回合进入 LangGraph，非战斗界面仍走本地，避
 ```powershell
 python tools/sts2.py state            # 游戏状态（mod :8080）
 python main.py game state             # 走注册表读状态（新写法）
-python tools/ctx.py                   # 结构化局面包
-python tools/act.py --file plan.json  # 校验并执行牌序
+python tools/ctx.py                   # 结构化局面包（旧入口 -> decision/ctx.py）
+python tools/act.py --file plan.json  # 校验并执行牌序（旧入口 -> decision/act.py）
 python main.py obs status             # OBS 状态
 python main.py obs start|stop         # 裸 OBS 开关；正式录像用 replay start/stop
 python main.py obs health             # 出帧/音频/后台静音自检
@@ -487,12 +505,26 @@ OBS 场景仍叫 `StS2`：`StS2 Game`（game_capture）+ `AI Commentary`（浏�
 ## 测试
 
 ```powershell
-python -m pytest -q tests          # 直播姬：总线/性格/语音/游戏/启动/配置/Agent/自动玩法/路线/录像/B站（72 项）
+python -m pytest -q tests          # 直播姬：115 项（总线/性格/语音/游戏/插件/Agent/自动玩/录像/B站/发布）
 python tools/test_ctx_act.py       # 决策层：ctx + act（离线）
 python tools/test_streamer.py      # 桌宠渲染/透明/换行/配音
 python tools/test_overlay_playback.py
 python main.py doctor              # 环境自检
+python tools/release_check.py      # 发布门禁：版本 + 单测 + 文档 + 编译
 ```
+
+---
+
+## 版本与发布
+
+- 产品版本在 `pyproject.toml` / `src/dafeiyu/__init__.py` / `README.md` /
+  `games/slay-the-spire-2/game.json` / `CHANGELOG.md` 五处同步；
+- 发布步骤见 [docs/RELEASE.md](docs/RELEASE.md)，包括实机验收和“不要提交什么”；
+- CI 在 `.github/workflows/ci.yml`，跑 `python tools/release_check.py --ci`；
+- `tools/` 的兼容 shim 还在观察期，映射和退役条件见 [tools/README.md](tools/README.md)。
+
+当前版本 **2.2.0**：新增第二游戏 `toy-duel`、跨游戏一致性门禁和发布门禁；
+STS2 实机验收记录是 `recordings/slay-the-spire-2/run-0108/`。
 
 ---
 

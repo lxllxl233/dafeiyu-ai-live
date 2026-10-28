@@ -5,20 +5,29 @@ import json
 import os
 import time
 
-from dafeiyu.agent import play
 from dafeiyu.agent.planner import _extract_plan
+from dafeiyu.games.registry import GameRegistry
+
+play = GameRegistry().load_game_module("slay-the-spire-2", "autoplay.runner")
+assert play is not None
 
 import pytest
 
 
 @pytest.fixture(autouse=True)
 def _isolate_live_stop(tmp_path, monkeypatch):
-    # 真实直播时 logs/autoplay.stop 可能存在，测试不能继承这个状态。
-    monkeypatch.setattr(play, "STOP_PATH", tmp_path / "autoplay.stop")
+    # 真实直播时 logs/autoplay.* 可能存在，测试不能继承也不准写回真实状态。
+    host = play._host
+    monkeypatch.setattr(host, "status_path", tmp_path / "autoplay.json")
+    monkeypatch.setattr(host, "stop_path", tmp_path / "autoplay.stop")
+    monkeypatch.setattr(host, "log_path", tmp_path / "autoplay.jsonl")
+    monkeypatch.setattr(play, "STOP_PATH", host.stop_path)
+    monkeypatch.setattr(play, "STATUS_PATH", host.status_path)
+    monkeypatch.setattr(play, "LOG_PATH", host.log_path)
     monkeypatch.setattr(play, "_write_status", lambda **kw: dict(play._state, **kw))
     monkeypatch.setattr(play, "_log", lambda *a, **k: None)
     monkeypatch.setattr(play, "_timeline_event", lambda *a, **k: None)
-    play._stop.clear()
+    host.reset(game=play.GAME_ID)
     yield
     play._stop.clear()
 
@@ -171,9 +180,7 @@ def test_blind_multi_select_uses_ui_fallback(monkeypatch):
     assert fake.calls == []
 
 
-def test_llm_usage_accumulates(tmp_path, monkeypatch):
-    monkeypatch.setattr(play, "STATUS_PATH", tmp_path / "autoplay.json")
-    monkeypatch.setattr(play, "LOG_PATH", tmp_path / "autoplay.jsonl")
+def test_llm_usage_accumulates():
     with play._lock:
         for key, value in (("tokens_in", 0), ("tokens_out", 0),
                            ("tokens_total", 0), ("llm_calls", 0), ("tokens_last", 0)):
@@ -186,7 +193,7 @@ def test_llm_usage_accumulates(tmp_path, monkeypatch):
     assert st["tokens_total"] == 250
     assert st["tokens_last"] == 100
     assert st["llm_calls"] == 2
-    assert play.STATUS_PATH.exists()
+    assert play._host.status_path.exists()
 
 
 def test_stop_from_other_process_keeps_remote_running(monkeypatch, tmp_path):
@@ -229,6 +236,7 @@ def test_stop_in_same_process_finalizes_recording(monkeypatch, tmp_path):
     out = play.stop_autoplay()
     assert finalized == ["stopped"]
     assert out["message"] == "已停手"
+    assert not (tmp_path / "autoplay.stop").exists()
     assert any(w.get("running") is False and w.get("stopping") is False
                for w in writes)
 
@@ -255,9 +263,9 @@ def test_rest_proceeds_when_option_already_resolved():
 
 
 def test_speech_pace_sets_a_wait_window():
-    play._speech_until = 0.0
+    play._host.speech_until = 0.0
     play._remember_speech("它这回合打十六，我先挡满再还手，别急。")
-    assert play._speech_until > time.time() + 1.0
+    assert play._host.speech_until > time.time() + 1.0
 
 
 def test_malformed_json_extra_quote_is_repaired():

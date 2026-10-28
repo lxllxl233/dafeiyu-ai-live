@@ -1,7 +1,7 @@
 """大肥鱼直播姬 · Dafeiyu AI Live。
 
 把「游戏信号 / 性格层 / 语音层 / UI」拆成可替换的层，游戏只是输入源。
-当前内置《杀戮尖塔 2》游戏包，换游戏只要加一个 `game-skill/adapter.py`。
+具体游戏放在 `games/<id>/`，核心只依赖 `game.json` 与插件协议。
 
 分层（对应仓库目录）：
 
@@ -14,7 +14,7 @@
 
 from __future__ import annotations
 
-__version__ = "2.1.0"
+__version__ = "2.2.0"
 __product__ = "大肥鱼直播姬"
 __codename__ = "dafeiyu-ai-live"
 

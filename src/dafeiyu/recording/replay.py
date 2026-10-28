@@ -7,7 +7,7 @@
     recordings/
       README.md                 说明（入库）
       INDEX.md                  自动生成的索引（入库）
-      slay-the-spire-2/         游戏 id（和 games/registry.json 对齐）
+      <game-id>/                游戏 id（和 games/registry.json 对齐）
         run-0071/
           run.mp4               一局一个录像
           meta.json             角色 / 进阶 / 结果 / 时长 / 大小
@@ -27,29 +27,18 @@ from pathlib import Path
 from typing import Any
 
 from .. import paths
+from ..games import catalog
 
 ROOT = paths.ROOT
 RECORDINGS = paths.RECORDINGS
 CURRENT = RECORDINGS / ".current.json"
 
-GAME_ALIASES = {
-    "sts2": "slay-the-spire-2",
-    "spire2": "slay-the-spire-2",
-    "slay-the-spire-2": "slay-the-spire-2",
-    "demo": "demo",
-}
-GAME_NAMES = {
-    "slay-the-spire-2": "杀戮尖塔 2",
-    "demo": "离线演示",
-}
+
+def game_id(name: str | None = None) -> str:
+    return catalog.resolve_game_id(name)
 
 
-def game_id(name: str = "slay-the-spire-2") -> str:
-    key = (name or "slay-the-spire-2").strip()
-    return GAME_ALIASES.get(key, re.sub(r"[^a-z0-9._-]+", "-", key.lower()).strip("-") or "demo")
-
-
-def game_dir(name: str = "slay-the-spire-2") -> Path:
+def game_dir(name: str | None = None) -> Path:
     p = RECORDINGS / game_id(name)
     p.mkdir(parents=True, exist_ok=True)
     return p
@@ -101,12 +90,12 @@ def runs(game: str | None = None) -> list[Path]:
     return sorted(out, key=lambda p: (run_number(p) or 0, p.stat().st_mtime), reverse=True)
 
 
-def next_number(game: str = "slay-the-spire-2") -> int:
-    nums = [n for p in runs(game) if (n := run_number(p)) is not None]
+def next_number(game: str | None = None) -> int:
+    nums = [n for p in runs(game_id(game)) if (n := run_number(p)) is not None]
     return (max(nums) + 1) if nums else 1
 
 
-def create_run(game: str = "slay-the-spire-2", number: int | None = None,
+def create_run(game: str | None = None, number: int | None = None,
                character: str = "", ascension: int | None = None,
                note: str = "") -> Path:
     """建一局的空文件夹（已有就复用），写 meta。"""
@@ -277,7 +266,7 @@ def render_index() -> str:
     if not groups:
         lines.append("（还没有录像。`python main.py replay new` 开一局。）")
     for gid in sorted(groups):
-        lines += [f"## {GAME_NAMES.get(gid, gid)}（`{gid}`）", "",
+        lines += [f"## {catalog.game_name(gid)}（`{gid}`）", "",
                   "| 局 | 角色 | 进阶 | 结果 | 大小 | 文件 |",
                   "|---|---|---|---|---|---|"]
         for r in groups[gid]:
@@ -299,25 +288,34 @@ def write_index() -> Path:
 
 
 # ---------------------------------------------------------------- 兼容旧文件
-_LEGACY_RE = re.compile(r"^sts2_ironclad_a10_run(\d+)_(.+)\.mp4$", re.I)
+# 旧文件名形如 <game>_<character>_a<ascension>_run<number>_<result>.mp4；
+# game 段可以是登记过的短名/别名，由 catalog 解析，核心不认具体游戏。
+_LEGACY_RE = re.compile(
+    r"^(?P<game>[a-z0-9]+)_(?P<character>[a-z0-9]+)_a(?P<ascension>\d+)"
+    r"_run(?P<run>\d+)_(?P<result>.+)\.mp4$",
+    re.I,
+)
 
 
 def migrate_legacy(force: bool = False) -> list[str]:
-    """把根目录散放的旧录像收进 ``slay-the-spire-2/run-NNNN/run.mp4``。"""
+    """把根目录散放的旧 mp4 收进对应游戏的 ``run-NNNN/run.mp4``。"""
     moved: list[str] = []
     if not RECORDINGS.is_dir():
         return moved
-    legacy_dir = game_dir("sts2") / "_legacy"
+    legacy_dir = game_dir() / "_legacy"
     for f in sorted(RECORDINGS.glob("*.mp4")):
         m = _LEGACY_RE.match(f.name)
         if m:
-            no, result = int(m.group(1)), m.group(2)
-            d = game_dir("sts2") / f"run-{no:04d}"
+            gid = game_id(m.group("game"))
+            no = int(m.group("run"))
+            d = game_dir(gid) / f"run-{no:04d}"
             d.mkdir(parents=True, exist_ok=True)
             meta = read_meta(d)
             if not meta:
-                write_meta(d, game="slay-the-spire-2", run=no, character="ironclad",
-                           ascension=10, result=result, legacy=True,
+                write_meta(d, game=gid, run=no,
+                           character=m.group("character").lower(),
+                           ascension=int(m.group("ascension")),
+                           result=m.group("result"), legacy=True,
                            started_at="", status="done")
             dst = d / "run.mp4"
             if dst.exists() and not force:

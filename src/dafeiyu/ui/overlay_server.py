@@ -17,14 +17,17 @@ import urllib.request
 from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-HOST = "127.0.0.1"
-PORT = int(os.environ.get("STS2_OVERLAY_PORT", "8730"))
 # 布局：src/dafeiyu/ui/overlay_server.py
 _HERE = os.path.dirname(os.path.abspath(__file__))
 SRC_DIR = os.path.dirname(os.path.dirname(_HERE))       # src/
 ROOT = os.path.dirname(SRC_DIR)                          # 仓库根
 if SRC_DIR not in sys.path:
     sys.path.insert(0, SRC_DIR)
+
+from dafeiyu.games.catalog import env_value  # noqa: E402
+
+HOST = "127.0.0.1"
+PORT = int(env_value("OVERLAY_PORT", "8730"))
 UI_DIR = os.path.join(ROOT, "ui")
 INDEX = os.path.join(UI_DIR, "overlay", "index.html")
 STUDIO = os.path.join(UI_DIR, "studio", "index.html")
@@ -32,14 +35,14 @@ ROUTE_PLAN = os.path.join(ROOT, "logs", "route_plan.json")
 
 # ---------------------------------------------------------------- 曼波配音（MamboTTS / GPT-SoVITS）
 # 浏览器源拿到 /tts 的 WAV 自己播 → OBS 录制里就带配音。
-TTS_URL = os.environ.get("STS2_TTS_URL", "http://127.0.0.1:9880")
-TTS_REF = os.environ.get("STS2_TTS_REF", "")
-TTS_PROMPT = os.environ.get(
-    "STS2_TTS_PROMPT", "大家好，欢迎来到我的频道，今天给大家分享一个有趣的内容"
+TTS_URL = env_value("TTS_URL", "http://127.0.0.1:9880")
+TTS_REF = env_value("TTS_REF", "")
+TTS_PROMPT = env_value(
+    "TTS_PROMPT", "大家好，欢迎来到我的频道，今天给大家分享一个有趣的内容"
 )
 TTS_CUT = "，。？！；：、…,.;?!"
 TTS_CACHE = os.path.join(ROOT, "logs", "tts_cache")
-TTS_TIMEOUT = float(os.environ.get("STS2_TTS_TIMEOUT", "60"))
+TTS_TIMEOUT = float(env_value("TTS_TIMEOUT", "60"))
 
 # 一回合可能好几路同时要同一句（预热 / OBS 页面 / 直播姬页面）：
 # 串行进引擎，后到的等锁，醒来先查磁盘缓存。绝不并发压 MamboTTS。
@@ -73,7 +76,7 @@ def _synth(text: str) -> bytes | None:
     payload = {
         "text": text,
         "text_language": "zh",
-        "speed": float(os.environ.get("STS2_TTS_SPEED", "1.0")),
+        "speed": float(env_value("TTS_SPEED", "1.0")),
         "cut_punc": TTS_CUT,
     }
     if TTS_REF:
@@ -163,7 +166,7 @@ def _record_usage(thought: str, meme: str, speech: str) -> dict:
     return delta
 _seq = 0
 # 日志/序号目录可重定向：测试用临时目录，别把真直播的 seq 和观测日志搅乱。
-LOG_DIR = os.environ.get("STS2_OVERLAY_LOG_DIR") or os.path.join(ROOT, "logs")
+LOG_DIR = env_value("OVERLAY_LOG_DIR", "") or os.path.join(ROOT, "logs")
 SEQ_PATH = os.path.join(LOG_DIR, "overlay_seq.json")
 
 
@@ -279,7 +282,7 @@ def set_thinking(on: bool, note: str = "") -> dict:
 #   ev=silent    → 只挂字幕不出声
 # pending = 已发布但还没起播的台词（合成中/排队中）。它是**真实队列**，
 # 主播窗据此在合成空档里维持说话状态，而不是靠定时器硬撑。
-AUDIO_PENDING_TTL = float(os.environ.get("STS2_AUDIO_PENDING_TTL", "15"))
+AUDIO_PENDING_TTL = float(env_value("AUDIO_PENDING_TTL", "15"))
 _audio_lock = threading.Lock()
 _audio = {"seq": 0, "cid": "", "role": "", "since": 0.0, "dur": 0.0, "pending": {}}
 
@@ -358,7 +361,7 @@ def add_comment(payload: dict) -> dict:
             "thought": _SPEAKER_RE.sub("", str(payload.get("thought") or "")).strip()[:220],
             "meme": _SPEAKER_RE.sub("", str(payload.get("meme") or "")).strip()[:220],
             "speech": str(payload.get("speech") or "")[:300],
-            # 客户端关联 id：把 sts2 的 prewarm/publish 和页面 bubble/audio 串起来。
+            # 客户端关联 id：把游戏的 prewarm/publish 和页面 bubble/audio 串起来。
             "client_id": str(payload.get("client_id") or "")[:64],
         }
         _comments.append(c)

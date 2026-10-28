@@ -9,8 +9,8 @@
 
 | 已有能力 | 位置 | 重写代价 |
 |---|---|---|
-| 局面压缩 / 规则 / 教训 | `tools/ctx.py` | 高：626 卡、127 敌、98 条规则的兼容层 |
-| 出牌验算 / 硬护栏 / 回执 | `tools/act.py` | 高：一回合一条 batch 的协议已经稳定 |
+| 局面压缩 / 规则 / 教训 | `games/slay-the-spire-2/decision/ctx.py` | 高：626 卡、127 敌、98 条规则的兼容层 |
+| 出牌验算 / 硬护栏 / 回执 | `games/slay-the-spire-2/decision/act.py` | 高：一回合一条 batch 的协议已经稳定 |
 | 人设 / 语音 / overlay | `persona/`、`voice/`、`ui/` | 高：和直播链路强绑定 |
 
 所以 Agent 层不碰这三块，只把它们包成节点：
@@ -21,11 +21,19 @@ observe ──► plan ──► validate ──► execute ──► reflect
               └──────────┴────────────┘   验算/执行失败 → 回 plan 重试
 ```
 
-- `observe`：`tools/ctx.py` 读一份紧凑局面；
+- `observe`：`decision/ctx.py` 读一份紧凑局面；
 - `plan`：外部计划（DSH Agent / `--plan`）或 `LLMPlanner`；
-- `validate`：`tools/act.py --dry`，算术/费用/目标/斩杀线都在这里拦；
-- `execute`：默认 dry-run；只有 `--execute` 才真的走 `act.py`；
+- `validate`：`decision/act.py --dry`，算术/费用/目标/斩杀线都在这里拦；
+- `execute`：默认 dry-run；只有 `--execute` 才真的走 `decision/act.py`；
 - `reflect`：写轨迹、给下一轮留下失败原因。
+
+工具层统一返回 `dafeiyu.games.contracts.ActionResult`（`ok / action / code /
+message / retryable / data`）。图入口用 `as_action_result()` 归一化，所以迁移期
+仍能接旧 `{ok, err}` dict；节点内部继续用摊平后的 dict，轨迹和 `reflect` 的
+判断不变。旧调试脚本需要 dict 时调用 `ActionResult.to_legacy()`。
+
+`tools/ctx.py`、`tools/act.py` 等旧路径已变成兼容 shim，实际加载
+`games/slay-the-spire-2/decision/` 下的同一份实现；旧命令和旧 skill 不需要改。
 
 这比「LangChain Agent 自己决定调什么工具」更可控：工具集合固定、状态可回放、
 每一步都能在控制台看到耗时和重试次数。
@@ -114,20 +122,25 @@ python main.py agent graph
 
 ## 6. 整局自动玩法与回合图的分工
 
-`python main.py play` / 右键「让她玩 ▸ 本地算账」跑的是 `src/dafeiyu/agent/play.py`：
-它是一个**整局循环**，不是每个动作都过 LangGraph。原因是整局包含大量不需要 LLM 的界面切换
-（地图、奖励、营火、商店），每一步都进图会慢且费 token。
+`python main.py play` / 右键「让她玩 ▸ 本地算账」先走 `src/dafeiyu/agent/play.py`
+这个 facade，再转给游戏包的 `autoplay/runner.py`（当前是
+`games/slay-the-spire-2/`）。它是一个**整局循环**，不是每个动作都过 LangGraph。
+原因是整局包含大量不需要 LLM 的界面切换（地图、奖励、营火、商店），每一步都进图
+会慢且费 token。状态/停止/录像/说话节奏由核心 `src/dafeiyu/agent/host.py`
+提供，游戏包只保留界面分派和决策。
 
-右键「让她玩 ▸ LLM 规划」只把**战斗回合**交给图：`_combat_llm` 调
+右键「让她玩 ▸ LLM 规划」只把**战斗回合**交给图：游戏包里的 `_combat_llm` 调
 `run_turn(..., tools=Sts2Tools, planner=LLMPlanner, dry_run=False)`，所以战斗决策、验算、
 执行和轨迹都能在「Agent 流程」看到；地图/奖励等仍由本地循环处理。默认用
 `deepseek-chat`（非推理模型），避免长局面把 reasoning 预算吃完、content 为空。
+游戏 System Prompt 不再放在核心：`LLMPlanner` 通过构造参数接收，来源是游戏插件的
+`prompt("decision")`（STS2 在 `games/slay-the-spire-2/decision/prompts.py`）。
 
 两者共用同一套工具边界：
 
 | 层 | 自动玩法 | LangGraph 单回合 |
 |---|---|---|
-| 读局面 | `tools/ctx.py` 同源 | `observe` 节点 |
+| 读局面 | `decision/ctx.py` 同源 | `observe` 节点 |
 | 算牌/出牌 | `advisor.py` 或 `run_turn` | `validate` / `execute` |
 | 轨迹 | `logs/autoplay.jsonl` | `logs/agent_trace.jsonl` |
 | 控制 | `logs/autoplay.stop` | `--execute` 显式开关 |

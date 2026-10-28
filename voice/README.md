@@ -29,7 +29,7 @@ python main.py voice test "它 21，我最多挡 15。差 6，嗨呀。" --voice
 引擎不在仓库里（体积大、要模型），直播姬只负责调用：
 
 1. 起 MamboTTS（默认 `127.0.0.1:9880`，见其 `engine_contract.py`）；
-2. 把参考音频路径填到 `voice/mambo/ref.json` 的 `ref_wav`，或设环境变量 `STS2_TTS_REF`；
+2. 把参考音频路径填到 `voice/mambo/ref.json` 的 `ref_wav`，或设环境变量 `DAFEIYU_TTS_REF`（旧游戏前缀也兼容）；
 3. `python main.py voice test "..." --voice mambo`。
 
 合成结果按文本 sha1 缓存在 `logs/tts_cache/`，页面 `/tts` 和桌面弹幕窗共用这份缓存。

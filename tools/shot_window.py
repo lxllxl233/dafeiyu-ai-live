@@ -5,7 +5,7 @@
 `--capture` 起一个实例，再用这个脚本按窗口矩形抓屏。
 
 用法：
-    python tools/shot_window.py out.png [--pid 1234] [--class StS2Streamer]
+    python tools/shot_window.py out.png [--pid 1234] [--class DafeiyuStreamer]
 """
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ u.GetClassNameW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
 u.IsWindowVisible.argtypes = [wintypes.HWND]
 
 
-def find(pid: int = 0, cls_prefix: str = "StS2Streamer"):
+def find(pid: int = 0, cls_prefix: str = "DafeiyuStreamer"):
     hits = []
 
     @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
@@ -53,7 +53,7 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("out")
     ap.add_argument("--pid", type=int, default=0)
-    ap.add_argument("--class", dest="cls", default="StS2Streamer")
+    ap.add_argument("--class", dest="cls", default="DafeiyuStreamer")
     a = ap.parse_args()
     hits = find(a.pid, a.cls)
     if not hits:

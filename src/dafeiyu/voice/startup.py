@@ -4,12 +4,11 @@
 `run_engine.py` 拉起来，不阻塞 UI；真正的就绪状态仍由 MamboTTS 的
 `/control` 与合成结果判断。
 
-引擎目录优先级：调用方传入 > `DAFEIYU_MAMBO_DIR` > `STS2_MAMBO_DIR` >
+引擎目录优先级：调用方传入 > `DAFEIYU_MAMBO_DIR`（或游戏包声明的旧前缀）>
 默认的 `D:\\MamboTTS\\app\\MamboTTS-v1.2.1-full`。
 """
 from __future__ import annotations
 
-import os
 import subprocess
 import sys
 import threading
@@ -18,6 +17,7 @@ import urllib.request
 from pathlib import Path
 
 from .. import paths
+from ..games.catalog import env_value
 
 DEFAULT_ENGINE_DIR = r"D:\MamboTTS\app\MamboTTS-v1.2.1-full"
 _start_lock = threading.Lock()
@@ -26,8 +26,7 @@ _started: dict = {"at": 0.0, "pid": 0, "dir": "", "message": ""}
 
 def engine_dir(configured: str = "") -> Path:
     """找 MamboTTS 根目录；不存在也返回候选路径，交给 start() 报错。"""
-    for value in (configured, os.environ.get("DAFEIYU_MAMBO_DIR"),
-                  os.environ.get("STS2_MAMBO_DIR"), DEFAULT_ENGINE_DIR):
+    for value in (configured, env_value("MAMBO_DIR", ""), DEFAULT_ENGINE_DIR):
         if value and str(value).strip():
             return Path(str(value).strip()).expanduser()
     return Path(DEFAULT_ENGINE_DIR)

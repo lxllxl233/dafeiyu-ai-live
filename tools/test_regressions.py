@@ -742,8 +742,9 @@ check("R26 非战斗直接返回", sts2.get_state_settled().get("screen"), "MAP"
 sts2.get_state, sts2.wait_new_turn_hand = _orig_gs, _orig_wait
 
 # 接线检查：守卫只留一处，别再让某个调用方绕过去
-_act_src = open(os.path.join(ROOT, "tools", "act.py"), encoding="utf-8").read()
-_ctx_src = open(os.path.join(ROOT, "tools", "ctx.py"), encoding="utf-8").read()
+_ENGINE = os.path.join(ROOT, "games", "slay-the-spire-2", "decision")
+_act_src = open(os.path.join(_ENGINE, "act.py"), encoding="utf-8").read()
+_ctx_src = open(os.path.join(_ENGINE, "ctx.py"), encoding="utf-8").read()
 check("R26 act.py 的 auto 走 settled 读", "get_state_settled()" in _act_src, True)
 check("R26 ctx.py 的 CLI 走 settled 读", "get_state_settled()" in _ctx_src, True)
 check("R26 ctx.py 不再自己手写等待", "wait_new_turn_hand(" in _ctx_src, False)

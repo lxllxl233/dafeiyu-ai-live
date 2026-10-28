@@ -26,12 +26,13 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 # 布局：games/slay-the-spire-2/compat/sts2.py
-# PACK = 游戏包根，ROOT = 仓库根（logs/、tools/ 仍在根上，老命令不变）。
+# PACK = 游戏包根，ROOT = 仓库根（logs/ 仍在根上，老命令不变）。
 PACK = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ROOT = os.path.dirname(os.path.dirname(PACK))
-TOOLS = os.path.join(ROOT, "tools")
-if TOOLS not in sys.path:
-    sys.path.insert(0, TOOLS)
+DECISION = os.path.join(PACK, "decision")
+if DECISION in sys.path:
+    sys.path.remove(DECISION)
+sys.path.insert(0, DECISION)
 
 import path as brps
 import perf

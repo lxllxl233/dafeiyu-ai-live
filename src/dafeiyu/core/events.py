@@ -36,6 +36,7 @@ class Topics:
     GAME_CONNECTED = "game.connected"
     GAME_STATE = "game.state"
     GAME_TURN = "game.turn"
+    GAME_EVENT = "game.event"
     GAME_ENDED = "game.ended"
     GAME_ERROR = "game.error"
 

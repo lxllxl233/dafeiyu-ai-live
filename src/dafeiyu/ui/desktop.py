@@ -30,7 +30,7 @@
     空闲    → 「吃饭ing」
     注意：思考态没有「N 秒后自动消失」这种假逻辑；只有 240s 存活超时（Agent 崩了才回空闲）。
 
-直播时怎么用：OBS 的 `StS2 Game` 是 game_capture（只钩游戏进程），本来就不会录到这个窗；
+直播时怎么用：OBS 的游戏画面源是 game_capture（只钩游戏进程），本来就不会录到这个窗；
 另外窗口默认能被录屏拍到（要隐藏可勾右键「录屏里隐藏」或加 --exclude-capture）。
 声音是页面同款动物语（同一个五声音阶合成），本地播放，不进录像。
 """
@@ -62,6 +62,7 @@ except ImportError:  # pragma: no cover
 
 # 布局：src/dafeiyu/ui/desktop.py（仓库根 = 上三级）
 from .. import paths
+from ..games.catalog import env_value
 from . import instance_lock              # 单实例锁：屏幕上不许出现两个弹窗
 from .caster_state import CasterState, IDLE_TEXT, THINKING_TEXT  # 主播三态状态机
 
@@ -69,7 +70,7 @@ ROOT = os.fspath(paths.ROOT)
 ASSETS = os.path.join(ROOT, "ui", "overlay", "assets")
 STATE_FILE = os.path.join(ROOT, "logs", "streamer_window.json")
 TTS_CACHE = os.path.join(ROOT, "logs", "tts_cache")
-PORT = int(os.environ.get("STS2_OVERLAY_PORT", "8730"))
+PORT = int(env_value("OVERLAY_PORT", "8730"))
 # 可选：游戏窗口标题（只用于「把桌宠放到游戏旁边」；不填就按主屏居中）
 GAME_WINDOW_TITLE = os.environ.get("DAFEIYU_GAME_WINDOW_TITLE", "")
 PLACEHOLDER = "（还没收到弹幕 —— agent 一开口，这里就换成它说的话）"
@@ -326,11 +327,11 @@ def animalese_wav(text: str, volume: float = 0.55, rate: int = SPEAK_RATE) -> by
 
 # ---------------------------------------------------------------- 曼波配音（MamboTTS / GPT-SoVITS）
 # 引擎默认地址 127.0.0.1:9880（见 MamboTTS engine_contract.py），POST / + JSON。
-# 环境变量：STS2_TTS_URL 覆盖地址；STS2_TTS_REF 覆盖参考音频路径；STS2_TTS_PROMPT 覆盖参考文本。
-MAMBO_URL = os.environ.get("STS2_TTS_URL", "http://127.0.0.1:9880")
-MAMBO_REF = os.environ.get("STS2_TTS_REF", "")
-MAMBO_PROMPT = os.environ.get(
-    "STS2_TTS_PROMPT", "大家好，欢迎来到我的频道，今天给大家分享一个有趣的内容"
+# 环境变量：DAFEIYU_TTS_*，或游戏包声明的旧前缀。
+MAMBO_URL = env_value("TTS_URL", "http://127.0.0.1:9880")
+MAMBO_REF = env_value("TTS_REF", "")
+MAMBO_PROMPT = env_value(
+    "TTS_PROMPT", "大家好，欢迎来到我的频道，今天给大家分享一个有趣的内容"
 )
 MAMBO_CUT = "，。？！；：、…,.;?!"
 
@@ -368,7 +369,7 @@ def mambo_wav(text: str, volume: float = 0.55, timeout: float = 30.0) -> bytes |
     payload = {
         "text": text,
         "text_language": "zh",
-        "speed": float(os.environ.get("STS2_TTS_SPEED", "1.0")),
+        "speed": float(env_value("TTS_SPEED", "1.0")),
         "cut_punc": MAMBO_CUT,
     }
     if MAMBO_REF:
@@ -395,7 +396,7 @@ def mambo_wav(text: str, volume: float = 0.55, timeout: float = 30.0) -> bytes |
 def mambo_cached_wav(text: str, volume: float = 0.55, timeout: float = 30.0) -> bytes | None:
     """先读 overlay 预热好的磁盘缓存，窗口不再为同一句重新合成。
 
-    `sts2.overlay_say()` 在 POST comment 之前已经把 WAV 写进
+    `overlay_say()` 在 POST comment 之前已经把 WAV 写进
     `logs/tts_cache/<sha1(text)[:20]>.wav`；窗口和页面共用这份缓存。
     `--demo` / 直接调试没有预热时，才退回实时调引擎。
     """
@@ -467,11 +468,11 @@ class Speaker:
         self._offline_warned = False
         self._lock = threading.Lock()
         self._slot = 0
-        self._paths = [os.path.join(tempfile.gettempdir(), f"sts2_voice_{i}.wav") for i in (0, 1)]
+        self._paths = [os.path.join(tempfile.gettempdir(), f"dafeiyu_voice_{i}.wav") for i in (0, 1)]
         self._ok = True
         # 直播间页面（直播姬里那个 browser_source）本来就在本地出声；
         # 窗口再播一遍就是同一句说两次。默认让页面当唯一喇叭，窗口只在没页面时补位。
-        self.delegate = os.environ.get("STS2_VOICE_DELEGATE", "1").lower() not in ("0", "false", "no")
+        self.delegate = env_value("VOICE_DELEGATE", "1").lower() not in ("0", "false", "no")
         self._live_ts = 0.0
         self._live_val = False
         try:
@@ -492,7 +493,7 @@ class Speaker:
         self._live_ts = now
         self._live_val = False
         try:
-            url = os.environ.get("STS2_OVERLAY_URL", "http://127.0.0.1:8730") + "/health"
+            url = env_value("OVERLAY_URL", "http://127.0.0.1:8730") + "/health"
             with urllib.request.urlopen(url, timeout=0.35) as r:
                 d = json.load(r)
             live = int((d.get("roles") or {}).get("live", 0))
@@ -545,7 +546,7 @@ class Speaker:
                 except Exception as e:
                     print("窗口动画回调失败：", e)
             try:  # 自报一声，日志里能看清「这一句到底谁在响」
-                url = os.environ.get("STS2_OVERLAY_URL", "http://127.0.0.1:8730") + "/mark?ev=audio&role=window"
+                url = env_value("OVERLAY_URL", "http://127.0.0.1:8730") + "/mark?ev=audio&role=window"
                 urllib.request.urlopen(url, timeout=0.5).read()
             except Exception:
                 pass
@@ -785,7 +786,7 @@ def render(text: str, status: dict, scale: float = 1.0, talk: float = 0.0,
     if chip:
         # 穿透模式下的唯一可点区：☰ 菜单钮（左键=拖动，右键=菜单；这块区域会自动摘掉穿透）
         cl, ct, cr, cb = chip_rect(L["W"], L["H"], s)
-        if os.environ.get("STS2_STREAMER_DEBUG"):
+        if env_value("STREAMER_DEBUG", ""):
             print(f"chip draw=({cl},{ct},{cr},{cb}) canvas={L['W']}x{L['H']} s={s:.3f}",
                   flush=True)
         draw.rounded_rectangle((cl, ct, cr, cb), radius=max(3, int(5 * s)),
@@ -1227,7 +1228,7 @@ class StreamerWindow:
             # 没存档就跟着游戏窗口所在的显示器放（副屏打游戏时弹幕窗也在副屏）
             gx, gy = self._game_window_center()
             self.pos = self._clamp(gx - _w // 2, gy - int(120 * self.scale), _w, _h)
-        self._cls = f"StS2Streamer{os.getpid()}"
+        self._cls = f"DafeiyuStreamer{os.getpid()}"
         self._register()
         self._create()
 
@@ -1307,7 +1308,7 @@ class StreamerWindow:
         # CreateWindowExW 的坐标偶尔会被系统按虚拟屏/DPI 再挪一次（x≈2564 的旧存档
         # 能把窗口 creat 到主屏外面，弹幕一条都看不见），所以显式再钉一次位置。
         user32.SetWindowPos(self._hwnd, 0, x, y, 0, 0, 0x0001 | 0x0004)  # SWP_NOSIZE|SWP_NOZORDER
-        if os.environ.get("STS2_STREAMER_DEBUG"):
+        if env_value("STREAMER_DEBUG", ""):
             _r = wintypes.RECT()
             user32.GetWindowRect(self._hwnd, ctypes.byref(_r))
             print(f"_create want=({x},{y}) got=({_r.left},{_r.top},{_r.right},{_r.bottom})")
@@ -1322,7 +1323,7 @@ class StreamerWindow:
     def apply_capture_exclusion(self, on: bool) -> bool:
         """WDA_EXCLUDEFROMCAPTURE：这个窗对录屏/采集 API 不可见（Win10 2004+）。
 
-        OBS 现在的 `StS2 Game` 是 game_capture（只钩游戏进程的 swapchain），本来就不会
+        OBS 现在的游戏画面源是 game_capture（只钩游戏进程的 swapchain），本来就不会
         录到这个窗；这句是给「以后切成显示器采集」留的保险——照样不会录进去。
         """
         ok = bool(user32.SetWindowDisplayAffinity(self._hwnd, WDA_EXCLUDEFROMCAPTURE if on else WDA_NONE))
@@ -1750,7 +1751,7 @@ class StreamerWindow:
             self._hot = want
             self._apply_transparent(self.click_through and not want)
             self.dirty = True
-            if os.environ.get("STS2_STREAMER_DEBUG"):
+            if env_value("STREAMER_DEBUG", ""):
                 print(f"穿透交互区：{'进入' if want else '离开'}")
         return want
 
@@ -1860,7 +1861,7 @@ class StreamerWindow:
         """overlay `/thinking` 的落点：seq 迟到的事件由 CasterState 自己丢掉。"""
         before = self.presence.state
         self.presence.set_thinking(bool(on), seq, note)
-        if os.environ.get("STS2_STREAMER_DEBUG"):
+        if env_value("STREAMER_DEBUG", ""):
             print(f"思考状态：on={bool(on)} seq={seq} {before}->{self.presence.state}")
         self.dirty = True
 
@@ -1900,7 +1901,7 @@ class StreamerWindow:
             self.sync_talk(0.0)
         self._pb_playing = playing
         self._pb_speaking = speaking
-        if os.environ.get("STS2_STREAMER_DEBUG") and before != self.presence.state:
+        if env_value("STREAMER_DEBUG", "") and before != self.presence.state:
             print(f"播放状态：{before}->{self.presence.state} {pb}", flush=True)
         if before != self.presence.state:
             self.dirty = True
@@ -1952,7 +1953,7 @@ class StreamerWindow:
             talk = min(1.0, max(0.0, (now - self.talk_start_at) / span))
         text = self.display_text(mode)
         layout_text = self.text if mode == "thinking" and self.text else None
-        if os.environ.get("STS2_STREAMER_DEBUG"):
+        if env_value("STREAMER_DEBUG", ""):
             print(f"frame mode={mode} ct={self.click_through} layout={None if not layout_text else len(layout_text)}",
                   flush=True)
         img = self._render_frame(text, self.status, self.scale, talk,
@@ -2339,7 +2340,7 @@ class PetWindow(StreamerWindow):
             self._hot = want
             self._apply_transparent(not want)
             self.dirty = True
-            if os.environ.get("STS2_STREAMER_DEBUG"):
+            if env_value("STREAMER_DEBUG", ""):
                 print(f"桌宠交互区：{'进入' if want else '离开'}")
         return want
 

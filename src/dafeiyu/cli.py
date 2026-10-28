@@ -17,8 +17,7 @@
     python main.py obs health        OBS 控制（setup/start/stop/health）
 
 不写子命令时 `python main.py` 直接起桌宠；右键菜单可交互。
-老脚本里的 `python sts2.py state` / `python obsctl.py health` 仍可用
-（`tools/sts2.py`、`tools/obsctl.py` 兼容入口）。
+`tools/` 下旧兼容脚本入口仍可用，但新代码统一走 `main.py`。
 """
 
 from __future__ import annotations
@@ -37,7 +36,7 @@ from dafeiyu import __product__, __version__  # noqa: E402
 from dafeiyu import paths  # noqa: E402
 from dafeiyu.core.config import LiveConfig  # noqa: E402
 from dafeiyu.core.session import LiveSession  # noqa: E402
-from dafeiyu.games import GameRegistry  # noqa: E402
+from dafeiyu.games import GameRegistry, env_value  # noqa: E402
 from dafeiyu.persona import Persona  # noqa: E402
 from dafeiyu.voice import build_router  # noqa: E402
 
@@ -247,7 +246,7 @@ def cmd_game(args) -> int:
 
 def cmd_agent(args) -> int:
     """LangGraph 回合流程：观察 → 规划 → 验算 → 执行 → 反思。"""
-    from dafeiyu.agent import (DemoPlanner, DemoTools, LLMPlanner, Sts2Tools,
+    from dafeiyu.agent import (DemoPlanner, DemoTools, LLMPlanner,
                                graph_mermaid, read_runs, run_turn)
     from dafeiyu.core.config import LiveConfig
 
@@ -292,8 +291,21 @@ def cmd_agent(args) -> int:
     if demo:
         tools, planner, mode = DemoTools(), (None if plan else DemoPlanner()), "demo"
     else:
-        tools = Sts2Tools(game=game)
-        planner = None if plan else LLMPlanner(cfg)
+        from dafeiyu.games.registry import GameRegistry
+
+        plugin = GameRegistry().load_plugin(game)
+        if plugin is None:
+            print(f"ERR 找不到游戏插件：{game or '未配置'}")
+            return 2
+        tools = plugin.tools()
+        if tools is None:
+            print(f"ERR 游戏插件没有提供决策工具：{game}")
+            return 2
+        prompt = plugin.prompt("decision")
+        if not prompt:
+            print(f"ERR 游戏插件没有提供决策提示词：{game}")
+            return 2
+        planner = None if plan else LLMPlanner(cfg, system_prompt=prompt)
         mode = "live"
         if not plan and not planner.available()[0]:
             print(f"ERR {planner.available()[1]}；也可以 --plan plan.json 或 --demo")
@@ -582,7 +594,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     p = sub.add_parser("studio", help="起 overlay + 直播姬控制台")
-    p.add_argument("--port", type=int, default=int(os.environ.get("STS2_OVERLAY_PORT", "8730")))
+    p.add_argument("--port", type=int, default=int(env_value("OVERLAY_PORT", "8730")))
     p.set_defaults(func=cmd_studio)
 
     p = sub.add_parser("demo", help="离线演示整条链路（不需要游戏）")
@@ -672,7 +684,7 @@ def build_parser() -> argparse.ArgumentParser:
     q.set_defaults(func=cmd_replay)
 
     q = rs.add_parser("new", help="建一局的空目录（不录像）")
-    q.add_argument("--game", default="slay-the-spire-2")
+    q.add_argument("--game", default=None)
     q.add_argument("--run", type=int, default=None)
     q.add_argument("--character", default="")
     q.add_argument("--ascension", type=int, default=None)
@@ -681,7 +693,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     q = rs.add_parser("start", help="开录一局（OBS 目录指到该局）")
     q.add_argument("--path", default="", help="指定已有局目录（默认用 / 新建当前局）")
-    q.add_argument("--game", default="slay-the-spire-2")
+    q.add_argument("--game", default=None)
     q.add_argument("--run", type=int, default=None)
     q.add_argument("--character", default="")
     q.add_argument("--ascension", type=int, default=None)

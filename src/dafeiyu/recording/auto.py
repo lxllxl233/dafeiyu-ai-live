@@ -2,7 +2,7 @@
 
 这层只做「会话生命周期」，文件命名和 OBS 细节仍复用 ``replay`` / ``obs``。
 自动玩默认录像；设 ``DAFEIYU_AUTOPLAY_RECORD=0`` 可关，OBS 路径可用
-``STS2_OBS_EXE`` 覆盖。
+``DAFEIYU_OBS_EXE``（或游戏别名对应的旧前缀）覆盖。
 """
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ import threading
 import time
 from pathlib import Path
 
+from ..games.catalog import env_value
 from . import replay
 
 _lock = threading.RLock()
@@ -39,9 +40,9 @@ def _connect(timeout: float = 1.0):
     return Obs(cfg.get("url", ""), cfg.get("password", ""), timeout=timeout).connect()
 
 
-def _obs_exe() -> str:
+def _obs_exe(game: str = "") -> str:
     cands = [
-        os.environ.get("STS2_OBS_EXE", ""),
+        env_value("OBS_EXE", "", game=game or None),
         r"C:\Program Files\obs-studio\bin\64bit\obs64.exe",
         r"C:\Program Files (x86)\obs-studio\bin\64bit\obs64.exe",
     ]
@@ -63,7 +64,7 @@ def _launch_obs(exe: str) -> None:
     )
 
 
-def ensure_obs(timeout: float = 20.0) -> tuple[bool, str]:
+def ensure_obs(timeout: float = 20.0, *, game: str = "") -> tuple[bool, str]:
     """OBS 已在跑就直接用；没跑就尝试拉起并等 WebSocket 就绪。"""
     try:
         _connect(1.0).close()
@@ -72,9 +73,9 @@ def ensure_obs(timeout: float = 20.0) -> tuple[bool, str]:
         pass
     if not _enabled():
         return False, "自动录像已关闭（DAFEIYU_AUTOPLAY_RECORD=0）"
-    exe = _obs_exe()
+    exe = _obs_exe(game)
     if not exe:
-        return False, "找不到 OBS（安装 OBS 或设 STS2_OBS_EXE）"
+        return False, "找不到 OBS（安装 OBS 或设 DAFEIYU_OBS_EXE）"
     try:
         _launch_obs(exe)
     except Exception as exc:  # noqa: BLE001
@@ -204,15 +205,16 @@ def write_timeline(run_dir: Path, video: Path | None = None) -> dict:
     return {"events": len(events), "chapters": len(chapters)}
 
 
-def start_session(game: str = "slay-the-spire-2", note: str = "") -> dict:
+def start_session(game: str = "", note: str = "") -> dict:
     """开一局自动玩录像；失败返回 ok=False，不阻断自动玩。"""
     global _session
+    game = replay.game_id(game)
     with _lock:
         if _session and _session.get("active"):
             return {"ok": True, "already": True, "path": _session.get("path", "")}
         if not _enabled():
             return {"ok": False, "error": "自动录像已关闭"}
-        ok, why = ensure_obs()
+        ok, why = ensure_obs(game=game)
         if not ok:
             return {"ok": False, "error": why}
         scene_ok, scene_why = _prepare_scene(game)

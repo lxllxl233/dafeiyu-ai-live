@@ -1,0 +1,23 @@
+{
+  "schema": 2,
+  "id": "toy-duel",
+  "version": "1.0.0",
+  "name": "玩具决斗",
+  "aliases": ["toy"],
+  "status": "ready",
+  "platform": "内置",
+  "entry": "plugin.py:ToyPlugin",
+  "adapter": "adapter.py:ToyAdapter",
+  "capabilities": {
+    "observe": true,
+    "control": true,
+    "autoplay": true,
+    "replay": false,
+    "commentary": true,
+    "modes": ["local"],
+    "state_schema": "toy.state/v1",
+    "action_schema": "toy.action/v1"
+  },
+  "tags": ["内置", "验收", "无需游戏", "第二游戏"],
+  "notes": "完全离线的可控小游戏，用来验证非 STS2 的 observe/control/autoplay 全链路；不启动 Steam，不依赖 OBS。"
+}

@@ -4,7 +4,7 @@
 引擎不在线不是错误——路由层会回退到动物语，直播不哑。
 
 配置优先级：构造参数 > 环境变量 > ``voice/mambo/ref.json`` > 默认值。
-参考音频（ref_wav）是机器本地路径，不进仓库；用 ``STS2_TTS_REF`` / ``DAFEIYU_TTS_REF`` 指过去。
+参考音频（ref_wav）是机器本地路径，不进仓库；用 ``DAFEIYU_TTS_REF``（或游戏包声明的旧前缀）指过去。
 """
 
 from __future__ import annotations
@@ -16,6 +16,7 @@ import time
 import urllib.request
 from pathlib import Path
 
+from ...games.catalog import env_value
 from ..base import VoiceResult, is_wav, read_cache, wav_duration, wav_gain, write_cache
 
 DEFAULTS = {
@@ -59,9 +60,9 @@ class MamboVoice:
     ) -> None:
         base = Path(__file__).resolve().parents[3] / "voice" / "mambo" / "ref.json"
         self.cfg = _load_config(Path(config_path) if config_path else base)
-        self.url = (url or os.environ.get("STS2_TTS_URL") or self.cfg["url"]).rstrip("/")
-        self.ref_wav = ref_wav or os.environ.get("STS2_TTS_REF") or self.cfg["ref_wav"]
-        self.prompt = prompt or os.environ.get("STS2_TTS_PROMPT") or self.cfg["prompt"]
+        self.url = (url or env_value("TTS_URL", "") or self.cfg["url"]).rstrip("/")
+        self.ref_wav = ref_wav or env_value("TTS_REF", "") or self.cfg["ref_wav"]
+        self.prompt = prompt or env_value("TTS_PROMPT", "") or self.cfg["prompt"]
         self.speed = float(speed if speed is not None else self.cfg["speed"])
         self.volume = float(volume if volume is not None else self.cfg["volume"])
         self.timeout = float(timeout if timeout is not None else self.cfg["timeout"])

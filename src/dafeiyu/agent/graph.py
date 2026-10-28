@@ -13,6 +13,7 @@ from __future__ import annotations
 import time
 from typing import Any, TypedDict
 
+from ..games.contracts import as_action_result
 from .planner import ProvidedPlanner
 from .tools import DemoPlanner, DemoTools, Tools
 from .trace import TraceRecorder
@@ -85,6 +86,11 @@ def _node_summary(name: str, out: dict, state: AgentState) -> str:
     return ""
 
 
+def _tool_result(value: Any, action: str) -> dict:
+    """工具结果统一成 legacy dict；新插件返回 ActionResult 也能直接跑。"""
+    return as_action_result(value, action=action).to_legacy()
+
+
 def build_graph(tools: Tools, planner: Any, recorder: TraceRecorder,
                 *, max_attempts: int = 2, should_stop=None):
     if StateGraph is None:
@@ -121,9 +127,9 @@ def build_graph(tools: Tools, planner: Any, recorder: TraceRecorder,
     def observe(state: AgentState) -> dict:
         if cancelled():
             return {"error": "已停手", "done": True}
-        res = tools.observe()
+        res = _tool_result(tools.observe(), "observe")
         if not res.get("ok"):
-            return {"error": str(res.get("error") or "观察失败"), "done": True}
+            return {"error": str(res.get("error") or res.get("err") or "观察失败"), "done": True}
         ctx = res.get("context") if isinstance(res.get("context"), dict) else res
         return {"context": ctx or {}, "game": state.get("game") or ""}
 
@@ -160,7 +166,7 @@ def build_graph(tools: Tools, planner: Any, recorder: TraceRecorder,
     def validate(state: AgentState) -> dict:
         if cancelled():
             return {"error": "已停手", "done": True}
-        res = tools.validate(state.get("plan") or {})
+        res = _tool_result(tools.validate(state.get("plan") or {}), "validate")
         if not res.get("ok"):
             return {"validation": res,
                     "feedback": str(res.get("err") or res.get("error") or "验算未通过")}
@@ -169,8 +175,11 @@ def build_graph(tools: Tools, planner: Any, recorder: TraceRecorder,
     def execute(state: AgentState) -> dict:
         if cancelled():
             return {"error": "已停手", "done": True}
-        res = tools.execute(state.get("plan") or {},
-                            dry_run=bool(state.get("dry_run", True)))
+        res = _tool_result(
+            tools.execute(state.get("plan") or {},
+                          dry_run=bool(state.get("dry_run", True))),
+            "execute",
+        )
         if not res.get("ok"):
             return {"result": res, "feedback": str(res.get("err") or res.get("error") or "执行失败")}
         return {"result": res, "feedback": ""}
@@ -227,7 +236,7 @@ def build_graph(tools: Tools, planner: Any, recorder: TraceRecorder,
 
 
 def run_turn(goal: str, *, tools: Tools | None = None, planner: Any = None,
-             plan: dict | None = None, game: str = "slay-the-spire-2",
+             plan: dict | None = None, game: str = "",
              dry_run: bool = True, max_attempts: int = 2,
              trace_path=None, mode: str = "demo", should_stop=None) -> dict:
     """跑一轮图；`plan` 给了就优先用它（外部 Agent 模式）。"""
