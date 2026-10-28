@@ -211,11 +211,16 @@ class StudioRuntime:
     def update_config(self, body: dict) -> dict:
         """从控制台/桌宠菜单保存语音、模型、API 配置。"""
         patch: dict = {}
-        for key in ("voice", "game", "mambo_dir", "llm_provider", "llm_base_url", "llm_model"):
+        for key in ("voice", "game", "mambo_dir", "llm_provider", "llm_base_url", "llm_model",
+                    "autoplay_mode", "autoplay_pace", "autoplay_llm_model"):
             if body.get(key) is not None:
                 patch[key] = str(body[key]).strip()
         if patch.get("voice") not in (None, "", "mambo", "animal", "off"):
             raise ValueError("voice 只能是 mambo / animal / off")
+        if patch.get("autoplay_mode") not in (None, "", "local", "llm"):
+            raise ValueError("autoplay_mode 只能是 local / llm")
+        if patch.get("autoplay_pace") not in (None, "", "voice", "normal"):
+            raise ValueError("autoplay_pace 只能是 voice / normal")
         if "game" in patch and patch["game"]:
             if self.registry.get(patch["game"]) is None:
                 raise ValueError("未知游戏")

@@ -718,7 +718,10 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 from dafeiyu.agent.play import start_autoplay
 
-                result = start_autoplay()
+                n = int(self.headers.get("Content-Length", "0") or 0)
+                body = json.loads(self.rfile.read(n) or b"{}") if n else {}
+                body = body if isinstance(body, dict) else {}
+                result = start_autoplay(mode=body.get("mode"), pace=body.get("pace"))
                 code = 200 if result.get("ok") else 503
                 self._send(code, json.dumps(result, ensure_ascii=False).encode("utf-8"),
                            "application/json; charset=utf-8")

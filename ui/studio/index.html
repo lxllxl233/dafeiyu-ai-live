@@ -459,6 +459,19 @@
           <div class="kv" style="margin-top:12px"><span>自动玩法</span><b id="playState">—</b></div>
           <div class="kv"><span>局面</span><b id="playDetail">—</b></div>
           <div class="kv"><span>步数</span><b id="playStep">—</b></div>
+          <div class="field" style="margin-top:12px"><label for="playMode">玩法</label>
+            <select id="playMode">
+              <option value="local">本地算账（不烧 token）</option>
+              <option value="llm">LLM 规划（慢，按回合思考）</option>
+            </select></div>
+          <div class="field"><label for="playLlmModel">LLM 模型</label>
+            <input id="playLlmModel" placeholder="deepseek-chat"></div>
+          <div class="field"><label for="playPace">播报节奏</label>
+            <select id="playPace">
+              <option value="voice">慢速：等语音播完再打</option>
+              <option value="normal">普通：旧版快节奏</option>
+            </select></div>
+          <div class="hint" id="playHint" style="font-size:12px">运行中切换玩法会停手，重新点「让她玩」生效；节奏下一步生效。</div>
           <div class="kv"><span>轨迹条数</span><b id="agentTraceCount">—</b></div>
           <div class="kv"><span>运行命令</span><b><code>python main.py agent run --demo</code></b></div>
           <div class="kv"><span>真实 dry-run</span><b><code>python main.py agent run</code></b></div>
@@ -752,13 +765,47 @@ function renderAgent(){
 
 function renderPlay(){
   const p = DATA?.play || {};
+  const cfg = DATA?.config || {};
   const running = !!p.running;
-  $("#playState").textContent = running ? "运行中" : (p.error ? "异常停手" : "停手");
+  const mode = p.mode || cfg.autoplay_mode || "local";
+  const pace = cfg.autoplay_pace || p.pace || "voice";
+  if (document.activeElement !== $("#playMode")) {
+    $("#playMode").value = mode === "llm" ? "llm" : "local";
+  }
+  if (document.activeElement !== $("#playLlmModel")) {
+    $("#playLlmModel").value = cfg.autoplay_llm_model || cfg.llm_model || "deepseek-chat";
+  }
+  if (document.activeElement !== $("#playPace")) {
+    $("#playPace").value = pace === "normal" ? "normal" : "voice";
+  }
+  $("#playState").textContent = running
+    ? `运行中 · ${mode === "llm" ? "LLM" : "本地"} · ${pace === "voice" ? "慢速" : "普通"}`
+    : (p.error ? "异常停手" : "停手");
   const where = p.screen ? `${p.screen} · f${p.floor || "?"} · HP ${p.hp || "?"}/${p.max_hp || "?"}` : (p.last || "—");
   $("#playDetail").textContent = where;
   $("#playStep").textContent = p.step ? `${p.step} 步` : "—";
   $("#playStart").disabled = running;
   $("#playStop").disabled = !running;
+  $("#playHint").textContent = running
+    ? "运行中切换玩法需先「停手」；播报节奏从下一步生效。"
+    : "玩法/节奏会写本机 config.json；LLM 模式只分析战斗回合，其他界面仍走本地。";
+}
+
+async function savePlaySettings(){
+  try{
+    const r = await fetch("/api/config", {
+      method:"POST", headers:{"content-type":"application/json"},
+      body: JSON.stringify({
+        autoplay_mode: $("#playMode").value,
+        autoplay_llm_model: $("#playLlmModel").value.trim() || "deepseek-chat",
+        autoplay_pace: $("#playPace").value,
+      }),
+    });
+    const res = await r.json();
+    if(!res.ok) throw new Error(res.error || "HTTP " + r.status);
+    toast("已保存玩法/节奏");
+    refresh();
+  }catch(e){ toast("保存失败：" + e.message, true); }
 }
 
 async function startPlay(){
@@ -1040,6 +1087,9 @@ $("#gameLaunch").addEventListener("click", launchGame);
 $("#agentRun").addEventListener("click", runAgent);
 $("#playStart").addEventListener("click", startPlay);
 $("#playStop").addEventListener("click", stopPlay);
+$("#playMode").addEventListener("change", savePlaySettings);
+$("#playPace").addEventListener("change", savePlaySettings);
+$("#playLlmModel").addEventListener("change", savePlaySettings);
 $("#cfgClearKey").addEventListener("click", clearApiKey);
 $("#reload").addEventListener("click", (e) => { e.preventDefault(); refresh(); });
 ["thought","meme"].forEach(id => $("#" + id).addEventListener("input", setCounter));

@@ -1451,7 +1451,24 @@ class StreamerWindow:
         if not games:
             user32.AppendMenuW(game_menu, MF_STRING | MF_GRAYED, 0, "没有注册游戏")
         user32.AppendMenuW(hmenu, MF_POPUP, game_menu, "游戏")
-        user32.AppendMenuW(hmenu, MF_STRING, 44, "让她玩")
+        # 「让她玩」二级菜单：玩法 + 播报节奏；选中即保存并开一局。
+        play_mode = str(getattr(cfg, "autoplay_mode", "local") or "local")
+        play_pace = str(getattr(cfg, "autoplay_pace", "voice") or "voice")
+        has_key = bool(getattr(cfg, "llm_api_key", "")) if cfg else False
+        play_menu = user32.CreatePopupMenu()
+        user32.AppendMenuW(play_menu, MF_STRING | (MF_CHECKED if play_mode == "local" else 0),
+                           46, "本地算账")
+        user32.AppendMenuW(
+            play_menu,
+            MF_STRING | (MF_CHECKED if play_mode == "llm" else 0)
+            | (0 if has_key else MF_GRAYED),
+            47, "LLM 规划" if has_key else "LLM 规划（先配 API Key）")
+        user32.AppendMenuW(play_menu, MF_SEPARATOR, 0, None)
+        user32.AppendMenuW(play_menu, MF_STRING | (MF_CHECKED if play_pace == "voice" else 0),
+                           48, "慢速播报（等语音）")
+        user32.AppendMenuW(play_menu, MF_STRING | (MF_CHECKED if play_pace == "normal" else 0),
+                           49, "普通节奏")
+        user32.AppendMenuW(hmenu, MF_POPUP, play_menu, "让她玩")
         user32.AppendMenuW(hmenu, MF_STRING, 45, "让她停手")
         user32.AppendMenuW(hmenu, MF_STRING, 43, "只启动游戏")
         user32.AppendMenuW(hmenu, MF_SEPARATOR, 0, None)
@@ -1481,6 +1498,10 @@ class StreamerWindow:
             self.launch_game()
         elif cmd == 44:
             self.play_game()
+        elif cmd in (46, 47):
+            self.set_play_mode("local" if cmd == 46 else "llm")
+        elif cmd in (48, 49):
+            self.set_play_pace("voice" if cmd == 48 else "normal")
         elif cmd == 45:
             self.stop_play()
         elif cmd == 40:
@@ -1569,6 +1590,54 @@ class StreamerWindow:
             print("让她玩：" + str(result.get("message") or result.get("error") or result))
         except Exception as exc:
             print(f"让她玩启动失败：{exc}")
+
+    def set_play_mode(self, mode: str) -> None:
+        """切换本地/LLM 玩法；运行中则停手后按新模式重开。"""
+        mode = "llm" if mode == "llm" else "local"
+        try:
+            from ..agent.play import start_autoplay, status, stop_autoplay
+            from ..core.config import LiveConfig
+
+            if mode == "llm":
+                from ..agent.planner import LLMPlanner
+
+                ok, why = LLMPlanner().available()
+                if not ok:
+                    print("LLM 玩： " + why)
+                    return
+            cfg = LiveConfig.load()
+            cfg.save_patch({"autoplay_mode": mode})
+            if status().get("running"):
+                stop_autoplay()
+                threading.Thread(target=self._restart_autoplay, args=(mode,),
+                                 name="dafeiyu-restart-play", daemon=True).start()
+                print(f"已切换为{'LLM 规划' if mode == 'llm' else '本地算账'}，正在停手重开…")
+                return
+            result = start_autoplay(mode=mode)
+            print("让她玩：" + str(result.get("message") or result.get("error") or result))
+        except Exception as exc:
+            print(f"切换玩法失败：{exc}")
+
+    def _restart_autoplay(self, mode: str) -> None:
+        from ..agent.play import start_autoplay, status
+
+        for _ in range(50):
+            if not status().get("running"):
+                break
+            time.sleep(0.2)
+        result = start_autoplay(mode=mode)
+        print("让她玩：" + str(result.get("message") or result.get("error") or result))
+
+    def set_play_pace(self, pace: str) -> None:
+        """播报节奏写配置；运行中的循环下一步就会读到。"""
+        pace = "normal" if pace == "normal" else "voice"
+        try:
+            from ..core.config import LiveConfig
+
+            LiveConfig.load().save_patch({"autoplay_pace": pace})
+            print("播报节奏：" + ("慢速（等语音）" if pace == "voice" else "普通"))
+        except Exception as exc:
+            print(f"切换播报节奏失败：{exc}")
 
     def stop_play(self) -> None:
         try:

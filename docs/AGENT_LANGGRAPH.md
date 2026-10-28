@@ -114,22 +114,27 @@ python main.py agent graph
 
 ## 6. 整局自动玩法与回合图的分工
 
-`python main.py play` / 右键「让她玩」跑的是 `src/dafeiyu/agent/play.py`：它是一个
-**整局循环**，不是每个动作都过 LangGraph。原因是整局包含大量不需要 LLM 的界面切换
+`python main.py play` / 右键「让她玩 ▸ 本地算账」跑的是 `src/dafeiyu/agent/play.py`：
+它是一个**整局循环**，不是每个动作都过 LangGraph。原因是整局包含大量不需要 LLM 的界面切换
 （地图、奖励、营火、商店），每一步都进图会慢且费 token。
+
+右键「让她玩 ▸ LLM 规划」只把**战斗回合**交给图：`_combat_llm` 调
+`run_turn(..., tools=Sts2Tools, planner=LLMPlanner, dry_run=False)`，所以战斗决策、验算、
+执行和轨迹都能在「Agent 流程」看到；地图/奖励等仍由本地循环处理。默认用
+`deepseek-chat`（非推理模型），避免长局面把 reasoning 预算吃完、content 为空。
 
 两者共用同一套工具边界：
 
 | 层 | 自动玩法 | LangGraph 单回合 |
 |---|---|---|
 | 读局面 | `tools/ctx.py` 同源 | `observe` 节点 |
-| 算牌/出牌 | `advisor.py` + `sts2 batch` | `validate` / `execute` |
+| 算牌/出牌 | `advisor.py` 或 `run_turn` | `validate` / `execute` |
 | 轨迹 | `logs/autoplay.jsonl` | `logs/agent_trace.jsonl` |
 | 控制 | `logs/autoplay.stop` | `--execute` 显式开关 |
 
-如果要把自动玩法的战斗段升级成「每回合 LLM 规划」，最小改法是替换 `_combat` 里的
-`advisor.build_plan`：保留 `sts2 batch` 执行，把那一步换成 `run_turn(..., planner=LLMPlanner())`，
-并在 `logs/autoplay.jsonl` 记录 run_id。先不要把整局所有界面都塞进图里。
+如果要把整局自动玩法的战斗段再升级，最小改法是改 `_combat_llm` 里的 goal / 模型，
+或把 `LLMPlanner` 换成外部计划；保留 `run_turn` 的观察/验算/执行和 trace。先不要把整局
+所有界面都塞进图里。
 
 ## 7. 和 DeepSeek Harness 的分工
 

@@ -15,6 +15,7 @@ python main.py                 # 桌宠
 python main.py studio          # overlay + 控制台 http://127.0.0.1:8730/studio
 python main.py game launch     # 只按 config.game 启动（STS2 = Steam 2868840）
 python main.py play            # 启动 + 让她自动跑；Ctrl+C 停
+python main.py play --mode llm # 战斗回合交给 LLM（需 API Key）
 python main.py play --stop     # 跨进程停手
 python main.py doctor          # 环境自检
 ```
@@ -33,7 +34,9 @@ python main.py agent trace --limit 5
 
 ## 让她玩
 
-右键「让她玩」/「让她停手」，或 `python main.py play`。整局循环在
+右键「让她玩」二级菜单：本地算账 / LLM 规划 / 慢速播报 / 普通节奏；「让她停手」单独一项。
+LLM 模式只把战斗回合交给 LangGraph `run_turn`，默认模型 `deepseek-chat`；地图/奖励仍本地。
+默认慢速播报按台词长度等语音，至少 2 秒一步；普通节奏是旧版 0.7 秒。整局循环在
 `src/dafeiyu/agent/play.py`，状态 `logs/autoplay.json`，步骤 `logs/autoplay.jsonl`，
 停手文件 `logs/autoplay.stop`。只处理已知界面；未知界面会停下，不猜按钮。
 

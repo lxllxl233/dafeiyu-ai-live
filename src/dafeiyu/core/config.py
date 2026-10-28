@@ -59,6 +59,12 @@ class LiveConfig:
     # 行为
     push_overlay: bool = True
     strict_lint: bool = False
+    # 自动玩法：local = 本地算账；llm = 战斗回合交给 LLM 规划
+    autoplay_mode: str = "local"
+    # 自动玩法的 LLM 模型；默认用非推理模型，避免长局面把 content 挤空
+    autoplay_llm_model: str = "deepseek-chat"
+    # voice = 每步等语音/留出发音时间；normal = 旧版快节奏
+    autoplay_pace: str = "voice"
     extra: dict = field(default_factory=dict)
 
     # ---------------------------------------------------------------- 读取
@@ -92,6 +98,9 @@ class LiveConfig:
             "DAFEIYU_GAME": "game",
             "DAFEIYU_VOLUME": "volume",
             "DAFEIYU_MIN_GAP": "min_gap",
+            "DAFEIYU_AUTOPLAY_MODE": "autoplay_mode",
+            "DAFEIYU_AUTOPLAY_LLM_MODEL": "autoplay_llm_model",
+            "DAFEIYU_AUTOPLAY_PACE": "autoplay_pace",
             "DAFEIYU_HOST": "host",
             "DAFEIYU_PORT": "port",
             "DAFEIYU_OVERLAY": "overlay_url",

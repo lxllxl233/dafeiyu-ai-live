@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import time
 
 from dafeiyu.agent import play
 
@@ -90,6 +91,21 @@ def test_rest_prefers_heal_when_low():
     last = play._rest(fake, state)
     assert "1" in last
     assert ("choose_rest_option", {"option_index": 1}) in fake.calls
+
+
+def test_rest_proceeds_when_option_already_resolved():
+    state = {"screen": "REST", "available_actions": ["proceed"],
+             "rest": {"options": []}}
+    fake = _FakeSts2([state])
+    last = play._rest(fake, state)
+    assert last == "REST proceed"
+    assert fake.calls == [("proceed", {})]
+
+
+def test_speech_pace_sets_a_wait_window():
+    play._speech_until = 0.0
+    play._remember_speech("它这回合打十六，我先挡满再还手，别急。")
+    assert play._speech_until > time.time() + 1.0
 
 
 def test_unknown_screen_does_not_guess_a_button():

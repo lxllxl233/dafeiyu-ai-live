@@ -128,12 +128,16 @@ class GameAdapter:
 ### 让她玩
 
 `src/dafeiyu/agent/play.py` 是整局自动循环：先 `launch_game`，再按 `screen` 分派战斗/奖励/
-地图/营火/事件/商店/宝箱。战斗读 `tools/ctx.py` 同源局面，走 `tools/advisor.py` 本地算账，
-非战斗走 `tools/sts2.py` 的 CLI；默认只对 `slay-the-spire-2` 开放。
+地图/营火/事件/商店/宝箱。战斗读 `tools/ctx.py` 同源局面：
 
+- `local`：`tools/advisor.py` 本地算伤害/格挡/斩杀，走 `sts2 batch`；
+- `llm`：战斗回合走 LangGraph `run_turn` + `LLMPlanner` + `tools/act.py`，默认模型
+  `deepseek-chat`，非战斗仍本地处理；失败会停手并写 `error`，不静默换成本地。
+
+播报节奏也在同一份配置里：`voice` 按上一句字数估算播完时间（至少 2 秒），
+`normal` 是旧版 0.7 秒。模式/节奏写 `config.json`，桌宠二级菜单、控制台和 CLI 共用；
 跨进程控制不靠内存：`logs/autoplay.stop` 是停手文件，`logs/autoplay.json` 是状态，
-`logs/autoplay.jsonl` 是步骤日志。桌宠、管理端、CLI 都读写同一组文件，所以哪个进程先起都能停。
-未知界面不猜按钮，直接停在那一步并写 `last/error`。
+`logs/autoplay.jsonl` 是步骤日志。未知界面不猜按钮，直接停在那一步并写 `last/error`。
 
 ## 6. UI 服务
 
@@ -146,7 +150,7 @@ class GameAdapter:
 | `/api/studio` | 四层状态聚合 + 决策/日志/Token 遥测（人设/语音/游戏/overlay/最近台词） |
 | `/api/config` | GET 配置（Key 只报是否已配置）/ POST 保存语音、模型、游戏、API |
 | `/api/game/launch` | 按 `config.game` 或 `{game}` 只启动游戏 |
-| `/api/play/start` | 启动当前游戏并开始自动玩 |
+| `/api/play/start` | `{mode?, pace?}` 启动自动玩；默认读 config |
 | `/api/play/stop` | 跨进程停手 |
 | `/api/agent/run` | 跑一轮离线 Agent 演示（不碰游戏） |
 | `/api/voice/start` | 启动本地曼波引擎（MamboTTS `run_engine.py`） |

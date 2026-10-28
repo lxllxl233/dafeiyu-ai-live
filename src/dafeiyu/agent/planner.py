@@ -43,9 +43,11 @@ def _extract_plan(text: str) -> dict:
 class LLMPlanner:
     name = "llm"
 
-    def __init__(self, cfg: LiveConfig | None = None, *, timeout: float = 60.0) -> None:
+    def __init__(self, cfg: LiveConfig | None = None, *, timeout: float = 60.0,
+                 model: str | None = None) -> None:
         self.cfg = cfg or LiveConfig.load()
         self.timeout = timeout
+        self.model = str(model or self.cfg.llm_model or "deepseek-chat")
 
     def _url(self) -> str:
         base = (self.cfg.llm_base_url or "https://api.deepseek.com/v1").rstrip("/")
@@ -61,7 +63,7 @@ class LLMPlanner:
         if not ok:
             return {"ok": False, "error": why, "planner": self.name}
         payload = {
-            "model": self.cfg.llm_model or "deepseek-chat",
+            "model": self.model,
             "messages": [
                 {"role": "system", "content": _SYSTEM},
                 {"role": "user", "content": json.dumps({
@@ -71,7 +73,9 @@ class LLMPlanner:
                 }, ensure_ascii=False)},
             ],
             "temperature": 0.2,
-            "max_tokens": 900,
+            # 推理型模型（如 deepseek-flash）会先消耗 reasoning token；
+            # 900/2200 在长局面下仍可能把 content 挤空，给足预算。
+            "max_tokens": 4096,
             "stream": False,
         }
         try:
@@ -88,13 +92,20 @@ class LLMPlanner:
                     "error": f"HTTP {resp.status_code}: {resp.text[:240]}"}
         try:
             body = resp.json()
-            content = body["choices"][0]["message"]["content"]
+            choice = body["choices"][0]
+            content = choice["message"]["content"] or ""
+            reasoning = choice["message"].get("reasoning_content") or ""
         except (ValueError, KeyError, IndexError, TypeError) as exc:
             return {"ok": False, "planner": self.name, "error": f"响应格式错误：{exc}"}
         plan = _extract_plan(content)
+        if not plan and reasoning:
+            # 少数推理模型把最终 JSON 落在 reasoning_content 末尾；能解析就用。
+            plan = _extract_plan(reasoning)
         if not plan:
+            finish = str(choice.get("finish_reason") or "")
             return {"ok": False, "planner": self.name,
-                    "error": "模型没有返回可解析的 JSON 计划"}
+                    "error": (f"模型没有返回可解析的 JSON 计划（content {len(content)} 字，"
+                              f"reasoning {len(reasoning)} 字，finish={finish or '?'}）")}
         usage = body.get("usage") or {}
         return {
             "ok": True, "plan": plan, "planner": self.name,

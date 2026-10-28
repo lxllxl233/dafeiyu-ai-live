@@ -314,7 +314,9 @@ def cmd_play(args) -> int:
         result = stop_autoplay()
         print(result.get("message") or "已请求停手")
         return 0
-    result = start_autoplay(getattr(args, "game", None))
+    result = start_autoplay(getattr(args, "game", None),
+                            mode=getattr(args, "mode", None),
+                            pace=getattr(args, "pace", None))
     print(result.get("message") or result.get("error") or "")
     if not result.get("ok"):
         return 1
@@ -620,6 +622,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("play", help="启动游戏并让她自动玩（Ctrl+C 停）")
     p.add_argument("--game", default=None)
+    p.add_argument("--mode", choices=["local", "llm"], default=None,
+                   help="local=本地算账；llm=战斗回合交给 LLM")
+    p.add_argument("--pace", choices=["voice", "normal"], default=None,
+                   help="voice=等语音；normal=旧版快节奏")
     p.add_argument("--stop", action="store_true", help="只停手，不启动")
     p.set_defaults(func=cmd_play)
 

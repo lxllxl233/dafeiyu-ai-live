@@ -29,10 +29,11 @@ LOG_PATH = paths.LOGS / "autoplay.jsonl"
 _lock = threading.RLock()
 _thread: threading.Thread | None = None
 _stop = threading.Event()
+_speech_until = 0.0
 _state: dict = {
     "running": False, "screen": "", "floor": 0, "hp": 0, "max_hp": 0,
     "step": 0, "last": "", "error": "", "started_at": 0, "updated_at": 0,
-    "game": "", "pid": 0,
+    "game": "", "pid": 0, "mode": "local", "pace": "voice",
 }
 
 
@@ -118,11 +119,54 @@ def status() -> dict:
 
 
 def _say(text: str) -> None:
+    _remember_speech(text)
     try:
         sts2, _ = _import_tools()
         sts2.overlay_say("思路", text, "")
     except Exception:
         pass
+
+
+def _settings() -> tuple[str, str]:
+    """读本机配置；菜单/控制台刚改过也能在下一步生效。"""
+    try:
+        from ..core.config import LiveConfig
+
+        cfg = LiveConfig.load()
+        mode = str(cfg.autoplay_mode or "local").strip().lower()
+        pace = str(cfg.autoplay_pace or "voice").strip().lower()
+        return (mode if mode in ("local", "llm") else "local",
+                pace if pace in ("voice", "normal") else "voice")
+    except Exception:
+        return "local", "voice"
+
+
+def _remember_speech(text: str) -> None:
+    """按字数估一个「这句话大概播完」的时间，给语音模式留出气口。"""
+    global _speech_until
+    clean = " ".join(str(text or "").split())
+    if not clean:
+        return
+    # 中文 TTS 约 4-5 字/秒，再加一点合成/出场余量；不要无限等。
+    seconds = min(10.0, max(1.6, len(clean) * 0.22 + 1.0))
+    _speech_until = max(_speech_until, time.time() + seconds)
+
+
+def _sleep(seconds: float) -> None:
+    end = time.time() + max(0.0, float(seconds))
+    while time.time() < end:
+        if _stop.is_set() or STOP_PATH.exists():
+            return
+        time.sleep(min(0.2, max(0.02, end - time.time())))
+
+
+def _pace() -> None:
+    """normal = 旧版快节奏；voice = 等上一句估计播完，至少留 2 秒。"""
+    _, pace = _settings()
+    if pace == "normal":
+        _sleep(0.7)
+        return
+    _sleep(max(2.0, _speech_until - time.time()))
 
 
 def _call(sts2, fn, *args, **kwargs):
@@ -263,7 +307,41 @@ def _choose_map(sts2, state: dict) -> str:
 
 
 # ---------------------------------------------------------------- 战斗
-def _combat(sts2, advisor, state: dict) -> str:
+def _combat_llm(tools, planner, state: dict, game: str) -> str:
+    """战斗回合交给 LangGraph + LLM；非战斗界面仍用本地快速处理。"""
+    from .graph import run_turn  # noqa: PLC0415
+
+    run = state.get("run") or {}
+    goal = (f"第 {run.get('floor', '?')} 层，HP {run.get('current_hp', '?')}/"
+            f"{run.get('max_hp', '?')}。打完整回合：先看局面，能斩杀就斩杀，"
+            "不能斩杀先挡满，最后 end。")
+    _write_status(last="LLM 思考…")
+    try:
+        result = run_turn(
+            goal, tools=tools, planner=planner, dry_run=False,
+            game=game or "slay-the-spire-2", max_attempts=2,
+        )
+    except Exception as exc:  # noqa: BLE001
+        _log("llm_failed", error=f"{type(exc).__name__}: {exc}")
+        return f"LLM_FAILED {type(exc).__name__}: {exc}"
+    if not result.get("ok"):
+        err = str(result.get("error") or "未知错误")[:180]
+        _log("llm_failed", error=err, run_id=result.get("run_id"))
+        return f"LLM_FAILED {err}"
+    plan = result.get("plan") or {}
+    seq = plan.get("seq") if isinstance(plan, dict) else None
+    say = plan.get("say") if isinstance(plan, dict) else None
+    if isinstance(say, list):
+        _remember_speech(" ".join(str(x) for x in say if str(x).strip()))
+    elif say:
+        _remember_speech(str(say))
+    _log("llm_combat", run_id=result.get("run_id"), steps=len(seq or []),
+         tokens=result.get("tokens"),
+         out=str((result.get("result") or {}).get("output") or "")[:160])
+    return f"LLM {len(seq or [])}步"
+
+
+def _combat_local(sts2, advisor, state: dict) -> str:
     acts = set(_acts(state))
     if not ({"play_card", "end_turn"} & acts):
         return "WAIT_COMBAT"
@@ -281,6 +359,7 @@ def _combat(sts2, advisor, state: dict) -> str:
             cands = advisor.candidates(plan)
             meme = cands[0] if cands else ""
         spec = advisor.spec_from_plan(plan, thought, meme)
+        _remember_speech(" ".join(x for x in (thought, meme) if x))
         _, out = _call(sts2, sts2.cmd_batch, json.dumps(spec, ensure_ascii=False))
         _log("combat", dmg=plan.get("dmg"), taken=plan.get("taken"),
              kills=plan.get("kills"), out=out.strip().splitlines()[-1:] or [""])
@@ -290,6 +369,13 @@ def _combat(sts2, advisor, state: dict) -> str:
         sts2.act("end_turn")
         return "COMBAT end"
     return "WAIT_COMBAT"
+
+
+def _combat(sts2, advisor, state: dict, *, mode: str = "local",
+            llm_tools=None, llm_planner=None, game: str = "") -> str:
+    if mode == "llm" and llm_tools is not None and llm_planner is not None:
+        return _combat_llm(llm_tools, llm_planner, state, game)
+    return _combat_local(sts2, advisor, state)
 
 
 # ---------------------------------------------------------------- 非战斗
@@ -340,6 +426,10 @@ def _card_selection(sts2, state: dict) -> str:
 def _rest(sts2, state: dict) -> str:
     opts = [o for o in ((state.get("rest") or {}).get("options") or []) if isinstance(o, dict)]
     if not opts:
+        # 有些版本选完休息/锻造后 REST 只剩 proceed，不点会原地循环。
+        if "proceed" in _acts(state):
+            sts2.act("proceed")
+            return "REST proceed"
         return "REST no options"
     _, hp, mhp = _run_meta(state)
     pct = hp / mhp if mhp else 1.0
@@ -393,7 +483,8 @@ def _modal(sts2, state: dict) -> str:
     return "MODAL unknown"
 
 
-def _one_step(sts2, advisor, state: dict) -> str:
+def _one_step(sts2, advisor, state: dict, *, mode: str = "local",
+              llm_tools=None, llm_planner=None, game: str = "") -> str:
     screen = _screen(state)
     if screen == "GAME_OVER":
         return "GAME_OVER"
@@ -401,7 +492,8 @@ def _one_step(sts2, advisor, state: dict) -> str:
         new = _ensure_run(sts2, state)
         return "START_RUN" if new else f"WAIT_{screen}"
     if screen == "COMBAT":
-        return _combat(sts2, advisor, state)
+        return _combat(sts2, advisor, state, mode=mode, llm_tools=llm_tools,
+                       llm_planner=llm_planner, game=game)
     if screen == "REWARD":
         return _reward(sts2, state)
     if screen == "CARD_SELECTION":
@@ -438,12 +530,21 @@ def _wait_game(sts2, timeout: float = 120.0) -> dict | None:
     return None
 
 
-def _run(game: str) -> None:
-    global _thread
-    sts2 = advisor = None
+def _run(game: str, mode: str = "local") -> None:
+    global _thread, _speech_until
+    sts2 = advisor = llm_tools = llm_planner = None
     try:
         sts2, advisor = _import_tools()
-        _write_status(running=True, game=game, error="", step=0,
+        if mode == "llm":
+            from .planner import LLMPlanner  # noqa: PLC0415
+            from .tools import Sts2Tools  # noqa: PLC0415
+            from ..core.config import LiveConfig  # noqa: PLC0415
+
+            cfg = LiveConfig.load()
+            llm_tools = Sts2Tools(game)
+            llm_planner = LLMPlanner(cfg, model=cfg.autoplay_llm_model or cfg.llm_model)
+        _speech_until = 0.0
+        _write_status(running=True, game=game, error="", step=0, mode=mode,
                       started_at=time.time(), last="启动游戏…")
         state = _wait_game(sts2, timeout=150)
         if state is None:
@@ -451,7 +552,8 @@ def _run(game: str) -> None:
             return
         _set_from_state(state, "已连接游戏")
         _say("我去打一局，先看开局。")
-        _log("start", game=game)
+        _pace()
+        _log("start", game=game, mode=mode)
         step = 0
         while not _stop.is_set() and not STOP_PATH.exists():
             if step >= 5000:
@@ -474,7 +576,8 @@ def _run(game: str) -> None:
                 _log("game_over")
                 return
             try:
-                last = _one_step(sts2, advisor, state)
+                last = _one_step(sts2, advisor, state, mode=mode,
+                                 llm_tools=llm_tools, llm_planner=llm_planner, game=game)
             except BaseException as exc:  # noqa: BLE001
                 last = f"ERROR {type(exc).__name__}: {exc}"
                 _log("step_error", error=last)
@@ -482,13 +585,17 @@ def _run(game: str) -> None:
                 time.sleep(1.2)
             step += 1
             _set_from_state(sts2.get_state() if not last.startswith("WAIT") else state, last)
-            _write_status(step=step)
+            _write_status(step=step, error="" if not last.startswith("ERROR") else _state.get("error", ""))
             _log("step", step=step, last=last)
             if last.startswith("UNKNOWN") or last.endswith("unknown"):
                 _write_status(running=False, error=last, last="未知界面，停手")
                 _log("unknown_screen", last=last)
                 return
-            time.sleep(0.7)
+            if last.startswith("LLM_FAILED"):
+                _write_status(running=False, error=last, last="LLM 失败，停手")
+                _log("llm_stop", last=last)
+                return
+            _pace()
         _write_status(running=False, last="已停手")
         _log("stop")
     except BaseException as exc:  # noqa: BLE001
@@ -499,11 +606,42 @@ def _run(game: str) -> None:
             _thread = None
 
 
-def start_autoplay(game: str | None = None) -> dict:
+def start_autoplay(game: str | None = None, *, mode: str | None = None,
+                   pace: str | None = None) -> dict:
     """启动游戏并开始自动玩；立即返回，实际运行在后台线程。"""
     global _thread
     from ..core.config import LiveConfig
     from ..games.launch import launch_game
+
+    patch = {}
+    if mode is not None:
+        mode = str(mode).strip().lower()
+        if mode not in ("local", "llm"):
+            return {"ok": False, "message": "玩法只能是 local 或 llm"}
+        patch["autoplay_mode"] = mode
+    if pace is not None:
+        pace = str(pace).strip().lower()
+        if pace not in ("voice", "normal"):
+            return {"ok": False, "message": "节奏只能是 voice 或 normal"}
+        patch["autoplay_pace"] = pace
+    cfg = LiveConfig.load()
+    if patch:
+        cfg.save_patch(patch)
+        cfg = LiveConfig.load()
+    mode = str(mode or cfg.autoplay_mode or "local").strip().lower()
+    pace = str(pace or cfg.autoplay_pace or "voice").strip().lower()
+    mode = mode if mode in ("local", "llm") else "local"
+    pace = pace if pace in ("voice", "normal") else "voice"
+    if mode == "llm":
+        from .graph import StateGraph  # noqa: PLC0415
+        from .planner import LLMPlanner  # noqa: PLC0415
+
+        if StateGraph is None:
+            return {"ok": False, "message": "LLM 玩需要安装 langgraph：pip install -e .[agent]",
+                    "mode": mode}
+        ok, why = LLMPlanner(cfg, model=cfg.autoplay_llm_model or cfg.llm_model).available()
+        if not ok:
+            return {"ok": False, "message": why, "mode": mode}
 
     with _lock:
         if _thread is not None and _thread.is_alive():
@@ -515,7 +653,7 @@ def start_autoplay(game: str | None = None) -> dict:
         if current.get("running") and _pid_alive(current.get("pid")) and not local_stale:
             return {"ok": True, "already": True, "message": "她已经在玩了",
                     "status": current}
-        game = str(game or LiveConfig.load().game or "").strip()
+        game = str(game or cfg.game or "").strip()
         if game != "slay-the-spire-2":
             return {"ok": False, "message": "当前只有杀戮尖塔 2 配了自动玩法"}
         try:
@@ -528,12 +666,13 @@ def start_autoplay(game: str | None = None) -> dict:
                     "launch": launched}
         _stop.clear()
         _write_status(running=True, game=game, error="", last="启动中…",
-                      screen="", step=0, started_at=time.time(), pid=os.getpid())
-        _thread = threading.Thread(target=_run, args=(game,),
+                      screen="", step=0, mode=mode, pace=pace,
+                      started_at=time.time(), pid=os.getpid())
+        _thread = threading.Thread(target=_run, args=(game, mode),
                                    name="dafeiyu-autoplay", daemon=True)
         _thread.start()
         return {"ok": True, "message": "已开始：先启动游戏，再让她打",
-                "launch": launched, "status": status()}
+                "mode": mode, "pace": pace, "launch": launched, "status": status()}
 
 
 def stop_autoplay() -> dict:

@@ -22,6 +22,8 @@ python main.py studio           # overlay + management console (:8730)
 python main.py game state       # current game state
 python main.py game launch      # only launch current game (Steam / exe)
 python main.py play             # launch + autonomous run; Ctrl+C or --stop
+python main.py play --mode llm  # LLM-planned combat turns (needs API key)
+python main.py play --pace voice # default: wait for speech; normal = old fast
 python main.py play --stop      # cross-process stop
 python main.py agent run --demo # offline LangGraph turn
 python main.py agent run        # real ctx + LLM, dry-run
