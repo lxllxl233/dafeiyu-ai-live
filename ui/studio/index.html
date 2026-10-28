@@ -417,7 +417,9 @@
           <p>一次决策拆成观察 / 规划 / 验算 / 执行 / 反思；节点耗时、状态和 token 都写本机 JSONL。</p>
         </div>
         <div class="head-actions">
-          <button class="btn" id="agentRun" type="button">跑一轮演示</button>
+          <button class="btn" id="playStart" type="button">让她玩</button>
+          <button class="btn ghost" id="playStop" type="button">停手</button>
+          <button class="btn ghost" id="agentRun" type="button">跑一轮演示</button>
           <a href="#telemetry">看决策日志 →</a>
         </div>
       </div>
@@ -454,7 +456,10 @@
             看三件事：哪个节点最慢、validate 重试几次、每次 token 多少。改 prompt / 加规则 / 换模型前后，
             跑同一局面比这三项。轨迹只存摘要，不存完整局面和 API Key。
           </div>
-          <div class="kv" style="margin-top:12px"><span>轨迹条数</span><b id="agentTraceCount">—</b></div>
+          <div class="kv" style="margin-top:12px"><span>自动玩法</span><b id="playState">—</b></div>
+          <div class="kv"><span>局面</span><b id="playDetail">—</b></div>
+          <div class="kv"><span>步数</span><b id="playStep">—</b></div>
+          <div class="kv"><span>轨迹条数</span><b id="agentTraceCount">—</b></div>
           <div class="kv"><span>运行命令</span><b><code>python main.py agent run --demo</code></b></div>
           <div class="kv"><span>真实 dry-run</span><b><code>python main.py agent run</code></b></div>
         </div>
@@ -745,6 +750,44 @@ function renderAgent(){
   $("#navAgent").textContent = status ? `${latest.duration_ms || 0}ms` : "—";
 }
 
+function renderPlay(){
+  const p = DATA?.play || {};
+  const running = !!p.running;
+  $("#playState").textContent = running ? "运行中" : (p.error ? "异常停手" : "停手");
+  const where = p.screen ? `${p.screen} · f${p.floor || "?"} · HP ${p.hp || "?"}/${p.max_hp || "?"}` : (p.last || "—");
+  $("#playDetail").textContent = where;
+  $("#playStep").textContent = p.step ? `${p.step} 步` : "—";
+  $("#playStart").disabled = running;
+  $("#playStop").disabled = !running;
+}
+
+async function startPlay(){
+  $("#playStart").disabled = true;
+  toast("正在启动游戏并让她玩…");
+  try{
+    const r = await fetch("/api/play/start", {
+      method:"POST", headers:{"content-type":"application/json"}, body:"{}",
+    });
+    const res = await r.json();
+    if(!res.ok) throw new Error(res.error || res.message || "HTTP " + r.status);
+    toast(res.message || "已开始");
+    setTimeout(refresh, 1500);
+  }catch(e){ toast("启动失败：" + e.message, true); }
+  finally{ $("#playStart").disabled = false; }
+}
+
+async function stopPlay(){
+  try{
+    const r = await fetch("/api/play/stop", {
+      method:"POST", headers:{"content-type":"application/json"}, body:"{}",
+    });
+    const res = await r.json();
+    if(!res.ok) throw new Error(res.error || res.message || "HTTP " + r.status);
+    toast(res.message || "已请求停手");
+    setTimeout(refresh, 800);
+  }catch(e){ toast("停手失败：" + e.message, true); }
+}
+
 async function runAgent(){
   const btn = $("#agentRun");
   btn.disabled = true;
@@ -870,7 +913,7 @@ function renderSamples(){
 
 function render(){
   renderPills(); renderPersona(); renderVoice(); renderGames(); renderRight(); renderFeed(); renderSamples();
-  renderConfig(); renderTelemetry(); renderAgent(); renderNav();
+  renderConfig(); renderTelemetry(); renderAgent(); renderPlay(); renderNav();
   $("#rootHint").textContent = DATA?.root ? `仓库：${DATA.root}` : "";
 }
 
@@ -995,6 +1038,8 @@ $("#cfgSave").addEventListener("click", saveConfig);
 $("#gameSave").addEventListener("click", saveGame);
 $("#gameLaunch").addEventListener("click", launchGame);
 $("#agentRun").addEventListener("click", runAgent);
+$("#playStart").addEventListener("click", startPlay);
+$("#playStop").addEventListener("click", stopPlay);
 $("#cfgClearKey").addEventListener("click", clearApiKey);
 $("#reload").addEventListener("click", (e) => { e.preventDefault(); refresh(); });
 ["thought","meme"].forEach(id => $("#" + id).addEventListener("input", setCounter));

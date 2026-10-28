@@ -20,7 +20,9 @@ and dry-run by default; keep that boundary unless the task asks for a new planne
 python main.py                  # desktop pet
 python main.py studio           # overlay + management console (:8730)
 python main.py game state       # current game state
-python main.py game launch      # launch current game (Steam / exe)
+python main.py game launch      # only launch current game (Steam / exe)
+python main.py play             # launch + autonomous run; Ctrl+C or --stop
+python main.py play --stop      # cross-process stop
 python main.py agent run --demo # offline LangGraph turn
 python main.py agent run        # real ctx + LLM, dry-run
 python main.py agent run --execute
@@ -36,8 +38,11 @@ python -m pytest -q tests
 - Only `main.py` lives at the repo root; Python code belongs under `src/dafeiyu/`.
 - The desktop right-click menu is a Win32 popup. Menu IDs are explicit; do not
   renumber existing entries when adding one.
-- Game adapters are read-only. Actions go through `tools/act.py`; game launch goes
-  through `src/dafeiyu/games/launch.py`.
+- Combat actions use the `tools/act.py` batch protocol through `sts2.cmd_batch`;
+  screen transitions use `tools/sts2.py`. Game launch goes through
+  `src/dafeiyu/games/launch.py`. Autoplay lives in `src/dafeiyu/agent/play.py`
+  and controls the game only through the same tool boundary; unknown screens must
+  stop rather than guess.
 - Keep the UI palette (`--bg:#0b0d12`, `--gold:#f4c968`, dark panels).
 - Agent traces are local JSONL (`logs/agent_trace.jsonl`); do not send them to a
   cloud service or include full game state / secrets.

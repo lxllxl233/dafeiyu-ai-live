@@ -59,9 +59,10 @@ python main.py               # 默认桌宠；加 --panel 回旧版横幅
 # 左键拖（左右/上下换朝向）· 滚轮缩放 · 右键菜单 · Ctrl+Alt+D 穿透 · Ctrl+Alt+S 声音
 ```
 
-右键菜单：置顶 / 点击穿透 / 声音 / 录屏里隐藏 / 语音 / 模型 / 游戏 / **启动当前游戏** / 配置 API /
+右键菜单：置顶 / 点击穿透 / 声音 / 录屏里隐藏 / 语音 / 模型 / 游戏 / **让她玩** / **让她停手** / **只启动游戏** / 配置 API /
 打开管理端 / 示例 / 关闭。空闲气泡「吃饭ing」，决策「思考ing」，说话显示台词。游戏子菜单只切换
-当前游戏（写入 `config.game`）；「启动当前游戏」会按 `game.json` 的 `launch` 拉起 Steam / exe。
+当前游戏（写入 `config.game`）；「只启动游戏」只按 `game.json` 的 `launch` 拉起 Steam / exe，
+「让她玩」会启动并自动跑一局。
 
 `python main.py` 默认在后台顺带起 overlay 服务；端口被占用会复用，不想起服务加
 `--no-server`。
@@ -80,13 +81,24 @@ Copy-Item .\games\slay-the-spire-2\compat\mod\* $mods -Force
 
 ### 3.2 启动游戏并验证
 
-Steam 启动选项加 `--windowed`（全屏独占 OBS 会黑屏）。右键「启动当前游戏」或：
+Steam 启动选项加 `--windowed`（全屏独占 OBS 会黑屏）。右键「只启动游戏」或：
 
 ```powershell
-python main.py game launch  # 按 config.game 启动（STS2 = Steam 2868840）
+python main.py game launch  # 只按 config.game 启动（STS2 = Steam 2868840）
 python tools/sts2.py state  # 兼容老命令
 python main.py game state   # 走游戏注册表读状态
 # SCREEN MAIN_MENU | IRONCLAD A? | act ? floor ? | HP ?/? gold ? deck 0
+```
+
+想让她直接打：
+
+```powershell
+python main.py play        # 启动 + 自动跑；Ctrl+C 停
+python main.py play --stop # 另一个进程里停手
+```
+
+右键「让她玩」/「让她停手」和管理端「Agent 流程」是同一套控制。自动玩法只处理已知界面，
+未知界面会停下并写 `logs/autoplay.json`，不猜按钮。
 python main.py games        # 应该看到「杀戮尖塔 2 ● 在线」
 ```
 

@@ -25,14 +25,15 @@ v1 把四样东西焊在一个「打杀戮尖塔」的工程里；v2 把它们�
 能做的事：
 
 - **一键启动**：双击根目录 `start.bat`，或 `python main.py`。
-- **桌宠右键菜单**：置顶 / 点击穿透 / 声音 / 录屏里隐藏 / **语音** / **模型** / **游戏** / **启动当前游戏** / **配置 API** / **打开管理端** / 示例 / 关闭。
+- **桌宠右键菜单**：置顶 / 点击穿透 / 声音 / 录屏里隐藏 / **语音** / **模型** / **游戏** / **让她玩** / **让她停手** / **只启动游戏** / **配置 API** / **打开管理端** / 示例 / 关闭。
 - **直播姬控制台** `http://127.0.0.1:8730/studio`：左侧经典管理端导航（基础配置 / 游戏 / 人设配置 / 互动 / Agent 流程 / 决策与日志），含语音、模型、游戏切换、决策日志、Token 估算和 Agent 节点轨迹。
 - **OBS 桌宠弹幕**：浏览器源 `/`，大肥鱼精灵 + 漫画气泡，带逐像素 alpha，直接进录像。
 - **桌面桌宠**：Win32 分层窗口，三视图精灵可拖；空闲气泡「吃饭ing」，决策「思考ing」，说话显示台词；默认能被录屏拍到（「录屏里隐藏」默认不勾）。
 - **性格层**：改 `persona/dafeiyu/card.json` 就能换语气/禁语/招牌；通用梗放 `persona/memes/`。
 - **语音层**：曼波语（MamboTTS）为主，引擎不在线时点「启动」/「试听」会自动拉起本地引擎，仍失败才回退动物语。
 - **游戏切换**：桌宠右键「游戏 ▸」或管理端「游戏」页切换，写入 `config.game`，游戏适配器和 Agent 下一轮读取。
-- **游戏启动**：右键「启动当前游戏」、管理端按钮或 `python main.py game launch`，按 `game.json` 的 `launch` 拉起 Steam / exe。
+- **游戏启动**：右键「只启动游戏」、管理端按钮或 `python main.py game launch`，按 `game.json` 的 `launch` 拉起 Steam / exe。
+- **让她玩**：右键「让她玩」启动游戏后自动跑一局——战斗走本地算账，奖励/地图/营火/事件自动处理；右键「让她停手」或控制台停。当前只支持杀戮尖塔 2。
 - **Agent 流程**：LangGraph 把一回合拆成观察 → 规划 → 验算 → 执行 → 反思，节点耗时/token/重试写本机轨迹，控制台「Agent 流程」可看。
 - **录像回放**：`recordings/<游戏>/run-NNNN/run.mp4`，一局一个录像，`meta.json` 记角色/进阶/结果。
 - **离线演示**：`python main.py demo` 不需要游戏，跑通「游戏 → 性格 → 语音 → UI」。
@@ -51,7 +52,7 @@ v1 把四样东西焊在一个「打杀戮尖塔」的工程里；v2 把它们�
 
 ![桌宠右键菜单](docs/pet_menu.png)
 
-*桌面桌宠：右键鱼身直接出菜单（置顶 / 点击穿透 / 声音 / 录屏里隐藏 / 语音 / 模型 / 游戏 / 启动当前游戏 / 配置 API / 打开管理端 / 示例 / 关闭）。*
+*桌面桌宠：右键鱼身直接出菜单（置顶 / 点击穿透 / 声音 / 录屏里隐藏 / 语音 / 模型 / 游戏 / 让她玩 / 让她停手 / 只启动游戏 / 配置 API / 打开管理端 / 示例 / 关闭）。*
 
 ---
 
@@ -170,7 +171,7 @@ python main.py replay list
 - 看 **决策记录**（thought / 实际台词 / token 估算）和 **运行日志**；
 - 看 **Agent 流程**：最近运行的节点耗时、重试次数、token 和轨迹；
 - 切 **语音**、**模型**、**当前游戏**，配置 **API 提供方 / Base URL / API Key**；
-- 点「启动当前游戏」直接拉起 Steam / exe（按 `game.json` 的 `launch` 配置）；
+- 点「只启动游戏」直接拉起 Steam / exe（按 `game.json` 的 `launch` 配置）；点「让她玩」启动后自动跑一局；
 - 曼波离线时点「启动」或「试听」自动拉起本地 MamboTTS；
 - 看游戏包是否在线、语料库多大、overlay 当前几路连接。
 
@@ -193,7 +194,7 @@ python main.py replay list
 - 说话是漫画气泡：奶白底 + 金边 + 尾巴，出现淡入上浮，说完 1.6 秒淡出；
   思考中显示「思考ing」，不会一直挂着上一句。
 - 窗口空白像素不吃鼠标：只有鱼身和气泡可点，其余点击直接落到游戏里。
-- **右键鱼身**：置顶 / 点击穿透 / 声音 / 录屏里隐藏 / **语音**（曼波 / 动物语 / 静音）/ **模型** / **游戏** / **启动当前游戏** / **配置 API…** / **打开管理端** / 重新显示示例 / 关闭。
+- **右键鱼身**：置顶 / 点击穿透 / 声音 / 录屏里隐藏 / **语音**（曼波 / 动物语 / 静音）/ **模型** / **游戏** / **让她玩** / **让她停手** / **只启动游戏** / **配置 API…** / **打开管理端** / 重新显示示例 / 关闭。
 - **语音未就绪**：点「曼波语」或语音子菜单的「启动曼波引擎」会后台拉起 `run_engine.py`；控制台语音行的「启动」/「试听」也会自动启动。
 - **三态气泡**：空闲「吃饭ing」，决策「思考ing」，说话显示这一句台词。
 - **录屏可见性**：「录屏里隐藏」默认不勾，桌宠默认会进录像；勾上后用 `WDA_EXCLUDEFROMCAPTURE` 排除。要启动即隐藏可加 `--exclude-capture`。
@@ -334,7 +335,7 @@ python main.py games
 ```
 
 当前游戏用桌宠右键「游戏 ▸」或管理端「游戏」页切换，写到 `config.game`；不会重启游戏或 Agent。
-右键「启动当前游戏」、管理端「启动当前游戏」或 `python main.py game launch` 会按 `game.json` 的
+右键「只启动游戏」、管理端「游戏」页或 `python main.py game launch` 会按 `game.json` 的
 `launch` 启动；切游戏只改配置，不自动拉起游戏。
 
 ```json
@@ -345,6 +346,28 @@ python main.py games
 支持 `steam`（Steam App ID）、`exe`（相对游戏包目录或绝对路径）、`url`；没写 `launch` 的游戏
 （例如内置演示）会明确报「未配置启动方式」。游戏专属代码仍放各自 `game-skill/`，注册表在
 `games/registry.json`。
+
+### 让她玩（自动跑一局）
+
+```powershell
+python main.py play        # 启动游戏 + 自动跑；Ctrl+C 停
+python main.py play --stop # 从另一个进程停手
+```
+
+桌宠右键「让她玩」走同一个后台循环；管理端「Agent 流程」里的「让她玩 / 停手」也能控制。
+当前只对杀戮尖塔 2 开放，流程是：
+
+- `MAIN_MENU / CHARACTER_SELECT`：没局就开 A10 铁甲战士；
+- `COMBAT`：`tools/advisor.py` 本地算伤害/格挡/斩杀，再走 `sts2 batch`；
+- `REWARD`：`sts2.py rewards --pick auto` 自动挑牌/空收；
+- `MAP`：用 `sts2.py route` 的路线计划选下一格；
+- `REST / EVENT / SHOP / CHEST`：保守选择（低血休息、事件第一项、商店先离开）；
+- `GAME_OVER`：停手，不自动重开；
+- 未知界面：停在那一步并写日志，不猜按钮。
+
+进展写 `logs/autoplay.json` 和 `logs/autoplay.jsonl`，可以从另一个进程停：
+`python main.py play --stop`（桌面/管理端都调用它）。这不是 LangGraph 的单回合流程，
+而是面向整局的本地循环；LangGraph 仍用于单回合的观察/验算/轨迹。
 
 以《杀戮尖塔 2》为例，一个游戏包只有三份东西：
 
@@ -408,7 +431,9 @@ OBS 场景仍叫 `StS2`：`StS2 Game`（game_capture）+ `AI Commentary`（浏�
 | GET | `/api/config` | 语音/模型/游戏/API 配置（Key 只返回是否已配置） |
 | POST | `/api/config` | 保存语音/模型/游戏/API；Key 只写本机 `config.json` |
 | GET | `/api/games` | 游戏列表（强制刷新在线状态） |
-| POST | `/api/game/launch` | `{game}` 启动游戏；默认当前 `config.game` |
+| POST | `/api/game/launch` | `{game}` 只启动游戏；默认当前 `config.game` |
+| POST | `/api/play/start` | 启动当前游戏并开始自动玩（返回 `already` 或状态） |
+| POST | `/api/play/stop` | 请求停手（跨进程写 stop 文件） |
 | POST | `/api/agent/run` | 跑一轮离线 Agent 演示（不碰游戏） |
 | POST | `/api/say` | `{thought, meme}` 或 `{text}`；`dry_run: true` 只 lint |
 | POST | `/api/voice` | `{text, voice}` 返回 WAV；曼波离线会自动启动并返回 202 |
@@ -428,7 +453,7 @@ OBS 场景仍叫 `StS2`：`StS2 Game`（game_capture）+ `AI Commentary`（浏�
 ## 测试
 
 ```powershell
-python -m pytest -q tests          # 直播姬：总线/性格/语音/游戏/启动/配置/Agent/录像（48 项）
+python -m pytest -q tests          # 直播姬：总线/性格/语音/游戏/启动/配置/Agent/自动玩法/录像（54 项）
 python tools/test_ctx_act.py       # 决策层：ctx + act（离线）
 python tools/test_streamer.py      # 桌宠渲染/透明/换行/配音
 python tools/test_overlay_playback.py

@@ -122,8 +122,18 @@ class GameAdapter:
 | `exe` | `path` / `args` / `cwd` | 相对游戏包目录或绝对路径启动 |
 | `url` | `url` | 默认浏览器打开 |
 
-右键「启动当前游戏」、控制台按钮、`POST /api/game/launch` 和
+右键「只启动游戏」、控制台按钮、`POST /api/game/launch` 和
 `python main.py game launch` 共用这个入口；没配置 `launch` 的游戏明确报错，不会悄悄失败。
+
+### 让她玩
+
+`src/dafeiyu/agent/play.py` 是整局自动循环：先 `launch_game`，再按 `screen` 分派战斗/奖励/
+地图/营火/事件/商店/宝箱。战斗读 `tools/ctx.py` 同源局面，走 `tools/advisor.py` 本地算账，
+非战斗走 `tools/sts2.py` 的 CLI；默认只对 `slay-the-spire-2` 开放。
+
+跨进程控制不靠内存：`logs/autoplay.stop` 是停手文件，`logs/autoplay.json` 是状态，
+`logs/autoplay.jsonl` 是步骤日志。桌宠、管理端、CLI 都读写同一组文件，所以哪个进程先起都能停。
+未知界面不猜按钮，直接停在那一步并写 `last/error`。
 
 ## 6. UI 服务
 
@@ -135,7 +145,9 @@ class GameAdapter:
 | `/studio` | 控制台单页 |
 | `/api/studio` | 四层状态聚合 + 决策/日志/Token 遥测（人设/语音/游戏/overlay/最近台词） |
 | `/api/config` | GET 配置（Key 只报是否已配置）/ POST 保存语音、模型、游戏、API |
-| `/api/game/launch` | 按 `config.game` 或 `{game}` 启动游戏 |
+| `/api/game/launch` | 按 `config.game` 或 `{game}` 只启动游戏 |
+| `/api/play/start` | 启动当前游戏并开始自动玩 |
+| `/api/play/stop` | 跨进程停手 |
 | `/api/agent/run` | 跑一轮离线 Agent 演示（不碰游戏） |
 | `/api/voice/start` | 启动本地曼波引擎（MamboTTS `run_engine.py`） |
 | `/api/say` | 拼句 + lint + `add_comment`；`dry_run` 只算 lint |

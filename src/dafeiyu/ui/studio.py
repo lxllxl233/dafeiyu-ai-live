@@ -118,6 +118,7 @@ class StudioRuntime:
             last = dict(self._last)
             voice_state = dict(self._voice_state)
         from ..agent.trace import agent_summary
+        from ..agent.play import status as play_status
 
         return {
             "ok": True,
@@ -139,6 +140,7 @@ class StudioRuntime:
             },
             "studio": {"said": said, "pushed": pushed, "last": last, "voice": voice_state},
             "agent": agent_summary(),
+            "play": play_status(),
             "samples": list(card.openers[:2]) + list(card.quips[:4]),
             "links": {
                 "overlay": "/",

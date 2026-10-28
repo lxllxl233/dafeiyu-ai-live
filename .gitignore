@@ -8,6 +8,7 @@ backups/
 __pycache__/
 *.pyc
 logs/*.jsonl
+logs/*.stop
 logs/.state_cache.json
 logs/current_session.json
 logs/route_plan.json

@@ -112,7 +112,26 @@ python main.py agent graph
  "seq": [{"c": "BASH", "t": 0}, {"c": "STRIKE_IRONCLAD", "t": 0}, {"end": 1}]}
 ```
 
-## 6. 和 DeepSeek Harness 的分工
+## 6. 整局自动玩法与回合图的分工
+
+`python main.py play` / 右键「让她玩」跑的是 `src/dafeiyu/agent/play.py`：它是一个
+**整局循环**，不是每个动作都过 LangGraph。原因是整局包含大量不需要 LLM 的界面切换
+（地图、奖励、营火、商店），每一步都进图会慢且费 token。
+
+两者共用同一套工具边界：
+
+| 层 | 自动玩法 | LangGraph 单回合 |
+|---|---|---|
+| 读局面 | `tools/ctx.py` 同源 | `observe` 节点 |
+| 算牌/出牌 | `advisor.py` + `sts2 batch` | `validate` / `execute` |
+| 轨迹 | `logs/autoplay.jsonl` | `logs/agent_trace.jsonl` |
+| 控制 | `logs/autoplay.stop` | `--execute` 显式开关 |
+
+如果要把自动玩法的战斗段升级成「每回合 LLM 规划」，最小改法是替换 `_combat` 里的
+`advisor.build_plan`：保留 `sts2 batch` 执行，把那一步换成 `run_turn(..., planner=LLMPlanner())`，
+并在 `logs/autoplay.jsonl` 记录 run_id。先不要把整局所有界面都塞进图里。
+
+## 7. 和 DeepSeek Harness 的分工
 
 - **DSH Harness**：外层 Agent 运行时。负责加载 `.dsh/skills`、理解人设、决定
   「这回合想做什么」，也可以直接调用现有 CLI。
@@ -120,7 +139,7 @@ python main.py agent graph
   重试、记录，让过程可观察。
 - 两者不是二选一：`--plan` 模式就是 DSH 出计划、LangGraph 跑验算/执行/轨迹。
 
-## 7. 可选依赖
+## 8. 可选依赖
 
 ```powershell
 pip install -e .[agent]       # langgraph>=1.0

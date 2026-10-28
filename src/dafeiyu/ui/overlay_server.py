@@ -714,6 +714,30 @@ class Handler(BaseHTTPRequestHandler):
                                            ensure_ascii=False).encode("utf-8"),
                            "application/json; charset=utf-8")
             return
+        if self.path == "/api/play/start":
+            try:
+                from dafeiyu.agent.play import start_autoplay
+
+                result = start_autoplay()
+                code = 200 if result.get("ok") else 503
+                self._send(code, json.dumps(result, ensure_ascii=False).encode("utf-8"),
+                           "application/json; charset=utf-8")
+            except Exception as exc:
+                self._send(500, json.dumps({"ok": False, "error": str(exc)},
+                                           ensure_ascii=False).encode("utf-8"),
+                           "application/json; charset=utf-8")
+            return
+        if self.path == "/api/play/stop":
+            try:
+                from dafeiyu.agent.play import stop_autoplay
+
+                self._send(200, json.dumps(stop_autoplay(), ensure_ascii=False).encode("utf-8"),
+                           "application/json; charset=utf-8")
+            except Exception as exc:
+                self._send(500, json.dumps({"ok": False, "error": str(exc)},
+                                           ensure_ascii=False).encode("utf-8"),
+                           "application/json; charset=utf-8")
+            return
         if self.path == "/api/agent/run":
             try:
                 n = int(self.headers.get("Content-Length", "0"))

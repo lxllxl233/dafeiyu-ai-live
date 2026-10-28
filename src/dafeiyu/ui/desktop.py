@@ -1451,7 +1451,9 @@ class StreamerWindow:
         if not games:
             user32.AppendMenuW(game_menu, MF_STRING | MF_GRAYED, 0, "没有注册游戏")
         user32.AppendMenuW(hmenu, MF_POPUP, game_menu, "游戏")
-        user32.AppendMenuW(hmenu, MF_STRING, 43, "启动当前游戏")
+        user32.AppendMenuW(hmenu, MF_STRING, 44, "让她玩")
+        user32.AppendMenuW(hmenu, MF_STRING, 45, "让她停手")
+        user32.AppendMenuW(hmenu, MF_STRING, 43, "只启动游戏")
         user32.AppendMenuW(hmenu, MF_SEPARATOR, 0, None)
         user32.AppendMenuW(hmenu, MF_STRING, 41, "配置 API…")
         user32.AppendMenuW(hmenu, MF_STRING, 42, "打开管理端")
@@ -1477,6 +1479,10 @@ class StreamerWindow:
             self.set_game(self._menu_games[cmd - 50][0])
         elif cmd == 43:
             self.launch_game()
+        elif cmd == 44:
+            self.play_game()
+        elif cmd == 45:
+            self.stop_play()
         elif cmd == 40:
             self.open_studio("#settings")
         elif cmd == 41:
@@ -1543,7 +1549,7 @@ class StreamerWindow:
             print(f"游戏配置保存失败：{exc}")
 
     def launch_game(self) -> None:
-        """按 config.game 启动游戏；启动失败只打印，不打断桌宠。"""
+        """只启动游戏，不接管操作；要让她玩用 play_game。"""
         try:
             from ..core.config import LiveConfig
             from ..games.launch import launch_game
@@ -1553,6 +1559,25 @@ class StreamerWindow:
             print("游戏：" + str(result.get("message") or result.get("error") or result))
         except Exception as exc:
             print(f"启动游戏失败：{exc}")
+
+    def play_game(self) -> None:
+        """启动游戏并让她自动玩；后台线程不阻塞桌宠。"""
+        try:
+            from ..agent.play import start_autoplay
+
+            result = start_autoplay()
+            print("让她玩：" + str(result.get("message") or result.get("error") or result))
+        except Exception as exc:
+            print(f"让她玩启动失败：{exc}")
+
+    def stop_play(self) -> None:
+        try:
+            from ..agent.play import stop_autoplay
+
+            result = stop_autoplay()
+            print("停手：" + str(result.get("message") or result))
+        except Exception as exc:
+            print(f"停手失败：{exc}")
 
     def set_model(self, model: str) -> None:
         """切换模型（只写本机 config.json；API Key 不进菜单）。"""

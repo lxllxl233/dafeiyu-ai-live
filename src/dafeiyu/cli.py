@@ -304,6 +304,38 @@ def cmd_agent(args) -> int:
     return 0 if result.get("ok") else 1
 
 
+def cmd_play(args) -> int:
+    """让她玩：启动游戏 + 自动回合循环（前台阻塞，Ctrl+C 停）。"""
+    import time
+
+    from dafeiyu.agent.play import start_autoplay, status, stop_autoplay
+
+    if getattr(args, "stop", False):
+        result = stop_autoplay()
+        print(result.get("message") or "已请求停手")
+        return 0
+    result = start_autoplay(getattr(args, "game", None))
+    print(result.get("message") or result.get("error") or "")
+    if not result.get("ok"):
+        return 1
+    last = None
+    try:
+        while status().get("running"):
+            now = status()
+            key = (now.get("screen"), now.get("floor"), now.get("hp"), now.get("step"),
+                   now.get("last"))
+            if key != last:
+                print(f"[{now.get('screen') or '?'}] f{now.get('floor') or '?'} "
+                      f"HP {now.get('hp') or '?'}/{now.get('max_hp') or '?'} "
+                      f"step {now.get('step') or 0} · {now.get('last') or ''}")
+                last = key
+            time.sleep(1.0)
+    except KeyboardInterrupt:
+        stop_autoplay()
+        print("已停手")
+    return 0
+
+
 def cmd_obs(args) -> int:
     from dafeiyu.recording.obs import main as obs_main
 
@@ -585,6 +617,11 @@ def build_parser() -> argparse.ArgumentParser:
     at.set_defaults(func=cmd_agent)
     agg = ag.add_parser("graph", help="打印图的 Mermaid")
     agg.set_defaults(func=cmd_agent)
+
+    p = sub.add_parser("play", help="启动游戏并让她自动玩（Ctrl+C 停）")
+    p.add_argument("--game", default=None)
+    p.add_argument("--stop", action="store_true", help="只停手，不启动")
+    p.set_defaults(func=cmd_play)
 
     p = sub.add_parser("obs", help="OBS WebSocket 控制")
     p.add_argument("action", choices=["status", "setup", "start", "stop", "shot",
