@@ -11,6 +11,8 @@ Checks:
   6. **规则覆盖**：v17.1 的阈值/关键词/反模式编号必须还在——压缩只许改写法，
      不许丢规则。少一条就 FAIL，别用「感觉还在」验收。
   7. **协议覆盖**：一回合一条 batch 的关键标记（card_id / 尾部快照 / STOP 处理）。
+  8. **硬闸同步**：tools/hard_rules.py 是 5 条硬闸的唯一来源，SKILL 里的锚点
+     必须还在（改阈值一边忘了另一边 → FAIL），且 SKILL 要标注来源。
 
 Usage: python tools/check_skill.py
 """
@@ -19,6 +21,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(".").resolve()
+sys.path.insert(0, str(ROOT / "tools"))
+import hard_rules  # noqa: E402
 SKILL_DIR = ROOT / ".dsh" / "skills" / "sts2-ironclad-ironclad"
 SKILL = SKILL_DIR / "SKILL.md"
 
@@ -183,6 +187,16 @@ def main() -> int:
         m = re.search(re.escape(c) + r"([^①-⑳㉕]{2,})", text)
         if not m:
             warn(f"反模式 {c} 后面像没有说明文字")
+
+    # ---- 硬闸单一来源：tools/hard_rules.py ↔ SKILL.md ----
+    for e in hard_rules.validate():
+        fail(f"硬闸自检：{e}")
+    for m in hard_rules.verify_skill(text):
+        fail(f"硬闸与 SKILL.md 不同步：{m}（阈值只改 hard_rules，或两边一起改）")
+    if "tools/hard_rules.py" not in text:
+        fail("SKILL.md 未标注硬闸唯一来源 `tools/hard_rules.py`")
+    if "rules" not in text:
+        warn("SKILL.md 没提 ctx 的 rules 字段：模型可能不知道每回合都有硬闸")
 
     return report()
 

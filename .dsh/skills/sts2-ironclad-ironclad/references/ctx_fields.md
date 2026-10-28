@@ -9,9 +9,22 @@
 | `piles` | `draw`/`dis`/`exh`：张数 + 组成（同名合并，`STRIKE+` 带加号） |
 | `calc` | `inc/blk/net/full/lethal/chain/aoe/tax` + `dmg`（本回合最大伤害）/`ttk`（每怪还几回合死）/`ttk_all`/`nx_inc`（下回合预计总入伤）/`nxdraw`（下一手期望 `{n,blk,dmg,uncertain}`） |
 | `can` | `vuln/weak/draw/en/cost/exh/add/aoe/tf/buff`；`buff=[{id,nxt}]`=本回合能给下一轮上 buff 的牌/药水 |
-| `plans` | 五类各一：`k/s/d/take/hp/e/kill/stun/risk`；`s` 是含药水的牌序；`k=maxdmg` 是纯伤害上限线，`risk=1` 时 `hp<=0`，只作上限不要照打；`k=potion` 是单独的药水线 |
-| `warn`/`choice` | 红灯；非战斗 map/event/reward/shop/rest/select/chest/modal/over |
+| `plans` | 五类各一：`k/s/d/take/hp/e/kill/stun/risk`（v22 起还有 `self/self_why`）；`s` 是含药水的牌序；`k=maxdmg` 是纯伤害上限线，`risk=1` 时 `hp<=0`，只作上限不要照打；`k=potion` 是单独的药水线；`self=1` 表示「血≤40% 且这条线要交自伤牌（血墙/突破/祭品/放血）」，`self_why` 给出血量与牌名 |
+| `warn`/`choice` | 红灯；非战斗 map/event/reward/shop/rest/select/chest/modal/over；`SELF_HP` 表示计划里含自伤牌（血线低时先算打完还剩多少） |
 | `choice.eval` | 非战斗建议层：`deck` 结构、`need` 缺口、`opts[{i|sec,sc,tag,why}]`、`best`、`skip`/`buy`、`bar`、`heal`/`up`。是排序提示，不是胜率；地图仍走 `route`，事件仍读原文 |
+
+## 两条常驻注入（`rules` / `lessons`）
+
+| 字段 | 什么时候有 | 内容 |
+|---|---|---|
+| `rules` + `rules_v` | **每回合都有** | 5 条硬闸，唯一来源 `tools/hard_rules.py`（与 skill 是否重载、是否被压缩无关） |
+| `lessons` + `lesson_v` | **只在相关时出现** | 命中的历史经验卡，≤3 条 ≤420 字节：`[{id,t,s}]`（`t`=建议动作，`s`=run 出处） |
+
+`lessons` 的唯一来源是 `logs/lessons.jsonl`，检索在 `tools/lesson_index.py`：
+按**敌人 / 血量档 / 节点类型 / 手牌 / 入伤**匹配，越具体越靠前（敌人/手牌加权），
+无关回合一个字节都不花。卡片全部来自**账本核对过的** run96–run105 失败案例，
+`verified:false` 的不注入。改卡片跑 `python tools/lesson_index.py --check` +
+`python tools/test_lesson_index.py`。
 
 ## 意图与机制
 

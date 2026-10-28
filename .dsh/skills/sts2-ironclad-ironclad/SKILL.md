@@ -1,9 +1,9 @@
 ---
 name: sts2-ironclad-ironclad
-description: 《杀戮尖塔2》铁甲战士A10决策OS v21：每回合读tools/ctx.py局面包（实费/牌堆/遗物/药水/buff/意图/机制/斩杀），输出say+seq给tools/act.py；杂怪auto。路线references/playbook.md，卡表cards.md、敌人表enemies.md。
+description: 《杀戮尖塔2》铁甲战士A10决策OS v22：每回合读tools/ctx.py局面包（实费/牌堆/遗物/药水/buff/意图/机制/斩杀），输出say+seq给tools/act.py；杂怪auto。路线references/playbook.md，卡表cards.md、敌人表enemies.md。
 ---
 
-# 铁甲战士A10 · 决策OS v21（结构化输入/输出/药水牌序）
+# 铁甲战士A10 · 决策OS v22（结构化输入/输出/药水牌序/回执）
 
 > 常驻只本文件；references触发时read。
 
@@ -26,7 +26,7 @@ python tools/act.py --file tmp_plan.json    # 执行seq，回下回合ctx
 - 省请求：杂怪（非精英/Boss、血安全）加{"auto":{"turns":3,"stop_hp":40}}本地连打，血线到/战斗结束/进选牌停；一场1请求。
 - {"ok":false,...}：一张没打或打一半STOP；用返回 `ctx` 改 `seq` 重发，绝不自补 `end_turn`。
 - 护栏（`act` 硬拦）：①漏斩=有可校验全斩线却没斩；②漏费=结束还剩能量且手牌能打。按 `err` 改 `seq`；确认换血/留费，`plan` 顶层写{"allow_take":1}/{"allow_leftover":1}/{"allow_no_lethal":1}并说理由。
-- 换血线（提示不拦）：净挨≥6、有甲牌可顶但费已花光=攻击换防御，非漏甲；账本40条「漏甲」全是剩余费0（python tools/logstats.py cases --kind miss_block）。只给一行账「换血线：净挨X，能顶掉约Y，代价是少打一张输出」；看到就选边：换血在say说理由，不换重排；真「有费不起甲」归漏费拦。
+- 换血线（提示不拦）：净挨≥6、有甲牌可顶但费已花光=攻击换防御，非漏甲；`logstats.py cases --kind miss_block` 可查。只报一行「净挨X、能顶Y、少打一张」；换血在say说理由，不换重排；真「有费不起甲」归漏费拦。
 - `hand_n`=真实手牌数（`hand[]` 同名牌合并，只看条数以为牌少）；`stale_ctx`=新回合未抽完牌，必须重读 `ctx.py`。
 - 遗言告警：敌人带「蒸汽喷发/爆炸/亡语」时斩杀≠安全——死后按层数结算一发（可格挡/缓冲）。`act` 在「清场且0甲」给 `warn:遗言警告`，看到就查有无甲或缓冲。
 - SL不改抽牌顺序（`save_and_quit`→continue后手牌一样），只救操作失误，每幕≤2次；商店每店只删1张；药水栏满时 `claim_reward` 静默成功不给药水（先看 `potions` 槽，满则 `discard_potion`）。
@@ -90,7 +90,7 @@ python tools/logstats.py replay暴露的四类算错已进代码+回归（tools/
 ## 0.8 记忆分层
 
 - L1 sts2.py memory --write：开局/换幕/新session/每4–5层。
-- L2 每回合ctx.py；下回合用act.py返回值，不state。
+- L2 每回合ctx.py（`rules`=5条硬闸，源 `tools/hard_rules.py`）；下回合用act.py返回值，不state。
 - L3 journal --floor N --last 20复盘用；logs/run_*.jsonl/战报不进上下文；每幕memory --write后开新会话。
 
 ## 1. 三条铁律

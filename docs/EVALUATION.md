@@ -25,11 +25,15 @@ P3-1 把「看一局、凭感觉调」换成可重复的数字：
 - **A10** = `ascension == 10` 的终局样本，单独一列；没有样本就明确警告。
 - **楼层**：summary 的最终 `floor`；胜局是通关楼层，败局是死亡楼层。
 - **掉血 / 药水 / 被拒 / SL**：以 summary 的终局汇总为准。
+  `potions_used` = **药水槽净消耗**（2026-10-28 起；之前的旧 summary 按 `seq` 步数计，会把
+  `pending` 被吞的药水也算进去，run105 记 5 实为 2、run98 记 1 实为 0）。
+  `rejected` 现在含 `rejected_guard` / `rejected_clear_overflow`（旧 summary 漏计）。
 - **战斗执行**：来自 decisions：
-  - `executed` / `rejected` / `reject_rate`
+  - `executed` / `rejected` / `reject_rate`（`receipt_lost` 算 rejected，不算 executed）
   - `draw_boundary_rejects`：`err` 含「抽牌边界」的被拒
   - `retargets`：目标重定向次数
-  - `potion_uses`：`input.seq` 里带 `p` 的步骤
+  - `potion_uses`：`input.seq` 里带 `p` 的步骤——**尝试次数，不是消耗数**
+    （`pending` 被吞也算；要真实消耗看 `summary.potions_used` 或 journal 的 `effect` 列）
   - `mid_decisions`：分两步执行的回合
 - 没有任何 finalized summary 时输出 `NO_FINAL_SUMMARIES`，`win_rate` 为 `null`，不写 0%。
 

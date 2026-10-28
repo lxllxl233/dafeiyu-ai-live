@@ -107,7 +107,12 @@ def _actions(steps: list) -> list:
     return out
 
 
-def _run_batch(actions: list) -> tuple[list, str | None]:
+def _run_batch(actions: list) -> tuple[list, str | None, dict | None]:
+    """跑一批动作，返回 (输出行, 错误, 回执)。
+
+    回执来自 `sts2.py batch` 的 `RECEIPT {...}` 行：接口说 completed 不算数，
+    要看前后状态差分（药水真消耗了？敌人真掉血了？）。老版本没有这行时回执为 None。
+    """
     spec = {"actions": actions, "skip_budget": True}
     err = None
     buf = io.StringIO()
@@ -119,7 +124,14 @@ def _run_batch(actions: list) -> tuple[list, str | None]:
     except Exception as exc:  # noqa: BLE001
         err = f"{type(exc).__name__}: {exc}"
     log = [ln for ln in buf.getvalue().splitlines() if ln.strip()]
-    return log, err
+    receipt = None
+    for ln in log:
+        if ln.startswith("RECEIPT "):
+            try:
+                receipt = json.loads(ln[len("RECEIPT "):])
+            except Exception:  # noqa: BLE001
+                receipt = None
+    return log, err, receipt
 
 
 def _attach_say(actions: list, lines: list) -> None:
@@ -150,13 +162,13 @@ def _candidate_plans(st: dict) -> list:
 
 def _log_decision(st: dict, seq: list, lines: list, fx: dict, *, outcome: str,
                   err=None, steps=None, forecast=None, plans=None, batch=None,
-                  after=None, retargets=None, mode: str = "model") -> None:
+                  after=None, retargets=None, allow=None, mode: str = "model") -> None:
     """账本失败绝不能影响出牌。"""
     try:
         decision_log.record_decision(
             st, seq, lines, fx, outcome=outcome, err=err, steps=steps,
             forecast=forecast, plans=plans, batch=batch, after=after,
-            retargets=retargets, mode=mode,
+            retargets=retargets, allow=allow, mode=mode,
         )
     except Exception:  # noqa: BLE001
         pass
@@ -601,7 +613,7 @@ def _execute(st: dict, seq: list, lines: list, fx: dict,
         if err.startswith("抽牌边界"):
             out["next"] = "split_at_draw"
             out["hint"] = "抽牌后手牌未知：先只打抽牌牌（不写 end），先读 ctx 再出下一手"
-        _log_decision(st, seq, lines, fx, outcome="rejected_validate", err=err,
+        _log_decision(st, seq, lines, fx, outcome="rejected_validate", err=err, allow=allow,
                       steps=steps, plans=plans, retargets=getattr(sm, "retargets", None))
         return out
 
@@ -611,7 +623,7 @@ def _execute(st: dict, seq: list, lines: list, fx: dict,
     if err:
         out = {"ok": False, "err": err, "fx": want,
                "ctx": ctxmod.build_with_mem(st, ctxmod._load_mem())}
-        _log_decision(st, seq, lines, fx, outcome="rejected_clear_overflow", err=err,
+        _log_decision(st, seq, lines, fx, outcome="rejected_clear_overflow", err=err, allow=allow,
                       steps=steps, forecast=want, plans=plans,
                       retargets=getattr(sm, "retargets", None))
         return out
@@ -619,7 +631,7 @@ def _execute(st: dict, seq: list, lines: list, fx: dict,
     if bad:
         out = {"ok": False, "err": bad, "fx": want,
                "ctx": ctxmod.build_with_mem(st, ctxmod._load_mem())}
-        _log_decision(st, seq, lines, fx, outcome="rejected_fx", err=bad,
+        _log_decision(st, seq, lines, fx, outcome="rejected_fx", err=bad, allow=allow,
                       steps=steps, forecast=want, plans=plans,
                       retargets=getattr(sm, "retargets", None))
         return out
@@ -631,29 +643,40 @@ def _execute(st: dict, seq: list, lines: list, fx: dict,
                "ctx": ctxmod.build_with_mem(st, ctxmod._load_mem())}
         if guard_meta:
             out.update(guard_meta)
-        _log_decision(st, seq, lines, fx, outcome="rejected_guard", err=guard_err,
+        _log_decision(st, seq, lines, fx, outcome="rejected_guard", err=guard_err, allow=allow,
                       steps=steps, forecast=want, plans=plans,
                       retargets=getattr(sm, "retargets", None))
         return out
 
     actions = _actions(steps)
     if not actions:
-        _log_decision(st, seq, lines, fx, outcome="no_actions", err="seq 里没有动作",
+        _log_decision(st, seq, lines, fx, outcome="no_actions", err="seq 里没有动作", allow=allow,
                       steps=steps, forecast=want, plans=plans,
                       retargets=getattr(sm, "retargets", None))
         return {"ok": False, "err": "seq 里没有动作（要结束回合就写 {\"end\":1}）",
                 "ctx": ctxmod.build_with_mem(st, ctxmod._load_mem())}
     _attach_say(actions, lines)
     _mk("guards")
-    log, run_err = _run_batch(actions)
+    log, run_err, receipt = (tuple(_run_batch(actions)) + (None, None))[:3]
     _mk("run_batch")
 
     out = {"ok": run_err is None, "fx": want}
+    if receipt is not None:
+        # 回执是判据：接口 200/completed 只代表「请求被接受」，不代表动作结算了。
+        out["receipt"] = receipt
+        if run_err is None and not receipt.get("ok"):
+            bad = next((x for x in (receipt.get("items") or [])
+                        if x.get("effect") != "applied"), {})
+            out["ok"] = False
+            out["err"] = (f"第 {bad.get('i')} 步 {bad.get('a')} 没落地"
+                          f"（status={bad.get('status')} effect={bad.get('effect')}：{bad.get('why')}）")
+            out["next"] = "read_ctx"
     if guard_meta.get("warn"):
         out["warn"] = guard_meta["warn"]
     if run_err:
         out["err"] = run_err
-        tail = [x for x in log if ("STOP" in x or "BUDGET" in x or "TARGET" in x or "FIX" in x)]
+        tail = [x for x in log if ("STOP" in x or "BUDGET" in x or "TARGET" in x or "FIX" in x
+                                   or "RECEIPT" in x)]
         if tail:
             out["log"] = tail[-2:]
         # 头槌/秘密武器这类牌会在 batch 中途弹 CARD_SELECTION（run82 撞了三次）。
@@ -705,10 +728,14 @@ def _execute(st: dict, seq: list, lines: list, fx: dict,
                             "先跑 python tools/ctx.py 再出牌")
 
     batch_info = {"ok": run_err is None, "err": run_err, "log": log[-8:]}
+    if receipt is not None:
+        batch_info["receipt_ok"] = bool(receipt.get("ok"))
+    outcome = "executed" if (run_err is None and (receipt is None or receipt.get("ok"))) else (
+        "receipt_lost" if (receipt is not None and not receipt.get("ok")) else "batch_error")
     _log_decision(st, seq, lines, fx,
-                  outcome="executed" if run_err is None else "batch_error",
+                  outcome=outcome,
                   err=run_err, steps=steps, forecast=want, plans=plans,
-                  batch=batch_info, after=next_st, retargets=sm.retargets)
+                  batch=batch_info, after=next_st, retargets=sm.retargets, allow=allow)
     _mk("log_decision")
     if _ph:
         out.setdefault("ms", {}).update(_ph)
@@ -809,9 +836,12 @@ def _auto(turns: int, stop_hp: int, lines: list) -> dict:
         if speak_now:
             _attach_say(actions, lines)
             spoke = True
-        _lg, run_err = _run_batch(actions)
+        _lg, run_err, _rc = (tuple(_run_batch(actions)) + (None, None))[:3]
+        if run_err is None and _rc is not None and not _rc.get("ok"):
+            run_err = "回执丢失：动作没落地"
         _log_decision(st, seq, lines if speak_now else [], {},
-                      outcome="executed" if run_err is None else "batch_error",
+                      outcome="executed" if run_err is None else (
+                          "receipt_lost" if (_rc is not None and not _rc.get("ok")) else "batch_error"),
                       err=run_err, steps=steps, forecast=forecast(st, sm, steps, ended),
                       plans=plans, retargets=sm.retargets, mode="auto")
         log.append(f"AUTO T{n + 1}: 伤害{plans[0]['dmg']} 斩{plans[0].get('kill', [])} 净掉{plans[0]['taken']}")

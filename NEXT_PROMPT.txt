@@ -1,9 +1,9 @@
 你现在接手一个 Slay the Spire 2 项目：在 Windows 工作目录 D:\aigame\sljt\sljt 下，用本地 mod API 打 A10 铁甲战士，同时录制游戏视频+游戏音频，并用 OBS 浏览器源显示 DeepSeek 大肥鱼 overlay 解说。
 
-当前状态：游戏在 MAIN_MENU，录像已停止，没有进行中的局。上一局异常结束/主动放弃的局不要恢复。
+当前状态：**别信这张便条**——开局先 `python sts2.py state` 确认（mod 没起会 ConnectionRefused，不是故障，先把游戏/引擎拉起来）。已知上一局 run106 在 act1 f7 战斗胜利后被中断（非死亡、非主动放弃，见 `logs/run106_review.md`）；中断/放弃的局不要恢复，直接新开。
 
 开始前只需要读两样（别再把 docs/ 全读一遍）：
-1. skill `sts2-ironclad-ironclad`（决策 OS v20，结构化 JSON + 药水牌序，一次加载）
+1. skill `sts2-ironclad-ironclad`（决策 OS v22，ctx 局面包 + act 牌序 + 动作回执，一次加载）
 2. README.md 的「常用命令」一节
 其余细节按需 `grep` 关键词再 `read` 带 offset/limit 取 20–40 行：LESSONS.md / ACT1_PLAYBOOK.md / COMBAT_TURN.md / NEOW_DECISIONS.md。
 
@@ -17,14 +17,20 @@
 4. python obsctl.py start（从选人开始录；只要游戏画面+游戏音频，mic/桌面静音）。
 5. python sts2.py do open_character_select；确认 IRONCLAD、A10、can_embark。
 6. python sts2.py do embark；Neow 按 docs/NEOW_DECISIONS.md 比较稀缺性（商店能补的删牌降权；变2牌在血线能兜住时优先），不要默认安全。
-7. 进地图先 python sts2.py route，把路线发到 overlay，再选第一格；HP<50% 下一格必须营火，HP<35% 不接双怪/精英。
+7. 进地图先 python sts2.py route，把路线发到 overlay，再选第一格；血闸直接照 `ctx.rules` 执行（唯一源 `tools/hard_rules.py`，别自己另记一套数字）。
 
-战斗/操作硬规则（v20：结构化输入 + 结构化输出）：
+战斗/操作硬规则（v22：结构化输入 + 结构化输出 + 5 条硬闸）：
+- **5 条硬闸只有一处出处 `tools/hard_rules.py`**：`ctx.py` 每回合把 `rules` 注入局面包，
+  照它执行即可；**不要在这份 prompt 或 SKILL 里另抄一套数字**（跑 `python tools/check_skill.py`
+  和 `python tools/test_docs_consistency.py` 校验不漂移）。
 - **每回合读局面包，再写牌序**（一回合 1 次请求）：
   `python tools/ctx.py` 只在进战斗/换界面/auto 停/拿不准时读一次；之后每回合直接用
   `python tools/act.py --file tmp_plan.json` 返回的 `ctx` 决策，**不要每回合再跑 ctx.py**。
   `ctx` 已含：手牌实费/全部效果、抽/弃/消耗堆、遗物、药水、双方 buff、
   每怪当前意图+下一次意图+机制、入伤/格挡/斩杀/击杀连锁、候选 `plans`。
+- **`ctx.lessons`（按需出现的历史经验）**：只在敌人/血量/节点**真相关**时给 1–3 条，
+  每条是「触发条件 → 建议动作」+ `s`=出处 run；它是账本核对过的失败案例，照做，
+  但硬闸 `ctx.rules` 优先。没这个字段就是这回合没有相关经验，别硬套。
 - **输出格式**：`{"say":["句1","句2"],"seq":[{"c":"BASH","t":0},{"c":"STRIKE_IRONCLAD","t":0},{"end":1}],"fx":{"e":1,"hp":59}}`
   - 牌序是「牌+药水」混排：`{"p":槽,"t":敌}`；`end` 必须在最后。
   - 需要看抽牌/Buff 落地就不写 `end`，只打半回合（回 `mid:1`），下一回合再续。
@@ -36,6 +42,8 @@
   精英/Boss/残血/需要抽牌才知道下一步的回合，逐回合 `ctx`+`act`。
 - **见 `ok:false`**：一张都没打（或打一半 STOP）。用返回的 `ctx` 改 `seq` 重发，
   **绝不**自己补 `end_turn`；费用/目标/手牌变了都以返回的 `ctx` 为准。
+  若返回 `receipt.ok=false`（`RECEIPT_LOST` / 退出码 4）= 接口收下了但状态没变（药水没喝/敌人没掉血），
+  **别重发这一步**，先 `python tools/ctx.py` 看 `potions` 和敌人血量再决定。
 - 药水：补能量在攻击前；斩杀药水最后补刀；格挡/回血在 `end` 前；targeted 写 `t`，漏了会 `invalid_target`。
 - 杂怪先算「杀一只→另一只晕」：`ctx.calc.chain` 给了 kill/stun/save；杀带饥饿的怪的**同伴**才晕，杀它自己不会。
 - 召唤者（爪牙）主人死则撤；2 回合内能杀本体就直杀，别先清小怪。
@@ -44,7 +52,7 @@
 - 只信稳定玩家回合：play_card/end_turn 不在 available_actions 就等，不在过渡态发 end_turn。
 - HP<50% 下一格必须营火；商店先写“最缺/预算/必买/不买”，第二次进店没有目标就离开；不买便宜但不解决主要矛盾的牌。
 - 篝火 HP≥70% 且有关键质变升级就锻造；不连敲两张打击/防御。
-- Act1 目标：2 AOE、1–2 易伤、2–3 优质防御、1–2 运转、1 收尾，牌组≤15、最多 1 精英、Boss 前花光金币；Boss 前 HP≥70%、2 张优质防御、药水可用。
+- Act1 目标：2 AOE、1–2 易伤、2–3 优质防御、1–2 运转、1 收尾，牌组≤15、最多 1 精英、Boss 前花光金币；Boss 前 **HP≥70% + 2 张 8+ 甲 + 药水先验过**（硬闸原文 `tools/hard_rules.py`）。
 - 解说 banner 只写一句自然中文，不写“大肥鱼/DeepSeek/AI:”前缀，不拆 tag/黄字，整句同色；适度社区梗，不要每句都玩梗。
 - 配音不必每刀配：进精英/Boss/低血时用
   `python sts2.py quip "句1" "句2" "句3"` 一次埋 3–5 句（并行预热 TTS，页面排队播），
@@ -58,6 +66,9 @@
 - 不整份读长文档/日志；要查就 grep 行号再 read 窗口。
 
 结束：
-python obsctl.py stop；把录像重命名为 recordings/sts2_ironclad_a10_run<N>_<result>_floor<M>.mp4；python sts2.py report；按 docs/RUN_REVIEW.md 复盘；更新 docs/LESSONS.md 和策略规则。
+python obsctl.py stop；把录像重命名为 recordings/sts2_ironclad_a10_run<N>_<result>_floor<M>.mp4；python sts2.py report；按 docs/RUN_REVIEW.md 复盘（**中止/未结算的局也要写 `logs/runNN_review.md`**，否则统计漏局）；更新 docs/LESSONS.md 和策略规则；跑 `python tools/test_docs_consistency.py`。
+复盘时加跑 `python tools/replay_audit.py`：它会拿账本里每条决策的原始 `state` 回放，
+给出规则触发/违反、经验命中、模拟偏差、护栏回归四个数（口径见 docs/REPLAY_AUDIT.md）；
+有「历史执行今天被拒」或「历史被拒今天放行」就是回归，先修再继续。
 
 现在开始：先加载 skill，确认状态，然后开新局；不要先问我难度，默认 A10。

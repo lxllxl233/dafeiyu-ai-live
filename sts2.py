@@ -1275,7 +1275,8 @@ def _session_path(action: str | None = None) -> str:
     return _new_session_path()
 
 
-def log(action: str, params: dict, before: dict, after: dict, resp: dict, thought: str, meme: str):
+def log(action: str, params: dict, before: dict, after: dict, resp: dict, thought: str, meme: str,
+        effect: str | None = None):
     run = after.get("run") or {}
     combat = after.get("combat") or {}
     entry = {
@@ -1286,6 +1287,7 @@ def log(action: str, params: dict, before: dict, after: dict, resp: dict, though
         "action": action,
         "params": params,
         "status": resp.get("status"),
+        "effect": effect,
         "message": resp.get("message"),
         "screen_before": before.get("screen"),
         "screen_after": after.get("screen"),
@@ -3056,6 +3058,11 @@ def cmd_do(action, card=None, target=None, option=None, thought="", meme="", opt
                 print(f"POTION_RETRY -> {resp.get('status')} {resp.get('message')}")
             except Exception as e:
                 print(f"POTION_RETRY_FAILED {e}（按没生效重算，别把药水算进计划）")
+        # 接口 ok/回 pending 都不等于药水用掉了：以槽位为准留一句硬证据。
+        p2 = potion_at(_await_change(before), _int(option, 0))
+        if p2 and p2.get("potion_id") and not p2.get("is_queued"):
+            print("POTION_LOST 药水还在槽里（status 说收下了但没消耗）：别把这一瓶算进伤害/格挡，"
+                  "先 python tools/ctx.py 看 potions 再决定是否重试")
     after = wait_stable_player_state()
     # P10：牌组已经到/超上限时，收奖励不该再涨牌。真涨了就是「静默领牌」又回来了，
     # 必须喊出来（不吞证据、不改判定；动作已经发生，只能留痕 + 提示怎么补救）。
@@ -3435,6 +3442,150 @@ def _delta_line(before: dict, after: dict) -> str:
     return " · ".join(bits)
 
 
+# ---------------------------------------------------------------- 动作回执
+# mod 只回一个 status，**不等于动作真的结算了**（run105 T7 药水就是这么丢的）：
+#   completed = 已结算
+#   pending   = "Action queued but state is still transitioning."（排队中，结没结算不知道）
+#   其它/缺失 = unknown
+# 历史账本 19,664 步里 307 步是 pending（use_potion 72、play_card 109、claim_reward 82…），
+# 以前这些统统按成功记账。判定一律看**前后状态差分**，接口说什么都不算数。
+_STATUS_OK = frozenset(("completed", "ok", "success"))
+_STATUS_PENDING = frozenset(("pending", "queued"))
+
+
+def status_kind(status) -> str:
+    s = str(status or "").strip().lower()
+    if s in _STATUS_OK:
+        return "ok"
+    if s in _STATUS_PENDING:
+        return "pending"
+    return "unknown"
+
+
+def _pot_slots(st: dict) -> dict:
+    out = {}
+    run = st.get("run") or {}
+    for i, p in enumerate(run.get("potions") or []):
+        if not isinstance(p, dict):
+            continue
+        pid = p.get("potion_id") or p.get("id") or ""
+        if not pid or p.get("occupied") is False:
+            continue
+        out[_int(p.get("index"), i)] = str(pid)
+    return out
+
+
+def _enemy_hps(st: dict) -> dict:
+    out = {}
+    for i, e in enumerate((st.get("combat") or {}).get("enemies") or []):
+        if not isinstance(e, dict):
+            continue
+        out[_int(e.get("index"), i)] = _int(e.get("current_hp", e.get("hp")), 0)
+    return out
+
+
+def _ui_sig(st: dict):
+    """非战斗界面的粗指纹（奖励/选牌/事件/商店的载荷长度），用于判断非战斗动作是否落地。"""
+    for k in ("reward", "choice", "selection", "shop", "event", "rest", "map"):
+        v = st.get(k)
+        if v:
+            try:
+                return (k, len(json.dumps(v, ensure_ascii=False, sort_keys=True)))
+            except Exception:  # noqa: BLE001
+                return (k, 0)
+    return None
+
+
+def _snap(st: dict) -> dict:
+    """只取「动作一落地就会变」的字段，用来做前后差分（不含动画/计时噪声）。"""
+    c = st.get("combat") or {}
+    p = c.get("player") or {}
+    run = st.get("run") or {}
+    return {
+        "screen": st.get("screen"),
+        "ui": _ui_sig(st),
+        "turn": _int(c.get("turn", st.get("turn")), 0),
+        "floor": _int(run.get("floor"), 0),
+        "hand": len([x for x in (c.get("hand") or []) if isinstance(x, dict)]),
+        "e": _int(p.get("energy"), 0),
+        "blk": _int(p.get("block"), 0),
+        "hp": _int(p.get("current_hp", run.get("current_hp", run.get("hp"))), 0),
+        "pot": tuple(sorted(_pot_slots(st).items())),
+        "en": tuple(sorted(_enemy_hps(st).items())),
+        "pw": tuple(sorted(str(x.get("power_id") or x.get("id")) + str(x.get("amount"))
+                           for x in (p.get("powers") or []) if isinstance(x, dict))),
+    }
+
+
+_DIFF_WHY = {"pot": "药水槽", "en": "敌人血量", "hand": "手牌数", "e": "能量", "blk": "格挡",
+             "hp": "自己血量", "pw": "buff", "turn": "回合数", "floor": "层数",
+             "screen": "界面", "ui": "界面内容"}
+
+
+def verify_effect(action: str, params: dict, before: dict, after: dict, status=None) -> dict:
+    """动作到底有没有落地：只看前后状态差分。
+
+    返回 {"a","status","effect","why"}：
+      applied    = 状态里看得到变化（真的结算了）
+      no_effect  = 接口说 completed，但状态一点没变（**假成功**）
+      unverified = pending/unknown 且看不到变化（不敢说成功，也不敢说失败）
+    """
+    b, a = _snap(before or {}), _snap(after or {})
+    diff = [k for k in b if b[k] != a[k]]
+    p = params or {}
+    if action == "use_potion":
+        slot = _int(p.get("option_index", p.get("p")), -1)
+        gone = slot >= 0 and dict(b["pot"]).get(slot) != dict(a["pot"]).get(slot)
+        hit = any(k in diff for k in ("en", "hp", "blk", "pw"))
+        ok = bool(gone or hit)
+    elif action == "play_card":
+        ok = bool(diff)   # 出牌必然动 手牌/能量/格挡/敌血/buff 之一
+    elif action == "end_turn":
+        ok = any(k in diff for k in ("turn", "screen", "hand", "floor", "en"))
+    else:
+        ok = bool(diff)
+    kind = status_kind(status)
+    if ok:
+        eff = "applied"
+    elif kind == "ok":
+        eff = "no_effect"
+    else:
+        eff = "unverified"
+    return {"a": action, "status": status, "effect": eff,
+            "why": ",".join(_DIFF_WHY.get(k, k) for k in diff) or "状态无变化"}
+
+
+def _settle(a: str, params: dict, before: dict, resp: dict, after: dict,
+            tries: int = 6) -> tuple[dict, dict]:
+    """pending/unknown 时多看几眼再看结论：动画/结算经常慢半拍。"""
+    rc = verify_effect(a, params, before, after, (resp or {}).get("status"))
+    if rc["effect"] == "applied" or rc["effect"] == "no_effect":
+        return after, rc
+    for _ in range(tries):
+        _sleep(0.25)
+        after = get_state()
+        rc = verify_effect(a, params, before, after, (resp or {}).get("status"))
+        if rc["effect"] == "applied":
+            rc["recovered"] = True
+            return after, rc
+    return after, rc
+
+
+def _emit_receipt(items: list) -> None:
+    """打印机器可读回执；有动作没落地就停在这，别让上层当成功。"""
+    # 空列表=整批都是「战斗已结束」的跳过步，没有可校验的动作，不算丢失。
+    ok = all(x.get("effect") == "applied" for x in items)
+    print("RECEIPT " + json.dumps({"ok": ok, "items": items}, ensure_ascii=False,
+                                  separators=(",", ":")))
+    if not ok:
+        bad = next((x for x in items if x.get("effect") != "applied"), items[0])
+        print(f"RECEIPT_LOST 第 {bad.get('i')} 步 {bad.get('a')} status={bad.get('status')} "
+              f"effect={bad.get('effect')}（{bad.get('why')}）：接口收下了但状态里没落地。"
+              "别把这一步当执行过、也别重发后面的动作——先 python tools/ctx.py 看真实局面。")
+        print(compact(get_state(), brief=True))
+        sys.exit(4)
+
+
 def _plan_cost(state: dict, items: list) -> tuple[int, int]:
     """本回合计划的费用合计 vs 当前能量（只数当前手牌里能对上的牌）。"""
     combat = state.get("combat") or {}
@@ -3510,6 +3661,7 @@ def cmd_batch(spec: str):
     if _th or _mm:
         overlay_say(tag_for(start.get("screen", "")), _th, _mm, start, force=True)
     st = None
+    receipts: list = []
     for i, it in enumerate(items):
         perf.count("batch_step")
         a = it.get("action")
@@ -3571,7 +3723,11 @@ def cmd_batch(spec: str):
                 sys.exit(2)
             prev = len(((before.get("combat") or {}).get("hand") or []))
             after = wait_new_turn_hand(prev) or get_state()
-            log(a, {}, before, after, resp or {}, it.get("thought", ""), it.get("meme", ""))
+            after, rc = _settle(a, {}, before, resp or {}, after)
+            log(a, {}, before, after, resp or {}, it.get("thought", ""), it.get("meme", ""),
+                effect=rc["effect"])
+            receipts.append({"i": i, "a": a, "status": rc["status"], "effect": rc["effect"],
+                             "why": rc["why"]})
             print(f"[{i}] end_turn -> {resp.get('status')} | {_delta_line(before, after)}")
             ended = True
             break
@@ -3623,8 +3779,12 @@ def cmd_batch(spec: str):
                     break
                 _sleep(0.12)
                 after = get_state()
-        log(a, params, before, after, resp or {}, thought, meme)
+        after, rc = _settle(a, params, before, resp or {}, after)
+        log(a, params, before, after, resp or {}, thought, meme, effect=rc["effect"])
+        receipts.append({"i": i, "a": a, "status": rc["status"], "effect": rc["effect"],
+                         "why": rc["why"]})
         print(f"[{i}] {a} {params.get('card_index', params)} -> {resp.get('status')} | {_delta_line(before, after)}")
+    _emit_receipt(receipts)
     if ended:
         # 完整快照 = 下一回合的 state：省掉「回合开始再 state 一次」的那次请求。
         print(compact(after))

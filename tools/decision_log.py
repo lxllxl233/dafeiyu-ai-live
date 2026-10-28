@@ -346,6 +346,7 @@ def record_decision(
     batch=None,
     after=None,
     retargets=None,
+    allow=None,
     mode: str = "model",
 ) -> dict | None:
     """写一条决策记录；任何异常返回 None，绝不向调用方抛出。"""
@@ -372,6 +373,9 @@ def record_decision(
                 "seq": seq,
                 "say": lines,
                 "fx": fx,
+                # 护栏豁免（allow_leftover/allow_no_lethal/…）：不记就分不清
+                # 「护栏漏了」和「模型显式豁免」，回放审计会冤枉护栏。
+                "allow": dict(allow or {}),
             },
             "steps": steps,
             "chosen_plan": _chosen_plan(steps, plans),
@@ -424,11 +428,19 @@ def _decision_stats(run_id: str) -> dict:
                 f = b.get("run", {}).get("floor") if isinstance(b, dict) else None
                 key = str(f if f is not None else "?")
                 out["by_floor"][key] = out["by_floor"].get(key, 0) + lost
-            seq = ((r.get("input") or {}).get("seq") or [])
-            for s in seq:
-                if isinstance(s, dict) and ("p" in s):
-                    out["potions_used"] += 1
-        elif outcome in ("rejected_validate", "rejected_fx", "batch_error",
+            bp = ((b.get("run") or {}).get("potions") if isinstance(b, dict) else None)
+            ap = ((a.get("run") or {}).get("potions") if isinstance(a, dict) else None)
+            if isinstance(bp, list) and isinstance(ap, list):
+                # 以药水槽净消耗为准：seq 里写了 p 步、但 pending 被吞/没落地的不算
+                out["potions_used"] += max(0, len(bp) - len(ap))
+            else:
+                # 老记录没有 after.run.potions：只能退回按 seq 步数计（会在 run 里注明）
+                seq = ((r.get("input") or {}).get("seq") or [])
+                for s in seq:
+                    if isinstance(s, dict) and ("p" in s):
+                        out["potions_used"] += 1
+        elif outcome in ("rejected_validate", "rejected_fx", "rejected_guard",
+                         "rejected_clear_overflow", "batch_error", "receipt_lost",
                          "stale_end", "missing_seq", "not_combat", "no_actions"):
             out["rejected"] += 1
     return out

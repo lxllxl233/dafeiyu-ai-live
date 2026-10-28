@@ -127,14 +127,24 @@ def test_cmd_batch():
         enemy(2, 4, 30, True),
     ])
     calls = []
+    cur = {"st": st}
 
     def fake_act(action, **params):
         calls.append({"action": action, **params})
-        return {"status": "completed", "state": st}
+        # 假游戏也要「真的结算」：回执按前后差分判定，静态状态会被判成没落地（exit 4）。
+        st2 = json.loads(json.dumps(cur["st"]))
+        ti = params.get("target_index")
+        for e in st2["combat"]["enemies"]:
+            if e.get("index") == ti and e.get("is_alive"):
+                e["current_hp"] = max(0, e["current_hp"] - 6)
+        st2["combat"]["player"]["energy"] = max(0, st2["combat"]["player"]["energy"] - 1)
+        st2["combat"]["hand"] = st2["combat"]["hand"][1:]
+        cur["st"] = st2
+        return {"status": "completed", "state": st2}
 
     old = (sts2.get_state, sts2.act, sts2.overlay_say, sts2.log, sts2._meme_hint, sts2._fingerprint)
     try:
-        sts2.get_state = lambda: st
+        sts2.get_state = lambda: cur["st"]
         sts2.act = fake_act
         sts2.overlay_say = lambda *a, **k: None
         sts2.log = lambda *a, **k: None

@@ -1,6 +1,11 @@
 # 长教训库（死因链 / 长复盘）
 
 > 常驻 SKILL.md 只放一句话教训；这里放能复用的死因链细节。按需 `read`。
+>
+> **本文件只覆盖 run59–run69（2026-10-26 前后）**，其中机制描述可能已过期
+> （数值改过版、A10 阈值变过）。**最新一季 run96–run106 的复盘不在这里**，在
+> `logs/runNN_report.md` / `logs/runNN_review.md` 和 `docs/LESSONS.md`（§A–§E）；
+> 引用本文件的机制结论前，先和 `db/`、`docs/ENEMIES.md` 或当次实测账本对一遍。
 
 ## run63 · A10 铁甲 · Act2 第 21 层（两连 Chomper，主动放弃）
 

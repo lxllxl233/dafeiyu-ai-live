@@ -2,7 +2,7 @@
 
 一套给 AI agent 用的《杀戮尖塔 2》（Slay the Spire 2）**铁甲战士 A10 实况决策 skill**：不是攻略文章，是一份可执行的「结构化局面 → 结构化牌序 + 数值公式 + 反模式」。
 
-- 版本：**v20**（2026-10-26）
+- 版本：**v22**（2026-10-28）
 - 适用：v0.107.1 主线（beta v0.111.0 同为参考），A10 双 Boss
 - 配套：`sts2.py`（本地 mod HTTP API 客户端）、`tools/sim.py`（单回合模拟器）、`tools/ctx.py`（局面包）、`tools/act.py`（校验并执行牌序）、OBS 录屏 + 弹幕 overlay；说话系统见另一个 skill `sts2-caster`
 
@@ -100,6 +100,30 @@ skill 里的命令默认项目目录里有一套工具：
 没有这套工具也能读，但 `ctx.py` / `act.py` 需要自己实现等价物。
 
 ## 版本记录
+
+### v22（2026-10-28）
+
+- **5 条硬闸单一源**：`tools/hard_rules.py`（`VERSION = 1`）是伤害/血闸/自伤/药水/Boss 五条闸的
+  唯一出处；`tools/ctx.py` 每回合把 `rules_v` + 5 条 `rules` 注进局面包（约 330 B），
+  规则不再依赖「SKILL.md 这次有没有被读进上下文」。
+- **动作回执**：`cmd_batch` 每步按前后状态差分判 `applied / no_effect / unverified`，
+  收尾打印 `RECEIPT {...}`；有一步没落地就 `RECEIPT_LOST` + 退出码 4。
+  `tools/act.py` 的 `ok` 以回执为准，`logs/run_*.jsonl` 多一列 `effect`，账本多一个 `receipt_lost`。
+- **药水统计按槽位净消耗**：`potions_used` 不再数 `seq` 里的 `p` 步数（run105 曾记 5，实为 2）。
+- **文档一致性测试**：`tools/test_docs_consistency.py`（版本串 / 阈值 / 复盘覆盖 / 禁用结论）。
+- **经验卡检索**：`logs/lessons.jsonl` + `tools/lesson_index.py`（`VERSION = 1`）把 run96–run105
+  的失败案例写成「触发条件 → 建议动作」，`ctx` 只在敌人/血量/节点真相关时注入 `lessons`
+  （≤3 条 ≤420 B，`verified:false` 不注入）；`tools/test_lesson_index.py` 用真实账本快照回放命中。
+- **历史回放审计**：`tools/replay_audit.py` 拿 `decisions.jsonl` 每行的原始 `state` 重放，
+  量四个数：规则触发/违反、经验命中、`forecast` vs 落地偏差、今天护栏对历史牌序的判定
+  （0 误伤 / 0 放行才算没退化）。账本 v22 起多记 `input.allow`，否则分不清「护栏漏」和「显式豁免」。
+- 阈值只有 `tools/hard_rules.py` 一处；SKILL.md、`NEXT_PROMPT.txt`、README 只写指针，不复制数字。
+
+### v21（2026-10-27）
+
+- §2 新增「倒推闸」：出幕血公式 + 出度 1 必经精英判定；§8 新增「斩杀排程」
+  （`HP + 甲 ≥ 爆炸/DeathBlow`，不够就留 1 血）；§12 重写 9 条（牌组 Act1 ≤16、呼唤早打、律动不封顶）。
+- `tools/check_skill.py` 同步 v21 断言（4,386 token）。
 
 ### v20（2026-10-26）
 

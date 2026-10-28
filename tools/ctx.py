@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """局面包 v3：一回合一份 JSON，模型只读这一份做决策。
 
-设计目标（v20）
+设计目标（v3 局面包；`rules` 注入 v22 起，`lessons` 注入 v22 追加）
 ---------------
 1. **该有的都有**：手牌实费与全部效果、抽/弃/消耗堆、遗物、药水、能量、
    双方 buff、每只怪的当前意图 + 下一次意图 + 机制、可上的 debuff、可变的费、
@@ -9,9 +9,13 @@
 2. **能算的全算完**：伤害/格挡/入伤/斩杀/连锁/两回合账都在本地；
    模型不心算，只做「打谁、先打哪张、要不要交药」的取舍。
 3. **省 token**：短键、同名牌合并、死怪不写、空字段不写、牌组只给数量；
-   典型战斗 1.2–2.2KB，比自然语言快照小一个量级。
+   典型战斗 1.5–2.6KB，比自然语言快照小一个量级。
 4. **非战斗给建议**：奖励/商店/营火/选牌在 `choice.eval` 里给缺口、分数和门槛；
    只做排序提示，不替代路线/事件判断，也不执行动作。
+5. **硬闸常驻**：`rules`（5 条，唯一来源 tools/hard_rules.py）随每份局面包注入，
+   不依赖 skill 是否重载、也不受上下文压缩影响（2026-10-28 审计 run104/105）。
+6. **经验按需注入**：`lessons`（≤3 条，唯一来源 logs/lessons.jsonl）只在这回合真相关时出现
+   （指定敌人 / 血量档 / 节点类型命中才给），无关回合一个字节都不花。
 
 用法
 ----
@@ -38,6 +42,8 @@ import sts2  # noqa: E402
 import sim  # noqa: E402
 import mech as mechlib  # noqa: E402
 import noncombat  # noqa: E402
+import hard_rules  # noqa: E402
+import lesson_index  # noqa: E402
 
 DB = os.path.join(ROOT, "db", "sts2.db")
 MEM_PATH = os.path.join(ROOT, "logs", "intent_memory.json")
@@ -88,6 +94,25 @@ def _clean(s) -> str:
 def _short(s, n=40) -> str:
     s = _clean(s)
     return s[:n]
+
+
+# 交出去就自扣血的牌（血墙 2、突破 1、祭品 6、放血 3）。血量低时它们不是"贵"而是"可能当场死"。
+SELF_HP_CARDS = ("BLOOD_WALL", "BREAKTHROUGH", "OFFERING", "BLOODLETTING")
+
+
+def _self_hp_cost(seq) -> list:
+    """这条计划线里会自扣血的牌（sim 的 seq 形如 [["BLOOD_WALL", 0], ["STRIKE_IRONCLAD", 1]]）。"""
+    out = []
+    for s in (seq or []):
+        if isinstance(s, (list, tuple)):
+            cid = str(s[0]) if s else ""
+        elif isinstance(s, dict):
+            cid = str(s.get("c") or s.get("id") or "")
+        else:
+            cid = ""
+        if cid in SELF_HP_CARDS:
+            out.append(cid)
+    return out
 
 
 # ---------------------------------------------------------------- 意图记忆
@@ -528,6 +553,31 @@ def _can(st: sim.Sim, hand: list[dict], potions: list[dict]) -> dict:
     return out
 
 
+def _rules_out() -> dict:
+    """5 条硬闸：每次构建局面包都带上（与 skill 是否重载、是否被压缩无关）。
+
+    2026-10-28 审计 run96–run106：规则只靠 skill 一次性加载，压缩后掉出上下文，
+    run104 T2（21 点不挡）/run105 f7（30% 血进精英）都发生在规则不在输入里的回合。
+    这里改成每回合随 ctx 注入，唯一来源是 tools/hard_rules.py。
+    """
+    return {"rules_v": hard_rules.VERSION, "rules": hard_rules.for_ctx()}
+
+
+def _lessons_out(d: dict) -> dict:
+    """命中的经验卡（≤3 条）：唯一来源 logs/lessons.jsonl，检索见 tools/lesson_index.py。
+
+    与 `rules` 的分工：rules 是**永远都在**的 5 条硬闸；lessons 是**这回合才相关**的
+    历史教训（run96–run105 账本公司核对过的失败案例）。无关的回合不注入，
+    免得把 1600 行的 LESSONS.md 塞进每回合的输入里。
+    经验层是附加信息：坏卡片/坏 JSON 不能阻断局面包。
+    """
+    try:
+        return lesson_index.for_ctx(d)
+    except Exception as e:  # noqa: BLE001
+        print(f"WARN lesson_index 失败（不阻断局面包）：{e}", file=sys.stderr)
+        return {}
+
+
 def _combat(state: dict, mem: dict) -> dict:
     c = state.get("combat") or {}
     p = c.get("player") or {}
@@ -548,6 +598,7 @@ def _combat(state: dict, mem: dict) -> dict:
                "e": _int(p.get("energy"), 0), "em": _int(p.get("max_energy", run.get("max_energy")), 0),
                "stars": _int(p.get("stars"), 0)},
     }
+    out.update(_rules_out())
     buffs = _buffs(p.get("powers"))
     if buffs:
         out["me"]["buffs"] = buffs
@@ -633,6 +684,13 @@ def _combat(state: dict, mem: dict) -> dict:
             p_out["stun"] = pl["stun"]
         if pl.get("risk") or pl.get("hp", 1) <= 0:
             p_out["risk"] = 1
+        # 自伤闸（hard_rules `self`）落在计划层：血≤40% 时把「这条线要交自伤牌」标出来。
+        # 不重排（重排会藏掉唯一能打的线），只让模型看见冲突——8% 血时 best 线还含血墙
+        # 是 run105 的死法：规则写进 ctx 了，但计划打分没算它（回放审计 32/52 行可见）。
+        selfs = _self_hp_cost(pl["seq"])
+        if selfs and hp * 100 <= 40 * maxhp:
+            p_out["self"] = 1
+            p_out["self_why"] = f"血{hp}/{maxhp}（{100 * hp / maxhp:.0f}%）交{'/'.join(selfs)}会自扣血"
         plan_out.append(p_out)
     out["plans"] = plan_out
 
@@ -685,6 +743,10 @@ def _combat(state: dict, mem: dict) -> dict:
     if risk:
         kinds = ",".join(p["k"] for p in risk)
         warns.append(f"RISK {kinds} hp<=0：只作伤害上限，不要照打")
+    self_plans = [p for p in plan_out if p.get("self")]
+    if self_plans:
+        warns.append(f"SELF_HP 血{hp}/{maxhp}：{'/'.join(p['k'] for p in self_plans)} 线含自伤牌，"
+                     f"交之前先算「打完还剩多少能吃这一下」（run105 8% 血血墙→死）")
     if calc.get("tax"):
         warns.append(f"status_tax({calc['tax']})")
     if piles and piles.get("draw", {}).get("n", 99) <= 2:
@@ -704,6 +766,7 @@ def _combat(state: dict, mem: dict) -> dict:
                      "下回合白赚一轮——值得为全挡多花一张牌")
     if warns:
         out["warn"] = warns
+    out.update(_lessons_out(out))
     return out
 
 
@@ -912,6 +975,7 @@ def build(state: dict) -> dict:
                 "hp": _int(run.get("current_hp"), 0), "max": _int(run.get("max_hp"), 0),
                 "deck": len(run.get("deck") or [])},
     }
+    out.update(_rules_out())
     relics = _relics_out(run)
     if relics:
         out["relics"] = relics
@@ -935,6 +999,7 @@ def build(state: dict) -> dict:
     if ev:
         choice["eval"] = ev
     out["choice"] = choice
+    out.update(_lessons_out(out))
     return out
 
 
