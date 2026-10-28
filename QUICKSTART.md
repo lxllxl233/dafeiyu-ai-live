@@ -21,14 +21,18 @@ python -m pip install -r requirements.txt
 ## 2. 跑直播姬（不需要游戏）
 
 ```powershell
-python main.py               # 大肥鱼桌宠；右键鱼身看菜单
+start.bat                    # 一键启动桌宠（双击也行）
+python main.py               # 或直接跑；右键鱼身看菜单
 python main.py setup         # 建 db/、tools/data/ 兼容链接
 python main.py doctor        # 自检：人设卡 / 两种语音 / overlay / 语料库 / 录像
 python main.py demo          # 离线跑「游戏 → 性格 → 语音 → UI」
 python main.py studio        # 控制台 http://127.0.0.1:8730/studio
 ```
 
-控制台里能：发台词（先「只算 lint」再「送到直播」）、试听曼波/动物语、看四层状态。
+控制台里能：发台词（先「只算 lint」再「送到直播」）、看决策/日志/Token、切语音和模型、
+配置 API Key、试听曼波/动物语。
+
+> API Key 只写本机 `config.json`（`.gitignore` 已忽略），控制台只显示「已配置」，不回显。
 
 只想要 OBS 桌宠弹幕：`python main.py studio` 起服务（不用打开 `/studio` 即可），
 OBS 浏览器源指向 `http://127.0.0.1:8730/`，宽 560 高 470，背景透明（气泡 + 大肥鱼 + 名字）。
@@ -36,9 +40,13 @@ OBS 浏览器源指向 `http://127.0.0.1:8730/`，宽 560 高 470，背景透明
 桌面桌宠：
 
 ```powershell
+start.bat                    # 双击也行；pythonw 启动，无控制台
 python main.py               # 默认桌宠；加 --panel 回旧版横幅
 # 左键拖（左右/上下换朝向）· 滚轮缩放 · 右键菜单 · Ctrl+Alt+D 穿透 · Ctrl+Alt+S 声音
 ```
+
+右键菜单：置顶 / 点击穿透 / 声音 / 录屏里隐藏 / 语音 / 模型 / 配置 API / 打开管理端 /
+示例 / 关闭。空闲气泡「吃饭ing」，决策「思考ing」，说话显示台词。
 
 `python main.py` 默认在后台顺带起 overlay 服务；端口被占用会复用，不想起服务加
 `--no-server`。

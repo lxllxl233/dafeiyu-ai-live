@@ -47,6 +47,13 @@ class LiveConfig:
     tts_speed: float = 1.0
     tts_timeout: float = 60.0
 
+    # 模型 / API（api_key 只写本机 config.json，绝不回显、绝不入库）
+    llm_provider: str = "deepseek"
+    llm_base_url: str = "https://api.deepseek.com/v1"
+    llm_model: str = "deepseek-chat"
+    llm_api_key: str = ""
+    llm_models: list[str] = field(default_factory=lambda: ["deepseek-chat", "deepseek-reasoner"])
+
     # 行为
     push_overlay: bool = True
     strict_lint: bool = False
@@ -91,6 +98,10 @@ class LiveConfig:
             "DAFEIYU_TTS_PROMPT": "tts_prompt",
             "DAFEIYU_TTS_SPEED": "tts_speed",
             "DAFEIYU_TTS_TIMEOUT": "tts_timeout",
+            "DAFEIYU_LLM_PROVIDER": "llm_provider",
+            "DAFEIYU_LLM_BASE_URL": "llm_base_url",
+            "DAFEIYU_LLM_MODEL": "llm_model",
+            "DAFEIYU_LLM_API_KEY": "llm_api_key",
             # 旧工程的环境变量，继续认
             "STS2_TTS_URL": "tts_url",
             "STS2_TTS_REF": "tts_ref",
@@ -120,10 +131,41 @@ class LiveConfig:
 
     # ---------------------------------------------------------------- 输出
     def to_dict(self) -> dict:
+        """给控制台/日志看的配置：API Key 只报是否已配置，绝不回显。"""
         out = asdict(self)
         out.pop("extra", None)
         out["tts_ref"] = bool(out.get("tts_ref"))
+        key = out.pop("llm_api_key", "") or ""
+        out["llm_api_key"] = ""
+        out["llm_api_key_set"] = bool(key)
         return out
+
+    def save_patch(self, patch: dict) -> "LiveConfig":
+        """把少量配置合并进本机 config.json（不入库；API Key 不回显）。"""
+        known = {f.name for f in fields(self)}
+        path = paths.CONFIG_FILE
+        raw: dict = {}
+        if path.exists():
+            try:
+                loaded = json.loads(path.read_text(encoding="utf-8"))
+                raw = loaded if isinstance(loaded, dict) else {}
+            except (OSError, ValueError):
+                raw = {}
+        for key, value in patch.items():
+            if key not in known or key == "extra" or value is None:
+                continue
+            if key == "llm_api_key" and value == "***":
+                continue        # 控制台回显的占位符，不是真 Key
+            setattr(self, key, value)
+        data = {f.name: getattr(self, f.name) for f in fields(self) if f.name != "extra"}
+        data.update(self.extra)
+        raw.update(data)
+        path.write_text(json.dumps(raw, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        try:
+            os.chmod(path, 0o600)
+        except OSError:
+            pass
+        return self
 
 
 __all__ = ["LiveConfig"]

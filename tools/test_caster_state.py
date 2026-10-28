@@ -103,7 +103,8 @@ check("mark_idle 立刻停说话", s.speaking, False)
 check("mark_idle 立刻回 IDLE", s.state, cs.IDLE)
 
 # ---------------------------------------------------------------- 文案 & 快照
-check("思考文案就是需求里的「思考中……」", cs.THINKING_TEXT, "思考中……")
+check("思考文案就是需求里的「思考ing」", cs.THINKING_TEXT, "思考ing")
+check("空闲文案就是需求里的「吃饭ing」", cs.IDLE_TEXT, "吃饭ing")
 s, clk = mk()
 s.set_thinking(True, note="x")
 snap = s.snapshot()

@@ -122,6 +122,18 @@
   .kv:first-of-type{border-top:0}
   .kv span{color:var(--muted)}
   .kv b{font-weight:600;color:#dfe6f5}
+  .field{display:flex;flex-direction:column;gap:5px;margin:8px 0}
+  .field label{font-size:11px;color:var(--muted);letter-spacing:.4px}
+  .field input,.field select{background:#0f121b;border:1px solid var(--line);color:var(--text);
+    border-radius:8px;padding:7px 9px;font-size:12px;font-family:inherit;outline:none;width:100%}
+  .field input:focus,.field select:focus{border-color:rgba(244,201,104,.55)}
+  .field .hint{font-size:10.5px;color:var(--muted)}
+  .mini-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:7px;
+    max-height:190px;overflow:auto}
+  .mini-list li{font-size:11.5px;line-height:1.5;color:#c9d1e4;border-left:2px solid var(--line);
+    padding-left:8px}
+  .mini-list .t{color:var(--muted);font-size:10px}
+  .thinking-now{font-size:13px;color:var(--gold)}
   .layers{display:flex;flex-direction:column;gap:9px}
   .layer{display:flex;gap:9px;align-items:flex-start;font-size:11.8px;line-height:1.5}
   .layer i{width:7px;height:7px;border-radius:2px;margin-top:5px;flex:none;background:var(--fish)}
@@ -156,6 +168,7 @@
     <span class="pill"><i class="dot"></i>连接中…</span>
   </div>
   <div class="top-links">
+    <a href="#settings">配置</a>
     <a href="/" target="_blank" rel="noopener">弹幕源</a>
     <a href="/health" target="_blank" rel="noopener">health</a>
     <a href="#" id="reload">刷新</a>
@@ -224,6 +237,49 @@
     </div>
 
     <div class="card">
+      <h2>Token <span>本地估算</span></h2>
+      <div class="kv"><span>输入</span><b id="tokIn">0</b></div>
+      <div class="kv"><span>输出</span><b id="tokOut">0</b></div>
+      <div class="kv"><span>合计</span><b id="tokTotal">0</b></div>
+      <div class="kv"><span>决策轮次</span><b id="tokCalls">0</b></div>
+      <div class="hint" id="tokHint" style="font-size:10.5px;color:var(--muted);margin-top:6px">按台词字数估算，不是 API 账单。</div>
+    </div>
+
+    <div class="card" id="settings">
+      <h2>配置 <span>只存本机 config.json</span></h2>
+      <div class="field"><label for="cfgVoice">语音</label>
+        <select id="cfgVoice">
+          <option value="mambo">曼波语</option>
+          <option value="animal">动物语</option>
+          <option value="off">静音</option>
+        </select></div>
+      <div class="field"><label for="cfgProvider">API 提供方</label>
+        <input id="cfgProvider" placeholder="deepseek"></div>
+      <div class="field"><label for="cfgBase">Base URL</label>
+        <input id="cfgBase" placeholder="https://api.deepseek.com/v1"></div>
+      <div class="field"><label for="cfgModel">模型</label>
+        <input id="cfgModel" list="cfgModels" placeholder="deepseek-chat">
+        <datalist id="cfgModels"></datalist></div>
+      <div class="field"><label for="cfgKey">API Key</label>
+        <input id="cfgKey" type="password" autocomplete="off" placeholder="留空 = 保持">
+        <span class="hint" id="cfgKeyHint">未配置</span></div>
+      <div class="row" style="display:flex;gap:8px">
+        <button class="btn" id="cfgSave">保存配置</button>
+        <button class="btn ghost" id="cfgClearKey">清除 Key</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>决策 <span class="thinking-now" id="thinkingNow">—</span></h2>
+      <ul class="mini-list" id="decisionList"><li>还没有决策记录。</li></ul>
+    </div>
+
+    <div class="card">
+      <h2>运行日志 <span>最近 80 条</span></h2>
+      <ul class="mini-list" id="logList"><li>还没有日志。</li></ul>
+    </div>
+
+    <div class="card">
       <h2>分层</h2>
       <div class="layers">
         <div class="layer"><i style="background:var(--gold)"></i><div><b>UI 层</b><br><code>ui/overlay · ui/studio · ui/desktop</code></div></div>
@@ -238,9 +294,9 @@
 </main>
 
 <footer>
-  <span>运行：<code>python dafeiyu.py studio</code></span>
-  <span>离线演示：<code>python dafeiyu.py demo</code></span>
-  <span>自检：<code>python dafeiyu.py doctor</code></span>
+  <span>运行：<code>python main.py studio</code></span>
+  <span>桌宠：<code>python main.py</code></span>
+  <span>自检：<code>python main.py doctor</code></span>
   <span id="rootHint"></span>
 </footer>
 
@@ -361,6 +417,85 @@ function renderRight(){
   $("#seq").textContent = `seq ${ov.seq ?? "—"}`;
 }
 
+function setIfIdle(id, value){
+  const el = $(id);
+  if(el && document.activeElement !== el) el.value = value ?? "";
+}
+
+function renderConfig(){
+  const cfg = DATA?.config || {};
+  $("#cfgVoice").value = cfg.voice || "mambo";
+  setIfIdle("#cfgProvider", cfg.llm_provider ?? "");
+  setIfIdle("#cfgBase", cfg.llm_base_url ?? "");
+  setIfIdle("#cfgModel", cfg.llm_model ?? "");
+  $("#cfgModels").innerHTML = (cfg.llm_models || []).map(m => `<option value="${esc(m)}"></option>`).join("");
+  $("#cfgKeyHint").textContent = cfg.llm_api_key_set ? "已配置（不会回显，留空保持）" : "未配置";
+  $("#cfgKey").placeholder = cfg.llm_api_key_set ? "已配置，留空保持" : "粘贴 API Key";
+}
+
+function renderTelemetry(){
+  const ov = DATA?.overlay || {};
+  const u = ov.usage || {};
+  $("#tokIn").textContent = u.input ?? 0;
+  $("#tokOut").textContent = u.output ?? 0;
+  $("#tokTotal").textContent = u.total ?? 0;
+  $("#tokCalls").textContent = u.calls ?? 0;
+  $("#tokHint").textContent = u.calls ? `本地估算 · ${u.calls} 轮，不是 API 账单` : "按台词字数估算，不是 API 账单";
+
+  const th = ov.thinking || {};
+  $("#thinkingNow").textContent = th.on ? (th.note ? `思考ing · ${th.note}` : "思考ing") : "吃饭ing";
+
+  const decisions = (ov.decisions || []).slice().reverse();
+  $("#decisionList").innerHTML = decisions.length ? decisions.slice(0, 20).map(d => {
+    const t = new Date((d.ts || 0) * 1000).toLocaleTimeString("zh-CN", {hour12:false});
+    const use = d.usage || {};
+    const thought = d.thought ? `<div>${esc(d.thought)}</div>` : "";
+    const said = d.speech ? `<div class="t">说：${esc(d.speech)}</div>` : "";
+    return `<li>${thought}${said}<div class="t">#${d.id} · ${t} · ${esc(d.tag || "思路")} · ${use.total ?? 0} tok</div></li>`;
+  }).join("") : `<li>还没有决策记录。</li>`;
+
+  const logs = (ov.logs || []).slice().reverse();
+  $("#logList").innerHTML = logs.length ? logs.slice(0, 40).map(l => {
+    const t = new Date((l.ts || 0) * 1000).toLocaleTimeString("zh-CN", {hour12:false});
+    return `<li><div>${esc(l.msg || "")}</div><div class="t">${t} · ${esc(l.level || "info")}</div></li>`;
+  }).join("") : `<li>还没有日志。</li>`;
+}
+
+async function saveConfig(){
+  const body = {
+    voice: $("#cfgVoice").value,
+    llm_provider: $("#cfgProvider").value.trim(),
+    llm_base_url: $("#cfgBase").value.trim(),
+    llm_model: $("#cfgModel").value.trim(),
+  };
+  const key = $("#cfgKey").value.trim();
+  if(key) body.llm_api_key = key;
+  try{
+    const r = await fetch("/api/config", {
+      method:"POST", headers:{"content-type":"application/json"},
+      body: JSON.stringify(body),
+    });
+    const res = await r.json();
+    if(!res.ok) throw new Error(res.error || "HTTP " + r.status);
+    $("#cfgKey").value = "";
+    toast("配置已保存到本机 config.json");
+    await refresh();
+  }catch(e){ toast("保存失败：" + e.message, true); }
+}
+
+async function clearApiKey(){
+  try{
+    const r = await fetch("/api/config", {
+      method:"POST", headers:{"content-type":"application/json"},
+      body: JSON.stringify({clear_api_key: true}),
+    });
+    const res = await r.json();
+    if(!res.ok) throw new Error(res.error || "HTTP " + r.status);
+    toast("API Key 已清除");
+    await refresh();
+  }catch(e){ toast("清除失败：" + e.message, true); }
+}
+
 function renderFeed(){
   const comments = (DATA?.overlay?.comments || []).slice().reverse();
   if(!comments.length){
@@ -382,6 +517,7 @@ function renderSamples(){
 
 function render(){
   renderPills(); renderPersona(); renderVoice(); renderGames(); renderRight(); renderFeed(); renderSamples();
+  renderConfig(); renderTelemetry();
   $("#rootHint").textContent = DATA?.root ? `仓库：${DATA.root}` : "";
 }
 
@@ -473,6 +609,8 @@ document.addEventListener("click", (ev) => {
 
 $("#send").addEventListener("click", () => send(false));
 $("#lintOnly").addEventListener("click", () => send(true));
+$("#cfgSave").addEventListener("click", saveConfig);
+$("#cfgClearKey").addEventListener("click", clearApiKey);
 $("#reload").addEventListener("click", (e) => { e.preventDefault(); refresh(); });
 ["thought","meme"].forEach(id => $("#" + id).addEventListener("input", setCounter));
 document.addEventListener("keydown", (e) => {

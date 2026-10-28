@@ -120,6 +120,7 @@ class StudioRuntime:
             "ok": True,
             "product": {"name": __product__, "version": __version__, "codename": __codename__},
             "root": str(paths.ROOT),
+            "config": self.config_payload(),
             "persona": self.persona.to_dict(),
             "voice": self._voice_status(),
             "games": self._games(),
@@ -129,6 +130,9 @@ class StudioRuntime:
                 "thinking": overlay.get("thinking", {}),
                 "playback": overlay.get("playback", {}),
                 "comments": overlay.get("comments", []),
+                "decisions": overlay.get("decisions", []),
+                "logs": overlay.get("logs", []),
+                "usage": overlay.get("usage", {}),
             },
             "studio": {"said": said, "pushed": pushed, "last": last, "voice": voice_state},
             "samples": list(card.openers[:2]) + list(card.quips[:4]),
@@ -139,6 +143,41 @@ class StudioRuntime:
                 "games": "/api/games",
             },
         }
+
+    # ---------------------------------------------------------------- 配置
+    def config_payload(self) -> dict:
+        """控制台配置视图：API Key 只显示是否已配置。"""
+        out = self.cfg.to_dict()
+        out["voice_options"] = ["mambo", "animal", "off"]
+        out["llm_api_key_set"] = bool(self.cfg.llm_api_key)
+        return out
+
+    def update_config(self, body: dict) -> dict:
+        """从控制台/桌宠菜单保存语音、模型、API 配置。"""
+        patch: dict = {}
+        for key in ("voice", "llm_provider", "llm_base_url", "llm_model"):
+            if body.get(key) is not None:
+                patch[key] = str(body[key]).strip()
+        if patch.get("voice") not in (None, "", "mambo", "animal", "off"):
+            raise ValueError("voice 只能是 mambo / animal / off")
+        if str(body.get("llm_api_key") or "").strip() not in ("", "***"):
+            patch["llm_api_key"] = str(body["llm_api_key"]).strip()
+        if body.get("clear_api_key"):
+            patch["llm_api_key"] = ""
+        if "llm_models" in body and isinstance(body["llm_models"], list):
+            patch["llm_models"] = [str(x).strip() for x in body["llm_models"] if str(x).strip()][:12]
+        if patch.get("llm_model"):
+            models = [str(x) for x in (patch.get("llm_models") or self.cfg.llm_models or []) if str(x).strip()]
+            if patch["llm_model"] not in models:
+                models.insert(0, patch["llm_model"])
+            patch["llm_models"] = models[:12]
+        if not patch:
+            return {"ok": True, "config": self.config_payload()}
+        self.cfg.save_patch(patch)
+        if "voice" in patch:
+            self.voice = build_router(self.cfg)
+            self._voice_cache = (0.0, {})
+        return {"ok": True, "config": self.config_payload()}
 
     # ---------------------------------------------------------------- 说话
     def say(self, body: dict, add_comment: Callable[[dict], Any], *,

@@ -129,7 +129,38 @@ def tts_wav(text: str) -> bytes | None:
         return None
 
 _lock = threading.Lock()
+_log_lock = threading.Lock()
 _comments: deque = deque(maxlen=12)
+_decisions: deque = deque(maxlen=30)
+_logs: deque = deque(maxlen=80)
+_usage = {"input": 0, "output": 0, "total": 0, "calls": 0, "updated": 0.0}
+_TOKEN_RE = re.compile(r"[A-Za-z0-9_]+|[\u4e00-\u9fff]")
+
+
+def estimate_tokens(text: str) -> int:
+    """本地 token 估算：中文按字、英文/数字按词；只用于控制台观察，不是账单。"""
+    return len(_TOKEN_RE.findall(str(text or "")))
+
+
+def log_event(level: str, message: str) -> None:
+    """控制台日志环：只留最近 80 条，不落盘、不挡主流程。"""
+    try:
+        with _log_lock:
+            _logs.append({"ts": time.time(), "level": str(level)[:8],
+                          "msg": str(message)[:240]})
+    except Exception:
+        pass
+
+
+def _record_usage(thought: str, meme: str, speech: str) -> dict:
+    """调用方必须已持有 `_lock`。"""
+    delta = {"input": estimate_tokens(f"{thought}\n{meme}"),
+             "output": estimate_tokens(speech), "calls": 1}
+    delta["total"] = delta["input"] + delta["output"]
+    for key in ("input", "output", "total", "calls"):
+        _usage[key] += int(delta[key])
+    _usage["updated"] = time.time()
+    return delta
 _seq = 0
 # 日志/序号目录可重定向：测试用临时目录，别把真直播的 seq 和观测日志搅乱。
 LOG_DIR = os.environ.get("STS2_OVERLAY_LOG_DIR") or os.path.join(ROOT, "logs")
@@ -230,6 +261,7 @@ def set_thinking(on: bool, note: str = "") -> dict:
                 "thinking": dict(_thinking), "playback": audio_state()}
         state = dict(_thinking)
     if changed:
+        log_event("think", f"{'开始' if on else '结束'}思考 · {str(note or '')[:60]}")
         publish(snap)
     return state
 
@@ -330,11 +362,20 @@ def add_comment(payload: dict) -> dict:
             "client_id": str(payload.get("client_id") or "")[:64],
         }
         _comments.append(c)
+        usage = _record_usage(c["thought"], c["meme"], c["speech"])
+        c["usage"] = usage
+        decision = {
+            "id": c["id"], "ts": c["ts"], "thought": c["thought"], "meme": c["meme"],
+            "speech": c["speech"], "tag": c["tag"], "usage": usage,
+            "thinking": bool(_thinking.get("on")), "note": str(_thinking.get("note") or ""),
+        }
+        _decisions.append(decision)
         _save_seq()
         for key in ("character", "ascension", "floor", "hp", "max_hp", "gold", "screen"):
             if payload.get(key) is not None:
                 _status[key] = payload[key]
         snap = {"seq": _seq, "comments": [c], "status": dict(_status)}
+    log_event("say", f"#{c['id']} {c['speech'][:80]} · tokens={usage['total']}")
     _av_append(
         {
             "t": c["ts"],
@@ -513,12 +554,30 @@ class Handler(BaseHTTPRequestHandler):
                 from dafeiyu.ui.studio import get_runtime
 
                 roles = _role_counts()
+                with _lock:
+                    telemetry = {
+                        "decisions": list(_decisions),
+                        "logs": list(_logs),
+                        "usage": dict(_usage),
+                    }
                 payload = get_runtime().payload({
                     "clients": sum(roles.values()), "roles": roles,
                     "seq": _seq, "thinking": dict(_thinking), "playback": audio_state(),
                     "comments": snapshot(0).get("comments", [])[-5:],
+                    **telemetry,
                 })
                 body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+                self._send(200, body, "application/json; charset=utf-8")
+            except Exception as exc:
+                self._send(500, json.dumps({"ok": False, "error": f"{type(exc).__name__}: {exc}"},
+                                           ensure_ascii=False).encode("utf-8"),
+                           "application/json; charset=utf-8")
+        elif path == "/api/config":
+            try:
+                from dafeiyu.ui.studio import get_runtime
+
+                body = json.dumps({"ok": True, "config": get_runtime().config_payload()},
+                                  ensure_ascii=False).encode("utf-8")
                 self._send(200, body, "application/json; charset=utf-8")
             except Exception as exc:
                 self._send(500, json.dumps({"ok": False, "error": f"{type(exc).__name__}: {exc}"},
@@ -623,6 +682,20 @@ class Handler(BaseHTTPRequestHandler):
             self._send(404, b"not found", "text/plain")
 
     def do_POST(self):
+        if self.path == "/api/config":
+            try:
+                n = int(self.headers.get("Content-Length", "0"))
+                payload = json.loads(self.rfile.read(n) or b"{}")
+                from dafeiyu.ui.studio import get_runtime
+
+                result = get_runtime().update_config(payload if isinstance(payload, dict) else {})
+                body = json.dumps(result, ensure_ascii=False).encode("utf-8")
+                self._send(200, body, "application/json; charset=utf-8")
+            except Exception as exc:
+                self._send(400, json.dumps({"ok": False, "error": f"{type(exc).__name__}: {exc}"},
+                                           ensure_ascii=False).encode("utf-8"),
+                           "application/json; charset=utf-8")
+            return
         if self.path == "/api/say":
             try:
                 n = int(self.headers.get("Content-Length", "0"))

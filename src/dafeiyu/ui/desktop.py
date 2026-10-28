@@ -17,7 +17,7 @@
     左键拖动  → 挪位置（松手自动记住，下次原地开）
     右下角拖动 → 缩放（等比，0.5×–1.8×；缩放后大小也记住）
     滚轮      → 缩放（同一个比例，懒得找角就用它）
-    右键      → 菜单：置顶 / 点击穿透 / 声音 / 录屏里隐藏 / 重新载入示例 / 关闭
+    右键      → 菜单：置顶 / 点击穿透 / 声音 / 录屏里隐藏 / 语音 / 模型 / 配置 API / 管理端 / 示例 / 关闭
     ☰（右下角金钮）→ 穿透模式下也能点：左键拖、右键菜单
     Ctrl+Alt+D 点击穿透开关（穿透后只有 ☰ 和右下缩放把手可点，其余照常穿过去）
     Ctrl+Alt+H 隐藏/显示
@@ -26,12 +26,12 @@
 
 主播状态（气泡里显示什么，状态机在 dafeiyu/ui/caster_state.py）：
     说话中  → 台词（喇叭真的开始播才抖，时长用 WAV 实测）
-    思考中  → 「思考中……」（overlay 的 /thinking 由 tools/ctx.py、tools/act.py 上报）
-    空闲    → 保持上一句
+    思考中  → 「思考ing」（overlay 的 /thinking 由 tools/ctx.py、tools/act.py 上报）
+    空闲    → 「吃饭ing」
     注意：思考态没有「N 秒后自动消失」这种假逻辑；只有 240s 存活超时（Agent 崩了才回空闲）。
 
 直播时怎么用：OBS 的 `StS2 Game` 是 game_capture（只钩游戏进程），本来就不会录到这个窗；
-另外窗口默认带 WDA_EXCLUDEFROMCAPTURE，就算以后切成显示器采集也拍不到它（要拍就 --capture）。
+另外窗口默认能被录屏拍到（要隐藏可勾右键「录屏里隐藏」或加 --exclude-capture）。
 声音是页面同款动物语（同一个五声音阶合成），本地播放，不进录像。
 """
 from __future__ import annotations
@@ -63,7 +63,7 @@ except ImportError:  # pragma: no cover
 # 布局：src/dafeiyu/ui/desktop.py（仓库根 = 上三级）
 from .. import paths
 from . import instance_lock              # 单实例锁：屏幕上不许出现两个弹窗
-from .caster_state import CasterState, THINKING_TEXT  # 主播三态状态机
+from .caster_state import CasterState, IDLE_TEXT, THINKING_TEXT  # 主播三态状态机
 
 ROOT = os.fspath(paths.ROOT)
 ASSETS = os.path.join(ROOT, "ui", "overlay", "assets")
@@ -73,6 +73,7 @@ PORT = int(os.environ.get("STS2_OVERLAY_PORT", "8730"))
 # 可选：游戏窗口标题（只用于「把桌宠放到游戏旁边」；不填就按主屏居中）
 GAME_WINDOW_TITLE = os.environ.get("DAFEIYU_GAME_WINDOW_TITLE", "")
 PLACEHOLDER = "（还没收到弹幕 —— agent 一开口，这里就换成它说的话）"
+_VOICE_CHOICES = (("mambo", "曼波语"), ("animalese", "动物语"), ("off", "静音"))
 
 # ---------------------------------------------------------------- 桌宠形象
 # 精灵来自 https://github.com/1190fasheqi/dafeiyu-pet（MIT，见 assets/pet/SOURCE.md）。
@@ -879,7 +880,10 @@ def render_pet(text: str, mode: str, scale: float, now: float, pet) -> Image.Ima
 
     # ---- 气泡
     if mode == "thinking":
-        text = "思考中" + "." * (1 + int(now * 2.2) % 3)
+        text = THINKING_TEXT
+        alpha = 1.0
+    elif mode == "idle":
+        text = IDLE_TEXT
         alpha = 1.0
     elif not text or text == PLACEHOLDER:
         return canvas
@@ -973,6 +977,8 @@ MOD_ALT = 0x0001
 MOD_CONTROL = 0x0002
 MF_STRING = 0x0000
 MF_CHECKED = 0x0008
+MF_POPUP = 0x0010
+MF_SEPARATOR = 0x0800
 TPM_RETURNCMD = 0x0100
 TPM_LEFTALIGN = 0x0000
 SWP_NOSIZE = 0x0001
@@ -1139,7 +1145,7 @@ _enable_dpi_awareness()
 class StreamerWindow:
     def __init__(self, scale: float = 0.0, pos: tuple[int, int] | None = None,
                  click_through: bool = False, topmost: bool = True, toolwindow: bool = True,
-                 volume: float = 0.55, muted: bool = False, exclude_capture: bool = True,
+                 volume: float = 0.55, muted: bool = False, exclude_capture: bool = False,
                  voice: str = "mambo"):
         self.toolwindow = toolwindow
         self.topmost = topmost
@@ -1163,6 +1169,7 @@ class StreamerWindow:
         # 离开就恢复。保留整窗穿透（不为了能操作就把穿透关掉）。
         self._hot = False
         self._menu_open = False
+        self._menu_models: list[str] = []
         self._transparent = bool(click_through)
         self._watch_stop = threading.Event()
         self._memdc = None
@@ -1394,6 +1401,37 @@ class StreamerWindow:
         user32.AppendMenuW(hmenu, MF_STRING | (MF_CHECKED if self.click_through else 0), 2, "点击穿透")
         user32.AppendMenuW(hmenu, MF_STRING | (MF_CHECKED if self.speaker.enabled else 0), 3, "声音")
         user32.AppendMenuW(hmenu, MF_STRING | (MF_CHECKED if self.exclude_capture else 0), 4, "录屏里隐藏")
+
+        # 语音 / 模型：配置写本机 config.json（.gitignore 已忽略，API Key 不在这里）
+        try:
+            from ..core.config import LiveConfig
+
+            cfg = LiveConfig.load()
+            models = [str(m) for m in (cfg.llm_models or []) if str(m).strip()]
+            if cfg.llm_model and cfg.llm_model not in models:
+                models.insert(0, cfg.llm_model)
+        except Exception:
+            cfg, models = None, []
+        self._menu_models = models
+        voice_menu = user32.CreatePopupMenu()
+        for idx, (key, label) in enumerate(_VOICE_CHOICES):
+            user32.AppendMenuW(
+                voice_menu,
+                MF_STRING | (MF_CHECKED if self.speaker.voice == key else 0),
+                10 + idx, label)
+        user32.AppendMenuW(hmenu, MF_POPUP, voice_menu, "语音")
+        model_menu = user32.CreatePopupMenu()
+        for idx, model in enumerate(models[:12]):
+            user32.AppendMenuW(
+                model_menu,
+                MF_STRING | (MF_CHECKED if cfg and cfg.llm_model == model else 0),
+                20 + idx, model)
+        user32.AppendMenuW(model_menu, MF_STRING, 40, "自定义模型…")
+        user32.AppendMenuW(hmenu, MF_POPUP, model_menu, "模型")
+        user32.AppendMenuW(hmenu, MF_SEPARATOR, 0, None)
+        user32.AppendMenuW(hmenu, MF_STRING, 41, "配置 API…")
+        user32.AppendMenuW(hmenu, MF_STRING, 42, "打开管理端")
+        user32.AppendMenuW(hmenu, MF_SEPARATOR, 0, None)
         user32.AppendMenuW(hmenu, MF_STRING, 5, "重新显示示例")
         user32.AppendMenuW(hmenu, MF_STRING, 6, "关闭")
         pt = ctypes.wintypes.POINT()
@@ -1405,7 +1443,17 @@ class StreamerWindow:
         user32.DestroyMenu(hmenu)
         self._menu_open = False
         self.tick_interaction()
-        if cmd == 1:
+        if 10 <= cmd < 10 + len(_VOICE_CHOICES):
+            self.set_voice(_VOICE_CHOICES[cmd - 10][0])
+        elif 20 <= cmd < 20 + len(self._menu_models):
+            self.set_model(self._menu_models[cmd - 20])
+        elif cmd == 40:
+            self.open_studio("#settings")
+        elif cmd == 41:
+            self.open_studio("#settings")
+        elif cmd == 42:
+            self.open_studio()
+        elif cmd == 1:
             self.topmost = not self.topmost
             user32.SetWindowPos(self._hwnd, -1 if self.topmost else -2, 0, 0, 0, 0,
                                 SWP_NOMOVE | SWP_NOSIZE)
@@ -1420,6 +1468,34 @@ class StreamerWindow:
                       {"character": "演示角色", "ascension": 10, "floor": 8, "hp": 23, "max_hp": 80, "gold": 20})
         elif cmd == 6:
             self.close()
+
+    def set_voice(self, voice: str) -> None:
+        """切换桌宠发声并持久化到本机 config.json。"""
+        self.speaker.voice = voice
+        self.speaker.enabled = voice != "off"
+        try:
+            from ..core.config import LiveConfig
+
+            LiveConfig.load().save_patch({"voice": "animal" if voice == "animalese" else voice})
+        except Exception as exc:
+            print(f"语音配置保存失败：{exc}")
+        print(f"语音：{dict(_VOICE_CHOICES).get(voice, voice)}")
+
+    def set_model(self, model: str) -> None:
+        """切换模型（只写本机 config.json；API Key 不进菜单）。"""
+        try:
+            from ..core.config import LiveConfig
+
+            LiveConfig.load().save_patch({"llm_model": model})
+            print(f"模型：{model}")
+        except Exception as exc:
+            print(f"模型配置保存失败：{exc}")
+
+    def open_studio(self, anchor: str = "") -> None:
+        """右键菜单直达管理端（配置 API / 看决策和日志）。"""
+        import webbrowser
+
+        webbrowser.open(f"http://127.0.0.1:{PORT}/studio{anchor}")
 
     def toggle_sound(self):
         on = self.speaker.toggle()
@@ -1645,12 +1721,12 @@ class StreamerWindow:
             self.talk_until = 0.0
 
     def display_text(self, mode: str) -> str:
-        """气泡里该显示什么：说话/空闲显示台词，思考中显示「思考中……」。
-        没有待办（IDLE）时保持上一句，跟原来的空闲表现一致。
-        """
+        """气泡里该显示什么：说话显示台词，思考「思考ing」，空闲「吃饭ing」。"""
         if mode == "thinking":
             return THINKING_TEXT
-        return self.text or PLACEHOLDER
+        if mode == "speaking":
+            return self.text or IDLE_TEXT
+        return IDLE_TEXT
 
     def update_status(self, status: dict):
         if status and status != self.status:
@@ -1824,7 +1900,7 @@ class StreamerWindow:
 
     def run(self):
         print(self._run_hint())
-        print("（默认不出现在录屏里：WDA_EXCLUDEFROMCAPTURE，要拍就加 --capture）")
+        print("（默认能被录屏拍到；要隐藏请右键勾「录屏里隐藏」或加 --exclude-capture）")
         last = 0.0
         last_guard = 0.0
         last_mode = self.presence.state
@@ -1909,8 +1985,10 @@ class PetWindow(StreamerWindow):
 
     def display_text(self, mode: str) -> str:
         if mode == "thinking":
-            return "思考中…"
-        return self.text or ""
+            return THINKING_TEXT
+        if mode == "speaking":
+            return self.text or IDLE_TEXT
+        return IDLE_TEXT
 
     def _is_animating(self, now: float) -> bool:
         return True   # 呼吸/摇摆是常驻的
@@ -2186,17 +2264,30 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--demo", action="store_true", help="先放一条示例弹幕（不接游戏也能试位置）")
     ap.add_argument("--taskbar", action="store_true", help="在任务栏/Alt-Tab 里显示（OBS 窗口采集找不到时用）")
     ap.add_argument("--mute", action="store_true", help="不出声")
-    ap.add_argument("--voice", default="mambo", choices=["mambo", "animalese", "off"],
-                    help="配音：mambo=本地 MamboTTS 曼波音色（默认）；animalese=旧动物语；off=静音")
+    ap.add_argument("--voice", default="auto", choices=["auto", "mambo", "animalese", "off"],
+                    help="配音：auto=跟随 config.json；mambo=曼波音色；animalese=动物语；off=静音")
     ap.add_argument("--vol", type=float, default=0.55, help="音量 0~1.5（默认 0.55，和页面一致）")
-    ap.add_argument("--capture", action="store_true", help="允许录屏拍到它（默认对采集隐藏）")
+    ap.add_argument("--capture", action="store_true",
+                    help="兼容旧参数：现在默认就能被录屏拍到（等于不加 --exclude-capture）")
+    ap.add_argument("--exclude-capture", action="store_true",
+                    help="把桌宠从录屏里隐藏（默认不勾）")
     ap.add_argument("--multi", action="store_true",
                     help="允许多开（默认：发现旧窗口还活着就关掉它，避免屏幕上出现两个弹窗）")
     ap.add_argument("--preview", help="只渲染一张 PNG 就退出（验收/截图用）")
     ap.add_argument("--no-server", action="store_true", help="不自动拉起 overlay 服务")
     ap.add_argument("--think", action="store_true",
-                    help="和 --preview 一起用：截「思考中……」那一帧")
+                    help="和 --preview 一起用：截「思考ing」那一帧")
     a = ap.parse_args(raw_argv)
+
+    if a.voice == "auto":
+        try:
+            from ..core.config import LiveConfig
+
+            configured = LiveConfig.load().voice
+            a.voice = {"animal": "animalese", "animalese": "animalese", "off": "off"}.get(
+                configured, "mambo")
+        except Exception:
+            a.voice = "mambo"
 
     # 预览图的缩放：命令行优先，否则跟 DPI；装不下就自动缩（按目标显示器宽度算）
     scale = a.scale or dpi_scale()
@@ -2222,7 +2313,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"窗口比屏幕宽，缩到 {scale:.2f}×")
 
     if a.preview:
-        # --think / --click-through 也能进预览：验收截图要看到「思考中……」和气泡
+        # --think / --click-through 也能进预览：验收截图要看到「思考ing」和气泡
         if a.panel:
             mode = "thinking" if a.think else "speaking"
             text = THINKING_TEXT if a.think else "它 21，我最多挡 15。差 6，嗨呀。"
@@ -2240,7 +2331,7 @@ def main(argv: list[str] | None = None) -> int:
             fake.bubble_until = time.perf_counter() + 30.0
             fake.talk_start_at = 0.0
             fake.talk_until = 0.0
-            text = "思考中…" if a.think else "它 21，我最多挡 15。差 6，嗨呀。"
+            text = THINKING_TEXT if a.think else "它 21，我最多挡 15。差 6，嗨呀。"
             img = render_pet(text, "thinking" if a.think else "speaking",
                              scale, time.perf_counter(), fake)
         img.save(a.preview)
@@ -2265,7 +2356,7 @@ def main(argv: list[str] | None = None) -> int:
     cls = StreamerWindow if a.panel else PetWindow
     win = cls(scale=a.scale, pos=pos, click_through=a.click_through,
               toolwindow=not a.taskbar, volume=a.vol, muted=a.mute,
-              exclude_capture=not a.capture, voice=a.voice)
+              exclude_capture=a.exclude_capture, voice=a.voice)
     stop = threading.Event()
     th = threading.Thread(target=poll_loop, args=(win, a.port, stop, a.demo), daemon=True)
     th.start()
