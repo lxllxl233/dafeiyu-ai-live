@@ -157,6 +157,51 @@ def get_wbi_keys(cookie: str = "") -> tuple[str, str]:
     return img, sub
 
 
+_uid_lock = threading.Lock()
+_uid_cache: dict[str, tuple[float, int]] = {}
+
+
+def _cookie_uid(cookie: str) -> tuple[int, str]:
+    """登录 Cookie 对应的 uid；匿名或失效返回 (0, 原因)。
+
+    带 Cookie 拿到的弹幕 token 是和账号绑的：auth 里写 ``uid: 0`` 时服务端
+    0.1 秒内直接断开（连 close frame 都没有），表现就是控制台一直「连接失败」。
+    匿名连接则不需要 uid（也拿不到 token）。
+    """
+    cookie = (cookie or "").strip()
+    if not cookie:
+        return 0, ""
+    key = hashlib.sha1(cookie.encode("utf-8")).hexdigest()[:16]
+    now = time.time()
+    with _uid_lock:
+        hit = _uid_cache.get(key)
+    if hit and now - hit[0] < 600:
+        return hit[1], ""
+    try:
+        data = _http_json(NAV, cookie)
+    except Exception as exc:  # noqa: BLE001
+        return 0, f"{type(exc).__name__}: {exc}"
+    code = int(data.get("code") or 0)
+    uid = int((data.get("data") or {}).get("mid") or 0)
+    if code != 0:
+        return 0, f"nav code {code}（Cookie 可能已失效）"
+    if uid <= 0:
+        return 0, "nav 没有返回 uid"
+    with _uid_lock:
+        _uid_cache[key] = (now, uid)
+    return uid, ""
+
+
+def _open_ws(url: str, headers: dict, **kwargs):
+    """兼容 websockets 新旧参数名：additional_headers / extra_headers。"""
+    from websockets.sync.client import connect  # type: ignore
+
+    try:
+        return connect(url, additional_headers=headers, **kwargs)
+    except TypeError:
+        return connect(url, extra_headers=headers, **kwargs)
+
+
 def danmu_info(room_id: int, cookie: str = "", timeout: float = 10.0) -> dict:
     """拿弹幕服务器地址和 token；失败抛异常，调用方负责重连。"""
     room_id = int(room_id)
@@ -678,8 +723,8 @@ class BilibiliGiftListener:
                     # 连上过又断（B 站会主动踢长连接）：立刻重连，不走指数退避——
                     # 否则一场直播断一次就等 60 秒，弹幕/礼物全漏。
                     self._set_status(ok=True, connected=False,
-                                     error="连接断开，正在重连")
-                    self.log("[bilibili] 连接断开，3s 后重连")
+                                     error=f"连接断开（{type(exc).__name__}: {str(exc)[:60]}），正在重连")
+                    self.log(f"[bilibili] 连接断开（{type(exc).__name__}: {exc}），3s 后重连")
                     self._stop.wait(3.0)
                     delay = 3.0
                     continue
@@ -690,21 +735,27 @@ class BilibiliGiftListener:
                 delay = min(60.0, delay * 1.7)
 
     def _connect_once(self, info: dict) -> None:
-        from websockets.sync.client import connect  # type: ignore
-
         hosts = info.get("hosts") or []
         host = str((hosts[0] or {}).get("host") or "broadcastlv.chat.bilibili.com")
         port = int((hosts[0] or {}).get("wss_port") or 443)
         url = f"wss://{host}:{port}/sub"
+        # 带 Cookie 时 token 绑账号，uid 必须跟着 Cookie 走；写 0 会被服务端秒断。
+        uid, uid_err = _cookie_uid(self.cookie)
         auth = {
-            "uid": 0, "roomid": self.room_id, "protover": 2,
+            "uid": uid, "roomid": self.room_id, "protover": 2,
             "platform": "web", "type": 2, "key": info.get("token") or "",
         }
+        headers = {"Origin": "https://live.bilibili.com", "User-Agent": UA}
+        if uid > 0:
+            headers["Cookie"] = str(info.get("cookie") or self.cookie or "")
+        elif self.cookie.strip():
+            self.log(f"[bilibili] Cookie 登录态不可用（{uid_err}），按匿名连接")
+            self._set_status(error=f"Cookie 登录态不可用（{uid_err}）")
         # ping_interval=None：B 站弹幕服务器不回 WebSocket 层的 ping，客户端每 20s
         # 一次 keepalive 会 1011 超时，然后 websockets 自己打一整段 traceback。保活
         # 改由下面 30s 一次的 JSON 心跳（OP_HEARTBEAT）负责，和官方网页一致。
-        with connect(url, open_timeout=10, close_timeout=3,
-                     ping_interval=None, max_size=8 * 1024 * 1024) as ws:
+        with _open_ws(url, headers, open_timeout=10, close_timeout=3,
+                      ping_interval=None, max_size=8 * 1024 * 1024) as ws:
             self._ws = ws
             ws.send(encode_packet(OP_AUTH, json.dumps(
                 auth, ensure_ascii=False).encode("utf-8")))

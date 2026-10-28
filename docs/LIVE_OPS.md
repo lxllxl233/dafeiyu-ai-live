@@ -85,6 +85,10 @@ GAME_OVER 会回主菜单再开一局。默认慢速播报按台词长度等语�
   连接状态来自 `logs/bilibili.json`。
 - 页面右侧可以直接发弹幕（`POST /api/bili/send`），需要 Cookie 里有
   `SESSDATA` 和 `bili_jct`（csrf）；发送成功后本机先显示一条「本机」记录。
+- **带 Cookie 时 auth 的 uid 必须跟着 Cookie 走**：`getDanmuInfo` 的 token 绑账号，
+  uid 写 0 会在 0.1 秒内被 B 站无帧断开（控制台显示「连接失败」，发弹幕却正常）。
+  监听会从 `nav` 取 uid（10 分钟缓存）并带 `Cookie/Origin/UA` 握手；Cookie 失效时
+  状态里写「登录态不可用」。
 - 只开控制台、没开桌宠时，面板只有历史，没有新事件；发弹幕仍然可用。
 
 ## 边界

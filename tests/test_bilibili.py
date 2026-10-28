@@ -321,3 +321,63 @@ def test_keepalive_traceback_is_filtered_out():
 
     assert logger.filter(noisy) is False
     assert logger.filter(quiet) is not False   # Logger.filter 通过时返回 record 本身
+
+
+# ---------------------------------------------------------------- 登录态
+def test_cookie_uid_reads_nav_once(monkeypatch):
+    calls = []
+
+    def fake_json(url, cookie="", timeout=10.0):
+        calls.append((url, cookie))
+        return {"code": 0, "data": {"mid": 42}}
+
+    monkeypatch.setattr(bili, "_http_json", fake_json)
+    monkeypatch.setattr(bili, "_uid_cache", {})
+    assert bili._cookie_uid("SESSDATA=x; bili_jct=y") == (42, "")
+    assert bili._cookie_uid("SESSDATA=x; bili_jct=y") == (42, "")   # 命中缓存
+    assert len(calls) == 1
+
+
+def test_cookie_uid_reports_expired_login(monkeypatch):
+    monkeypatch.setattr(bili, "_http_json",
+                        lambda *a, **k: {"code": -101, "message": "账号未登录"})
+    monkeypatch.setattr(bili, "_uid_cache", {})
+    uid, why = bili._cookie_uid("SESSDATA=expired")
+    assert uid == 0 and "-101" in why
+
+
+def test_connect_sends_uid_and_cookie_when_logged_in(monkeypatch):
+    """带 Cookie 时 auth.uid 必须是账号 uid，否则服务端 0.1s 内无帧断开。"""
+    seen = {}
+
+    class _WS:
+        def send(self, data):
+            seen["auth"] = data
+            listener._stop.set()
+
+        def recv(self, timeout=None):
+            raise TimeoutError()
+
+    class _Ctx:
+        def __enter__(self):
+            return _WS()
+
+        def __exit__(self, *exc):
+            return False
+
+    def fake_open(url, headers, **kwargs):
+        seen["url"] = url
+        seen["headers"] = headers
+        return _Ctx()
+
+    monkeypatch.setattr(bili, "_cookie_uid", lambda cookie: (42, ""))
+    monkeypatch.setattr(bili, "_open_ws", fake_open)
+    listener = bili.BilibiliGiftListener(9, lambda e: None, cookie="SESSDATA=x",
+                                         logger=lambda t: None)
+    listener._connect_once({"hosts": [{"host": "h", "wss_port": 443}],
+                            "token": "tk", "cookie": "buvid3=x"})
+
+    auth = json.loads(seen["auth"][16:].decode("utf-8"))
+    assert auth["uid"] == 42 and auth["key"] == "tk"
+    assert seen["headers"]["Cookie"] == "buvid3=x"
+    assert "live.bilibili.com" in seen["headers"]["Origin"]

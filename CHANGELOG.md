@@ -15,6 +15,11 @@
 
 ### Fixed
 
+- **直播间一直「连接失败」但发弹幕正常**：带 Cookie 时 `getDanmuInfo` 的 token
+  是绑账号的，而监听 auth 里 uid 硬编码 `0`，B 站 0.1 秒内直接断开（连 close
+  frame 都没有），状态只剩「连接断开，正在重连」。现在从 `nav` 取 Cookie 对应的
+  uid（10 分钟缓存），握手带 `Cookie/Origin/UA`，auth 用真实 uid；Cookie 失效时
+  状态明确写「登录态不可用」。实测监听 12 秒保持 connected。
 - **不会用药水（run-0112）**：`SYSTEM_PROMPT` 把药水写成「fx 的 p」，但执行器
   只认 `seq` 里的 `{"p": 槽位, "t": 目标}`，`fx` 只校验 e/hp/take——模型以为喝了，
   实际一滴没喝。提示词改成 seq 写法并注明 fx 限制，决策手册同步；
