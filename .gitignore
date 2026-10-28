@@ -40,3 +40,12 @@ tmp_*.py
 tmp_notes*.md
 logs/*.out
 logs/*.err
+
+# 兼容链接（由 python dafeiyu.py setup 生成，真实内容在 games/slay-the-spire-2/corpus/）
+/db/
+/tools/data/
+
+# 直播姬本机配置 / 测试缓存
+/config.json
+/.pytest_cache/
+logs/voice_test.wav

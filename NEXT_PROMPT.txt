@@ -1,5 +1,8 @@
 你现在接手一个 Slay the Spire 2 项目：在 Windows 工作目录 D:\aigame\sljt\sljt 下，用本地 mod API 打 A10 铁甲战士，同时录制游戏视频+游戏音频，并用 OBS 浏览器源显示 DeepSeek 大肥鱼 overlay 解说。
 
+> 2026-10 升级：仓库已是「大肥鱼直播姬」——UI / 源码 / 性格层 / 语音层 / 游戏列表分层，杀塔是 `games/slay-the-spire-2/` 游戏包。
+> 本文仍是杀塔 A10 的开局流程；老命令全部不变（根 shim）。控制台 `python dafeiyu.py studio`，架构见 README.md / ARCHITECTURE.md。
+
 当前状态：**别信这张便条**——开局先 `python sts2.py state` 确认（mod 没起会 ConnectionRefused，不是故障，先把游戏/引擎拉起来）。已知上一局 run106 在 act1 f7 战斗胜利后被中断（非死亡、非主动放弃，见 `logs/run106_review.md`）；中断/放弃的局不要恢复，直接新开。
 
 开始前只需要读两样（别再把 docs/ 全读一遍）：

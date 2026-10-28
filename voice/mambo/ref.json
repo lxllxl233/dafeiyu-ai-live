@@ -1,0 +1,11 @@
+{
+  "url": "http://127.0.0.1:9880",
+  "prompt": "大家好，欢迎来到我的频道，今天给大家分享一个有趣的内容",
+  "prompt_language": "zh",
+  "text_language": "zh",
+  "speed": 1.0,
+  "timeout": 60,
+  "volume": 0.55,
+  "cut_punc": "，。？！；：、…,.;?!",
+  "ref_wav": ""
+}

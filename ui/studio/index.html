@@ -1,0 +1,487 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>大肥鱼直播姬 · Studio</title>
+<style>
+  :root{
+    --bg:#0b0d12; --panel:#14161f; --panel2:#171a25; --line:#272b3a;
+    --text:#e9edf7; --muted:#8b93a7; --gold:#f4c968; --fish:#7fb6ff;
+    --ok:#57d38c; --warn:#f0b45a; --bad:#f06a6a; --radius:16px;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--text);
+    font-family:"Microsoft YaHei UI","Microsoft YaHei","PingFang SC",system-ui,sans-serif;}
+  body{min-height:100vh;overflow-x:hidden}
+  .aurora{position:fixed;inset:-20% -10% auto -10%;height:60vh;pointer-events:none;z-index:0;
+    background:
+      radial-gradient(40% 55% at 18% 30%, rgba(127,182,255,.20), transparent 70%),
+      radial-gradient(35% 50% at 78% 18%, rgba(244,201,104,.13), transparent 70%),
+      radial-gradient(45% 60% at 55% 0%, rgba(120,90,255,.10), transparent 70%);
+    filter:blur(20px)}
+  header{position:relative;z-index:1;display:flex;align-items:center;gap:18px;
+    padding:18px 26px;border-bottom:1px solid var(--line);
+    background:linear-gradient(180deg, rgba(20,22,31,.92), rgba(11,13,18,.72));backdrop-filter:blur(10px)}
+  .brand{display:flex;align-items:center;gap:13px;min-width:220px}
+  .brand img{width:46px;height:46px;border-radius:50%;object-fit:cover;
+    border:1.5px solid rgba(244,201,104,.65);box-shadow:0 0 0 3px rgba(244,201,104,.08)}
+  .brand h1{font-size:19px;margin:0;letter-spacing:.5px}
+  .brand small{color:var(--muted);font-size:10.5px;letter-spacing:2.4px}
+  .pills{display:flex;gap:8px;flex-wrap:wrap;flex:1}
+  .pill{display:inline-flex;align-items:center;gap:7px;padding:6px 11px;border-radius:999px;
+    border:1px solid var(--line);background:rgba(255,255,255,.03);font-size:12px;color:var(--muted)}
+  .pill b{color:var(--text);font-weight:600}
+  .dot{width:7px;height:7px;border-radius:50%;background:var(--bad);box-shadow:0 0 8px currentColor}
+  .dot.ok{background:var(--ok);color:var(--ok)}
+  .dot.warn{background:var(--warn);color:var(--warn)}
+  .dot.bad{background:var(--bad);color:var(--bad)}
+  .top-links{display:flex;gap:10px}
+  .top-links a{color:var(--muted);text-decoration:none;font-size:12.5px;padding:6px 10px;
+    border:1px solid var(--line);border-radius:9px}
+  .top-links a:hover{color:var(--gold);border-color:rgba(244,201,104,.45)}
+  main{position:relative;z-index:1;display:grid;grid-template-columns:320px minmax(420px,1fr) 300px;
+    gap:16px;padding:18px 22px 8px;max-width:1680px;margin:0 auto}
+  .col{display:flex;flex-direction:column;gap:16px;min-width:0}
+  .card{background:linear-gradient(180deg, rgba(23,26,37,.92), rgba(18,20,28,.92));
+    border:1px solid var(--line);border-radius:var(--radius);padding:16px}
+  .card h2{display:flex;align-items:center;justify-content:space-between;
+    font-size:12.5px;letter-spacing:1.6px;color:var(--muted);margin:0 0 13px;font-weight:600}
+  .card h2 span{color:var(--gold);letter-spacing:0;font-weight:500}
+  /* persona */
+  .who{display:flex;gap:13px;align-items:center}
+  .who img{width:62px;height:62px;border-radius:16px;object-fit:cover;
+    border:1.5px solid rgba(244,201,104,.5)}
+  .who .name{font-size:19px;font-weight:700}
+  .who .title{font-size:11.5px;color:var(--gold);letter-spacing:1px;margin-top:2px}
+  .tagline{margin:12px 0 4px;font-size:12.5px;color:var(--muted);line-height:1.7}
+  .traits{list-style:none;margin:12px 0 0;padding:0;display:flex;flex-direction:column;gap:7px}
+  .traits li{font-size:12.5px;line-height:1.55;color:#c9d1e4;padding-left:14px;position:relative}
+  .traits li::before{content:"";position:absolute;left:2px;top:8px;width:5px;height:5px;
+    border-radius:50%;background:var(--fish);opacity:.8}
+  .style-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:14px}
+  .style-grid div{background:rgba(255,255,255,.035);border:1px solid var(--line);
+    border-radius:10px;padding:8px 6px;text-align:center}
+  .style-grid b{display:block;font-size:16px;color:var(--gold)}
+  .style-grid small{font-size:10.5px;color:var(--muted)}
+  .chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:12px}
+  .chip{font-size:11.5px;color:#cfd7ea;border:1px solid var(--line);border-radius:999px;
+    padding:4px 9px;cursor:pointer;background:rgba(255,255,255,.025)}
+  .chip:hover{border-color:rgba(244,201,104,.5);color:var(--gold)}
+  /* voice */
+  .voice-row{display:flex;flex-direction:column;gap:8px;padding:11px 0;border-top:1px dashed var(--line)}
+  .voice-row:first-of-type{border-top:0;padding-top:0}
+  .voice-head{display:flex;align-items:center;gap:9px}
+  .voice-head .nm{font-size:13.5px;font-weight:600}
+  .voice-head .engine{margin-left:auto;font-size:10.5px;color:var(--muted)}
+  .voice-meta{display:flex;gap:10px;align-items:center;font-size:11.5px;color:var(--muted)}
+  .btn{border:1px solid rgba(244,201,104,.5);background:rgba(244,201,104,.10);color:var(--gold);
+    border-radius:9px;padding:7px 14px;font-size:12.5px;cursor:pointer;font-family:inherit}
+  .btn:hover{background:rgba(244,201,104,.18)}
+  .btn:disabled{opacity:.45;cursor:wait}
+  .btn.ghost{border-color:var(--line);background:transparent;color:var(--muted)}
+  .btn.ghost:hover{color:var(--text);border-color:#3a4056}
+  .btn.sm{padding:5px 10px;font-size:11.5px;border-radius:8px}
+  .btn.preview{border-color:var(--line);background:rgba(255,255,255,.03);color:#cfd7ea}
+  /* games */
+  .game{padding:11px 0;border-top:1px dashed var(--line)}
+  .game:first-of-type{border-top:0;padding-top:0}
+  .game .gh{display:flex;align-items:center;gap:8px}
+  .game .gn{font-size:13.5px;font-weight:600}
+  .game .gp{margin-left:auto;font-size:10.5px;color:var(--muted)}
+  .game .gd{font-size:11.5px;color:var(--muted);line-height:1.6;margin-top:6px}
+  .badges{display:flex;gap:6px;flex-wrap:wrap;margin-top:7px}
+  .badge{font-size:10.5px;color:#9fb3d6;background:rgba(127,182,255,.10);
+    border:1px solid rgba(127,182,255,.22);border-radius:6px;padding:2px 7px}
+  .badge.gold{color:var(--gold);background:rgba(244,201,104,.09);border-color:rgba(244,201,104,.25)}
+  /* composer */
+  textarea{width:100%;background:#0f1118;border:1px solid var(--line);border-radius:11px;
+    color:var(--text);font-family:inherit;font-size:13.5px;line-height:1.65;padding:11px 12px;
+    resize:vertical;min-height:64px;outline:none}
+  textarea:focus{border-color:rgba(244,201,104,.5)}
+  .composer .labels{display:flex;justify-content:space-between;font-size:11.5px;color:var(--muted);margin:0 2px 6px}
+  .composer .labels b{color:var(--fish);font-weight:600}
+  .row{display:flex;align-items:center;gap:10px;margin-top:12px;flex-wrap:wrap}
+  .counter{margin-left:auto;font-size:11.5px;color:var(--muted)}
+  .lint{margin-top:13px;border-top:1px dashed var(--line);padding-top:11px;
+    font-size:12px;line-height:1.7;color:var(--muted);min-height:38px;white-space:pre-wrap}
+  .lint .pass{color:var(--ok)}
+  .lint .fail{color:var(--bad)}
+  .lint .warn{color:var(--warn)}
+  .lint .final{color:var(--text);font-size:13.5px;margin-top:6px}
+  .samples{margin-top:6px}
+  /* feed */
+  .feed ul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:10px;max-height:340px;overflow:auto}
+  .feed li{border-left:2px solid rgba(244,201,104,.35);padding-left:11px}
+  .feed .txt{font-size:12.8px;line-height:1.65}
+  .feed .meta{font-size:10.5px;color:var(--muted);margin-top:3px}
+  .empty{font-size:12px;color:var(--muted)}
+  /* right */
+  .kv{display:flex;justify-content:space-between;font-size:12.2px;padding:6px 0;
+    border-top:1px dashed var(--line)}
+  .kv:first-of-type{border-top:0}
+  .kv span{color:var(--muted)}
+  .kv b{font-weight:600;color:#dfe6f5}
+  .layers{display:flex;flex-direction:column;gap:9px}
+  .layer{display:flex;gap:9px;align-items:flex-start;font-size:11.8px;line-height:1.5}
+  .layer i{width:7px;height:7px;border-radius:2px;margin-top:5px;flex:none;background:var(--fish)}
+  .layer b{font-weight:600;color:#dfe6f5}
+  .layer code{font-family:Consolas,monospace;font-size:10.8px;color:var(--muted)}
+  footer{position:relative;z-index:1;padding:10px 26px 22px;color:var(--muted);font-size:11.5px;
+    max-width:1680px;margin:0 auto;display:flex;gap:16px;flex-wrap:wrap}
+  footer code{background:rgba(255,255,255,.04);border:1px solid var(--line);border-radius:6px;
+    padding:2px 7px;font-size:11px;color:#c8d2e6}
+  .toast{position:fixed;right:22px;bottom:22px;z-index:9;background:#1b1f2c;border:1px solid var(--line);
+    border-radius:12px;padding:11px 15px;font-size:12.5px;box-shadow:0 12px 40px rgba(0,0,0,.5);
+    opacity:0;transform:translateY(8px);transition:.2s;pointer-events:none;max-width:420px}
+  .toast.show{opacity:1;transform:none}
+  .toast.err{border-color:rgba(240,106,106,.5);color:#ffd2d2}
+  @media (max-width:1200px){main{grid-template-columns:300px 1fr}.col.right{grid-column:1/-1;flex-direction:row;flex-wrap:wrap}
+    .col.right .card{flex:1 1 300px}}
+  @media (max-width:820px){main{grid-template-columns:1fr;padding:14px}.col.right{flex-direction:column}
+    header{flex-wrap:wrap}.brand{min-width:0}}
+</style>
+</head>
+<body>
+<div class="aurora"></div>
+<header>
+  <div class="brand">
+    <img src="/assets/deepseek_fish.jpg" alt="大肥鱼" onerror="this.style.visibility='hidden'">
+    <div>
+      <h1>大肥鱼直播姬</h1>
+      <small>DAFEIYU · AI LIVE STUDIO</small>
+    </div>
+  </div>
+  <div class="pills" id="pills">
+    <span class="pill"><i class="dot"></i>连接中…</span>
+  </div>
+  <div class="top-links">
+    <a href="/" target="_blank" rel="noopener">弹幕源</a>
+    <a href="/health" target="_blank" rel="noopener">health</a>
+    <a href="#" id="reload">刷新</a>
+  </div>
+</header>
+
+<main>
+  <section class="col left">
+    <div class="card" id="personaCard">
+      <h2>性格层 <span id="personaId">—</span></h2>
+      <div class="who">
+        <img src="/assets/deepseek_fish.jpg" alt="" onerror="this.style.visibility='hidden'">
+        <div>
+          <div class="name" id="pName">大肥鱼</div>
+          <div class="title" id="pTitle">DeepSeek 大肥鱼</div>
+        </div>
+      </div>
+      <div class="tagline" id="pTagline">一条把算账当正经事的鱼</div>
+      <ul class="traits" id="pTraits"></ul>
+      <div class="style-grid" id="pStyle"></div>
+      <div class="chips" id="pQuips"></div>
+    </div>
+
+    <div class="card">
+      <h2>语音层 <span id="voiceActive">—</span></h2>
+      <div id="voiceRows"></div>
+    </div>
+
+    <div class="card">
+      <h2>游戏列表 <span id="gameCount">—</span></h2>
+      <div id="gameRows"></div>
+    </div>
+  </section>
+
+  <section class="col mid">
+    <div class="card composer">
+      <h2>台词台 <span>先算账，再抛梗</span></h2>
+      <div class="labels"><span><b>thought</b> 算账 + 打算（数字为主）</span><span id="thoughtCount">0 字</span></div>
+      <textarea id="thought" rows="3" placeholder="它 21，我最多挡 15"></textarea>
+      <div class="labels" style="margin-top:10px"><span><b>meme</b> 落点：翻车 / 兑现 / 自嘲 / 梗</span><span id="memeCount">0 字</span></div>
+      <textarea id="meme" rows="2" placeholder="差 6，嗨呀。"></textarea>
+      <div class="row">
+        <button class="btn" id="send">送到直播</button>
+        <button class="btn ghost" id="lintOnly">只算 lint</button>
+        <span class="counter" id="composed">—</span>
+      </div>
+      <div class="lint" id="lint">出口前三问：有数字吗？有落点吗？换个人说也一样吗？</div>
+      <div class="chips samples" id="samples"></div>
+    </div>
+
+    <div class="card feed">
+      <h2>最近台词 <span id="seq">seq —</span></h2>
+      <ul id="feed"><li class="empty">还没有台词。先发一句试试。</li></ul>
+    </div>
+  </section>
+
+  <section class="col right">
+    <div class="card">
+      <h2>直播链路</h2>
+      <div class="kv"><span>OBS / 弹幕源</span><b id="kClients">—</b></div>
+      <div class="kv"><span>播放状态</span><b id="kPlayback">—</b></div>
+      <div class="kv"><span>配音队列</span><b id="kVoicePending">—</b></div>
+      <div class="kv"><span>最近配音</span><b id="kVoiceLast">—</b></div>
+      <div class="kv"><span>已说 / 已推</span><b id="kCounts">—</b></div>
+      <div class="kv"><span>overlay seq</span><b id="kSeq">—</b></div>
+    </div>
+
+    <div class="card">
+      <h2>分层</h2>
+      <div class="layers">
+        <div class="layer"><i style="background:var(--gold)"></i><div><b>UI 层</b><br><code>ui/overlay · ui/studio · ui/desktop</code></div></div>
+        <div class="layer"><i style="background:var(--fish)"></i><div><b>源码</b><br><code>src/dafeiyu/{core,cli}</code></div></div>
+        <div class="layer"><i style="background:#c69bff"></i><div><b>性格层</b><br><code>persona/dafeiyu</code></div></div>
+        <div class="layer"><i style="background:#57d38c"></i><div><b>语音层</b><br><code>voice/animal · voice/mambo</code></div></div>
+        <div class="layer"><i style="background:#ff9f6a"></i><div><b>游戏列表</b><br><code>games/slay-the-spire-2</code></div></div>
+        <div class="layer"><i style="background:#8b93a7"></i><div><b>游戏包</b><br><code>compat/ · corpus/</code></div></div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <span>运行：<code>python dafeiyu.py studio</code></span>
+  <span>离线演示：<code>python dafeiyu.py demo</code></span>
+  <span>自检：<code>python dafeiyu.py doctor</code></span>
+  <span id="rootHint"></span>
+</footer>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => (
+  {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+let DATA = null;
+let BUSY = false;
+
+function toast(msg, err){
+  const el = $("#toast");
+  el.textContent = msg;
+  el.className = "toast show" + (err ? " err" : "");
+  clearTimeout(el._t);
+  el._t = setTimeout(() => { el.className = "toast"; }, 3800);
+}
+
+function dotFor(ok, warnOnly){
+  return `<i class="dot ${ok ? "ok" : (warnOnly ? "warn" : "bad")}"></i>`;
+}
+
+function pill(html){ return `<span class="pill">${html}</span>`; }
+
+function renderPills(){
+  const d = DATA;
+  if(!d){ $("#pills").innerHTML = pill(`${dotFor(false)}连接中…`); return; }
+  const ov = d.overlay || {};
+  const voice = d.voice || {};
+  const mambo = (voice.voices || {}).mambo || {};
+  const animal = (voice.voices || {}).animal || {};
+  const sts2 = (d.games || []).find(g => g.id === "slay-the-spire-2") || {};
+  $("#pills").innerHTML = [
+    pill(`${dotFor((ov.clients || 0) > 0)}OBS <b>${ov.clients || 0}</b> 路`),
+    pill(`${dotFor(!!mambo.available, true)}曼波<b>${mambo.available ? "在线" : "离线"}</b>`),
+    pill(`${dotFor(true)}动物语<b>就绪</b>`),
+    pill(`${dotFor(!!sts2.connected, true)}游戏<b>${sts2.connected ? "在线" : "未连接"}</b>`),
+    pill(`${dotFor(true)}内核 <b>v${esc(d.product?.version || "—")}</b>`),
+  ].join("");
+}
+
+function renderPersona(){
+  const p = DATA?.persona || {};
+  const style = p.style || {};
+  $("#personaId").textContent = p.id || "—";
+  $("#pName").textContent = p.name || "大肥鱼";
+  $("#pTitle").textContent = p.title || "";
+  $("#pTagline").textContent = p.tagline || "";
+  $("#pTraits").innerHTML = (p.traits || []).map(t => `<li>${esc(t)}</li>`).join("");
+  $("#pStyle").innerHTML = [
+    [style.max_len ?? 60, "字上限"],
+    [style.min_gap ?? 1.2, "秒间隔"],
+    [style.max_quips_per_10min ?? 2, "招牌/10min"],
+  ].map(([v, k]) => `<div><b>${esc(v)}</b><small>${k}</small></div>`).join("");
+  $("#pQuips").innerHTML = (p.quips || []).slice(0, 6)
+    .map(q => `<span class="chip" data-quip="${esc(q)}">${esc(q)}</span>`).join("");
+}
+
+function renderVoice(){
+  const v = DATA?.voice || {};
+  const voices = v.voices || {};
+  $("#voiceActive").textContent = v.active ? `当前 ${v.active}` : "—";
+  const rows = [
+    ["mambo", "曼波语", "MamboTTS / GPT-SoVITS", "主播本音"],
+    ["animal", "动物语", "内置五声音阶", "永远可用"],
+  ];
+  $("#voiceRows").innerHTML = rows.map(([id, name, engine, note]) => {
+    const info = voices[id] || {};
+    const ok = !!info.available;
+    const extra = id === "mambo"
+      ? (info.url || "")
+      : `音阶 ${(info.scale || []).join(" ")}`;
+    return `<div class="voice-row">
+      <div class="voice-head">${dotFor(ok, true)}<span class="nm">${name}</span>
+        <span class="engine">${esc(engine)}</span></div>
+      <div class="voice-meta"><span>${ok ? "在线" : "离线"}</span><span>·</span>
+        <span>${esc(note)}</span><span>·</span><span>${esc(extra)}</span>
+        <button class="btn sm preview" data-voice="${id}" style="margin-left:auto">试听</button></div>
+    </div>`;
+  }).join("");
+}
+
+function renderGames(){
+  const games = DATA?.games || [];
+  $("#gameCount").textContent = `${games.length} 个`;
+  $("#gameRows").innerHTML = games.map(g => {
+    const m = g.manifest || {};
+    const compat = m.compat || {};
+    const corpus = m.corpus || {};
+    const badges = [];
+    if(compat.api) badges.push(`<span class="badge">API ${esc(compat.api)}</span>`);
+    if(corpus.db) badges.push(`<span class="badge gold">${esc(corpus.db)}</span>`);
+    if(corpus.tables) badges.push(`<span class="badge">${esc(Object.values(corpus.tables).reduce((a,b)=>a+b,0))} 条资料</span>`);
+    return `<div class="game">
+      <div class="gh">${dotFor(!!g.connected, true)}<span class="gn">${esc(g.name)}</span>
+        <span class="gp">${esc(g.platform || "")}</span></div>
+      <div class="gd">${esc(g.notes || "")}</div>
+      <div class="badges">${badges.join("")}</div>
+    </div>`;
+  }).join("") || `<div class="empty">没有注册游戏。</div>`;
+}
+
+function renderRight(){
+  const ov = DATA?.overlay || {};
+  const st = DATA?.studio || {};
+  const v = DATA?.voice || {};
+  const rt = (v.runtime || {});
+  $("#kClients").textContent = `${ov.clients || 0} 路`;
+  const pb = ov.playback || {};
+  $("#kPlayback").textContent = pb.speaking ? `说话中 ${pb.remaining ?? 0}s` : "空闲";
+  $("#kVoicePending").textContent = `${rt.pending || 0} 条`;
+  const last = rt.last || {};
+  $("#kVoiceLast").textContent = last.ok ? `${last.voice || ""} ${last.duration || 0}s` : (last.error ? "失败" : "—");
+  $("#kCounts").textContent = `${st.said || 0} / ${st.pushed || 0}`;
+  $("#kSeq").textContent = ov.seq ?? "—";
+  $("#seq").textContent = `seq ${ov.seq ?? "—"}`;
+}
+
+function renderFeed(){
+  const comments = (DATA?.overlay?.comments || []).slice().reverse();
+  if(!comments.length){
+    $("#feed").innerHTML = `<li class="empty">还没有台词。先发一句试试。</li>`;
+    return;
+  }
+  $("#feed").innerHTML = comments.map(c => {
+    const t = new Date((c.ts || 0) * 1000).toLocaleTimeString("zh-CN", {hour12:false});
+    return `<li><div class="txt">${esc(c.speech || c.thought || "")}</div>
+      <div class="meta">#${c.id} · ${t} · ${esc(c.tag || "思路")}</div></li>`;
+  }).join("");
+}
+
+function renderSamples(){
+  const samples = DATA?.samples || [];
+  $("#samples").innerHTML = samples
+    .map(s => `<span class="chip" data-fill="${esc(s)}">${esc(s)}</span>`).join("");
+}
+
+function render(){
+  renderPills(); renderPersona(); renderVoice(); renderGames(); renderRight(); renderFeed(); renderSamples();
+  $("#rootHint").textContent = DATA?.root ? `仓库：${DATA.root}` : "";
+}
+
+async function refresh(){
+  try{
+    const r = await fetch("/api/studio", {cache:"no-store"});
+    if(!r.ok) throw new Error("HTTP " + r.status);
+    DATA = await r.json();
+    render();
+  }catch(e){
+    toast("控制台后端没响应：" + e.message, true);
+  }
+}
+
+function setCounter(){
+  $("#thoughtCount").textContent = ($("#thought").value.length) + " 字";
+  $("#memeCount").textContent = ($("#meme").value.length) + " 字";
+  const t = $("#thought").value.trim(), m = $("#meme").value.trim();
+  const total = (t ? t.replace(/[。\s]+$/,"") + "。" : "") + (m ? m.replace(/^[，,、。；;\s—–-]+/,"") : "");
+  $("#composed").textContent = total ? `拼句 ${total.length} 字` : "—";
+}
+
+function showLint(res){
+  const lint = res.lint || {};
+  const issues = lint.issues || [];
+  const head = lint.ok
+    ? `<span class="pass">PASS</span> ${res.dry_run ? "（未发送）" : "已送出"} · ${issues.length} 条提示`
+    : `<span class="fail">FAIL</span> ${issues.length} 条问题，先改再发`;
+  const lines = issues.map(i => `<span class="${i.level === "FAIL" ? "fail" : "warn"}">${i.level}</span> ${esc(i.message)}`).join("\n");
+  $("#lint").innerHTML = `${head}${lines ? "\n" + lines : ""}${res.text ? `<div class="final">「${esc(res.text)}」</div>` : ""}`;
+}
+
+async function send(dry){
+  if(BUSY) return;
+  const thought = $("#thought").value.trim();
+  const meme = $("#meme").value.trim();
+  if(!thought && !meme){ toast("先写一句。"); return; }
+  BUSY = true;
+  $("#send").disabled = true; $("#lintOnly").disabled = true;
+  try{
+    const r = await fetch("/api/say", {
+      method:"POST", headers:{"content-type":"application/json"},
+      body: JSON.stringify({thought, meme, dry_run: !!dry}),
+    });
+    const res = await r.json();
+    showLint(res);
+    if(!res.ok){ toast(res.error || "发送失败", true); return; }
+    if(!dry){
+      $("#thought").value = ""; $("#meme").value = ""; setCounter();
+      toast("已送到弹幕源；配音排队中。");
+      await refresh();
+    }
+  }catch(e){ toast("发送失败：" + e.message, true); }
+  finally{
+    BUSY = false; $("#send").disabled = false; $("#lintOnly").disabled = false;
+  }
+}
+
+async function preview(voice){
+  const text = ($("#thought").value.trim() || "它 21，我最多挡 15。差 6，嗨呀。");
+  toast(`合成中（${voice === "mambo" ? "曼波" : "动物语"}）…`);
+  try{
+    const r = await fetch("/api/voice", {
+      method:"POST", headers:{"content-type":"application/json"},
+      body: JSON.stringify({text, voice}),
+    });
+    if(!r.ok){
+      let msg = "HTTP " + r.status;
+      try{ const j = await r.json(); msg = j.error || msg; }catch(_){}
+      throw new Error(msg);
+    }
+    const blob = await r.blob();
+    const url = URL.createObjectURL(blob);
+    const audio = new Audio(url);
+    audio.onended = () => URL.revokeObjectURL(url);
+    await audio.play();
+    toast(`播放 ${voice === "mambo" ? "曼波" : "动物语"} · ${(blob.size / 1024).toFixed(0)} KB`);
+  }catch(e){ toast("试听失败：" + e.message, true); }
+}
+
+document.addEventListener("click", (ev) => {
+  const quip = ev.target.closest("[data-quip]");
+  if(quip){ $("#meme").value = quip.dataset.quip; setCounter(); return; }
+  const fill = ev.target.closest("[data-fill]");
+  if(fill){ $("#meme").value = fill.dataset.fill; setCounter(); return; }
+  const pv = ev.target.closest("[data-voice]");
+  if(pv){ preview(pv.dataset.voice); }
+});
+
+$("#send").addEventListener("click", () => send(false));
+$("#lintOnly").addEventListener("click", () => send(true));
+$("#reload").addEventListener("click", (e) => { e.preventDefault(); refresh(); });
+["thought","meme"].forEach(id => $("#" + id).addEventListener("input", setCounter));
+document.addEventListener("keydown", (e) => {
+  if((e.ctrlKey || e.metaKey) && e.key === "Enter"){ e.preventDefault(); send(false); }
+});
+
+setCounter();
+refresh();
+setInterval(refresh, 5000);
+</script>
+</body>
+</html>

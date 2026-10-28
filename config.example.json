@@ -1,0 +1,18 @@
+{
+  "persona": "dafeiyu",
+  "voice": "mambo",
+  "fallback_voice": "animal",
+  "game": "slay-the-spire-2",
+  "volume": 0.55,
+  "min_gap": 1.2,
+  "host": "127.0.0.1",
+  "port": 8730,
+  "overlay_url": "http://127.0.0.1:8730",
+  "tts_url": "http://127.0.0.1:9880",
+  "tts_ref": "",
+  "tts_prompt": "大家好，欢迎来到我的频道，今天给大家分享一个有趣的内容",
+  "tts_speed": 1.0,
+  "tts_timeout": 60,
+  "push_overlay": true,
+  "strict_lint": false
+}

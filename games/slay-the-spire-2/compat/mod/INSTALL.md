@@ -23,7 +23,9 @@
 2. 把本目录的三个文件复制进去（不要多套一层文件夹）：
 
    ```powershell
-   Copy-Item .\mod\STS2AIAgent.dll,.\mod\STS2AIAgent.pck,.\mod\mod_id.json "<游戏目录>\mods\" -Force
+   Copy-Item .\games\slay-the-spire-2\compat\mod\STS2AIAgent.dll,`
+             .\games\slay-the-spire-2\compat\mod\STS2AIAgent.pck,`
+             .\games\slay-the-spire-2\compat\mod\mod_id.json "<游戏目录>\mods\" -Force
    ```
 
 3. 启动游戏，确认 mod 已加载：

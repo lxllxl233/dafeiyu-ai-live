@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "games": [
+    {
+      "id": "slay-the-spire-2",
+      "name": "杀戮尖塔 2",
+      "platform": "Steam · 2868840",
+      "status": "ready",
+      "pack": "slay-the-spire-2",
+      "adapter": "dafeiyu.games.sts2:Sts2Adapter",
+      "tags": ["卡牌", "肉鸽", "策略", "爬塔"],
+      "notes": "铁甲战士 A10 实况；mod 本地 HTTP :8080 只读状态，出牌走兼容层 CLI。"
+    },
+    {
+      "id": "demo",
+      "name": "演示信号源",
+      "platform": "内置",
+      "status": "builtin",
+      "pack": "",
+      "adapter": "dafeiyu.games.demo:DemoAdapter",
+      "tags": ["离线验收", "不需要游戏"],
+      "notes": "脚本化游戏事件，用来验证「游戏 → 性格 → 语音 → UI」整条链路。"
+    }
+  ]
+}
