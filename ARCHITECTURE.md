@@ -132,7 +132,8 @@ class GameAdapter:
 
 - `local`：`tools/advisor.py` 本地算伤害/格挡/斩杀，走 `sts2 batch`；
 - `llm`：战斗回合走 LangGraph `run_turn` + `LLMPlanner` + `tools/act.py`，默认模型
-  `deepseek-chat`，非战斗仍本地处理；失败会停手并写 `error`，不静默换成本地。
+  `deepseek-chat`，非战斗仍本地处理；规划/验算失败本回合本地兜底，执行失败才停手。
+- `GAME_OVER`：回主菜单再开一局；未知界面/长时间没有进展会停手并写 `error`。
 
 播报节奏也在同一份配置里：`voice` 按上一句字数估算播完时间（至少 2 秒），
 `normal` 是旧版 0.7 秒。模式/节奏写 `config.json`，桌宠二级菜单、控制台和 CLI 共用；

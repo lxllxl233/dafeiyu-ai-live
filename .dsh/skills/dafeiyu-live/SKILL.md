@@ -36,7 +36,7 @@ python main.py agent trace --limit 5
 
 右键「让她玩」二级菜单：本地算账 / LLM 规划 / 慢速播报 / 普通节奏；「让她停手」单独一项。
 LLM 模式只把战斗回合交给 LangGraph `run_turn`，默认模型 `deepseek-chat`；地图/奖励仍本地。
-默认慢速播报按台词长度等语音，至少 2 秒一步；普通节奏是旧版 0.7 秒。整局循环在
+规划/验算失败本回合自动用本地兜底，执行失败才停手；GAME_OVER 会回主菜单再开一局。默认慢速播报按台词长度等语音，至少 2 秒一步；普通节奏是旧版 0.7 秒。整局循环在
 `src/dafeiyu/agent/play.py`，状态 `logs/autoplay.json`，步骤 `logs/autoplay.jsonl`，
 停手文件 `logs/autoplay.stop`。只处理已知界面；未知界面会停下，不猜按钮。
 

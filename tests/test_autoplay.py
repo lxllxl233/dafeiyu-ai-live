@@ -5,6 +5,7 @@ import json
 import time
 
 from dafeiyu.agent import play
+from dafeiyu.agent.planner import _extract_plan
 
 
 class _FakeSts2:
@@ -106,6 +107,14 @@ def test_speech_pace_sets_a_wait_window():
     play._speech_until = 0.0
     play._remember_speech("它这回合打十六，我先挡满再还手，别急。")
     assert play._speech_until > time.time() + 1.0
+
+
+def test_malformed_json_extra_quote_is_repaired():
+    raw = ('{"say":["先打"],"seq":[{"c":"STRIKE_IRONCLAD","t":0},'
+           '{"end":1}]}')
+    bad = raw.replace('"],', '"]",', 1)
+    plan = _extract_plan(bad)
+    assert plan["seq"][0]["c"] == "STRIKE_IRONCLAD"
 
 
 def test_unknown_screen_does_not_guess_a_button():

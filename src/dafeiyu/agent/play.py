@@ -325,9 +325,17 @@ def _combat_llm(tools, planner, state: dict, game: str) -> str:
         _log("llm_failed", error=f"{type(exc).__name__}: {exc}")
         return f"LLM_FAILED {type(exc).__name__}: {exc}"
     if not result.get("ok"):
-        err = str(result.get("error") or "未知错误")[:180]
-        _log("llm_failed", error=err, run_id=result.get("run_id"))
-        return f"LLM_FAILED {err}"
+        steps = result.get("steps") or []
+        nodes = {str(s.get("node") or "") for s in steps if isinstance(s, dict)}
+        if "execute" in nodes:
+            stage = "EXECUTE"
+        elif "validate" in nodes:
+            stage = "VALIDATE"
+        else:
+            stage = "PLAN"
+        err = str(result.get("error") or "规划/验算未通过")[:180]
+        _log("llm_failed", error=err, run_id=result.get("run_id"), stage=stage)
+        return f"LLM_FAILED_{stage} {err}"
     plan = result.get("plan") or {}
     seq = plan.get("seq") if isinstance(plan, dict) else None
     say = plan.get("say") if isinstance(plan, dict) else None
@@ -374,7 +382,13 @@ def _combat_local(sts2, advisor, state: dict) -> str:
 def _combat(sts2, advisor, state: dict, *, mode: str = "local",
             llm_tools=None, llm_planner=None, game: str = "") -> str:
     if mode == "llm" and llm_tools is not None and llm_planner is not None:
-        return _combat_llm(llm_tools, llm_planner, state, game)
+        out = _combat_llm(llm_tools, llm_planner, state, game)
+        if out.startswith(("LLM_FAILED_PLAN", "LLM_FAILED_VALIDATE")):
+            # 规划/验算失败时还没有出牌，本回合用本地算账兜底，不让整局卡死。
+            _log("llm_fallback", error=out)
+            local = _combat_local(sts2, advisor, state)
+            return f"LLM 失败，本地兜底（{local}）"
+        return out
     return _combat_local(sts2, advisor, state)
 
 
@@ -384,9 +398,12 @@ def _reward(sts2, state: dict) -> str:
         summary, _ = _call(sts2, sts2.cmd_rewards, pick="auto", quiet=True)
         deck = (summary or {}).get("deck")
         return f"REWARD deck={deck}"
-    except Exception as exc:  # noqa: BLE001
+    except BaseException as exc:  # noqa: BLE001
         _log("reward_failed", error=f"{type(exc).__name__}: {exc}")
-        return "REWARD_FAILED"
+        if "proceed" in _acts(state):
+            sts2.act("proceed")
+            return "REWARD proceed"
+        return "REWARD unknown"
 
 
 def _card_selection(sts2, state: dict) -> str:
@@ -465,14 +482,23 @@ def _shop(sts2, state: dict) -> str:
 
 
 def _chest(sts2, state: dict) -> str:
-    if "claim_reward" in _acts(state):
-        try:
-            sts2.act("claim_reward", option_index=0)
-        except Exception:
-            pass
-    if "collect_rewards_and_proceed" in _acts(sts2.get_state()):
+    acts = _acts(state)
+    if "open_chest" in acts:
+        sts2.act("open_chest")
+        return "CHEST open"
+    if "choose_treasure_relic" in acts:
+        sts2.act("choose_treasure_relic", option_index=0)
+        return "CHEST relic"
+    if "claim_reward" in acts:
+        sts2.act("claim_reward", option_index=0)
+        return "CHEST claim"
+    if "collect_rewards_and_proceed" in acts:
         sts2.act("collect_rewards_and_proceed")
-    return "CHEST"
+        return "CHEST collect"
+    if "proceed" in acts:
+        sts2.act("proceed")
+        return "CHEST proceed"
+    return "CHEST unknown"
 
 
 def _modal(sts2, state: dict) -> str:
@@ -555,6 +581,7 @@ def _run(game: str, mode: str = "local") -> None:
         _pace()
         _log("start", game=game, mode=mode)
         step = 0
+        stalled = 0
         while not _stop.is_set() and not STOP_PATH.exists():
             if step >= 5000:
                 _write_status(running=False, last="达到步数上限，停手")
@@ -571,9 +598,17 @@ def _run(game: str, mode: str = "local") -> None:
                 continue
             _set_from_state(state)
             if _screen(state) == "GAME_OVER":
-                _say("这局结束了，先停手。")
-                _write_status(running=False, last="GAME_OVER")
-                _log("game_over")
+                _say("这局结束了，我回主菜单再来一局。")
+                _write_status(last="GAME_OVER，回主菜单")
+                _pace()
+                new_state = _ensure_run(sts2, state)
+                if new_state:
+                    _set_from_state(new_state, "新一局")
+                    _log("restart_run")
+                    continue
+                _write_status(running=False, error="GAME_OVER 无法返回主菜单",
+                              last="GAME_OVER")
+                _log("game_over", restart=False)
                 return
             try:
                 last = _one_step(sts2, advisor, state, mode=mode,
@@ -592,9 +627,18 @@ def _run(game: str, mode: str = "local") -> None:
                 _log("unknown_screen", last=last)
                 return
             if last.startswith("LLM_FAILED"):
-                _write_status(running=False, error=last, last="LLM 失败，停手")
+                _write_status(running=False, error=last, last="LLM 执行失败，停手")
                 _log("llm_stop", last=last)
                 return
+            if last in ("CHEST", "REST no options", "MAP_NO_AVAILABLE", "REWARD_FAILED"):
+                stalled += 1
+                if stalled >= 4:
+                    _write_status(running=False, error=f"界面没有进展：{last}",
+                                  last="界面卡住，停手")
+                    _log("stalled", last=last)
+                    return
+            else:
+                stalled = 0
             _pace()
         _write_status(running=False, last="已停手")
         _log("stop")

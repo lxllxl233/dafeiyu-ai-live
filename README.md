@@ -361,7 +361,7 @@ python main.py play --stop       # 从另一个进程停手
 - **本地算账**：`tools/advisor.py` 算伤害/格挡/斩杀，不烧 token；
 - **LLM 规划**：战斗回合进 LangGraph `observe → plan → validate → execute`，默认用
   `deepseek-chat`（非推理模型，避免长局面把 content 挤空），轨迹仍写
-  `logs/agent_trace.jsonl`；
+  `logs/agent_trace.jsonl`；规划/验算失败时本回合用本地兜底，执行失败才停手；
 - **慢速播报**：按上一句台词长度估算播完时间，至少留 2 秒再出下一步；
 - **普通节奏**：旧版 0.7 秒，适合静音或只想快进。
 
@@ -373,7 +373,7 @@ python main.py play --stop       # 从另一个进程停手
 - `REWARD`：`sts2.py rewards --pick auto` 自动挑牌/空收；
 - `MAP`：用 `sts2.py route` 的路线计划选下一格；
 - `REST / EVENT / SHOP / CHEST`：保守选择（低血休息、事件第一项、商店先离开）；
-- `GAME_OVER`：停手，不自动重开；
+- `GAME_OVER`：回主菜单开新一局；想停手点「让她停手」；
 - 未知界面：停在那一步并写日志，不猜按钮。
 
 进展写 `logs/autoplay.json` 和 `logs/autoplay.jsonl`，可以从另一个进程停：
@@ -464,7 +464,7 @@ OBS 场景仍叫 `StS2`：`StS2 Game`（game_capture）+ `AI Commentary`（浏�
 ## 测试
 
 ```powershell
-python -m pytest -q tests          # 直播姬：总线/性格/语音/游戏/启动/配置/Agent/自动玩法/录像（56 项）
+python -m pytest -q tests          # 直播姬：总线/性格/语音/游戏/启动/配置/Agent/自动玩法/录像（57 项）
 python tools/test_ctx_act.py       # 决策层：ctx + act（离线）
 python tools/test_streamer.py      # 桌宠渲染/透明/换行/配音
 python tools/test_overlay_playback.py
