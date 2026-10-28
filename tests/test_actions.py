@@ -85,6 +85,22 @@ def test_shop_menu_drops_unaffordable_items_and_offers_leave():
         ("buy_card", 0), ("leave_shop", None)]
 
 
+def test_shop_menu_lists_close_shelf_while_open():
+    """货架开着只有 close_shop_inventory（run-0111 卡死就是缺这条菜单）。"""
+    state = {"screen": "SHOP", "run": {"gold": 200},
+             "available_actions": ["close_shop_inventory", "buy_card",
+                                   "discard_potion"],
+             "shop": {"is_open": True,
+                      "cards": [{"name": "余烬", "price": 130, "available": True},
+                                {"name": "恶魔形态", "price": 300, "available": True}]}}
+    menu = actions.available(state)
+    assert [(e["a"], e["i"]) for e in menu] == [
+        ("close_shop_inventory", None), ("buy_card", 0)]   # 买不起的不进菜单
+    entry, err = actions.check({"act": "close_shop_inventory"}, state)
+    assert entry is not None and err == ""
+    assert "save_and_quit" not in {e["a"] for e in menu}
+
+
 def test_map_menu_only_lists_available_nodes():
     state = {"screen": "MAP", "available_actions": ["choose_map_node"],
              "map": {"nodes": [{"row": 0, "col": 0, "node_type": "Monster",

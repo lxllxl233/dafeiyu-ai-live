@@ -523,6 +523,13 @@ def _screen_llm(sts2, planner, state: dict, screen: str) -> str:
         if not res.get("ok"):
             _log("screen_plan_failed", screen=screen, attempt=attempt,
                  error=str(res.get("error") or "")[:180])
+            if attempt == 1:
+                # 超时/网络抖动很常见（run-0111 的商店就死在一次 Read timeout 上），
+                # 先重试一次再落本地兜底；不重试会把这一屏直接判死。
+                time.sleep(1.0)
+                feedback = "上一次请求超时或失败，没有收到回复。只输出一个 JSON 对象。"
+                continue
+            _log("llm_fallback", screen=screen, error=feedback[:180])
             return ""
         plan = res.get("plan") if isinstance(res.get("plan"), dict) else {}
         entry, err = actions.check(plan, state)
@@ -736,10 +743,16 @@ def _event(sts2, state: dict) -> str:
 
 
 def _shop(sts2, state: dict) -> str:
-    if "leave_shop" in _acts(state):
+    acts = _acts(state)
+    # 货架开着时游戏不提供 leave_shop，只给 close_shop_inventory；先关货架，
+    # 下一步才可能离开。旧实现没有这条，LLM 超时后兜底直接 "SHOP unknown" 收尾。
+    if "close_shop_inventory" in acts:
+        sts2.act("close_shop_inventory")
+        return "SHOP close"
+    if "leave_shop" in acts:
         sts2.act("leave_shop")
         return "SHOP leave"
-    if "proceed" in _acts(state):
+    if "proceed" in acts:
         sts2.act("proceed")
         return "SHOP proceed"
     return "SHOP unknown"
@@ -890,7 +903,7 @@ def _run(game: str, mode: str = "local") -> None:
             )
             screen_planner = LLMPlanner(
                 cfg, model=cfg.autoplay_llm_model or cfg.llm_model,
-                timeout=25.0, system_prompt=NONCOMBAT_PROMPT,
+                timeout=40.0, system_prompt=NONCOMBAT_PROMPT,
             )
             ok, why = screen_planner.available()
             if not ok:

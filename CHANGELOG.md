@@ -45,6 +45,11 @@
   「只支持 local 模式」，用户以为 LLM 拉起的是《杀戮尖塔 2》。现在启动以
   `config.game` 为准，只有状态文件确实 `running` 时才按它停手/看状态；
   `AutoplayHost.status()` 也不再让上一局的 `game/mode/pace` 盖住当前宿主。
+- **商店卡死（run-0111）**：货架打开时游戏只给 `close_shop_inventory`，不给
+  `leave_shop`；`decision/actions.py` 的商店菜单和 `_shop` 兜底都没列这一项，于是
+  模型在买完牌后一次 `Read timed out`，兜底返回 `SHOP unknown`，整局停在商店。
+  现在菜单有「关闭货架」，兜底先关货架再离开；`_screen_llm` 对超时/网络错也重试
+  一次（界面决策超时 25s→40s），两次都失败才落本地。补 4 条回归测试。
 - **B 站连接每 20 秒刷一屏 traceback**：B 站弹幕服务器不回 WebSocket 层 ping，
   客户端默认 keepalive 每 20s 报 `sent 1011 keepalive ping timeout` 并打印三条
   链式栈；重连又被指数退避拖到 60s。现在 `connect(..., ping_interval=None)`

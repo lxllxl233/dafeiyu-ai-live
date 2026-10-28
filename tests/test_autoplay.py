@@ -479,13 +479,59 @@ def test_llm_mode_retries_once_when_index_is_out_of_range(monkeypatch):
     assert fake.calls == [("choose_event_option", {"option_index": 1})]
 
 
-def test_llm_mode_planner_failure_falls_back_without_raising(monkeypatch):
+def test_llm_mode_planner_failure_retries_then_falls_back(monkeypatch):
+    """超时/网络错也重试一次；两次都失败才落本地（run-0111 商店就是死在这）。"""
     monkeypatch.setattr(play, "_remember_speech", lambda t: None)
+    monkeypatch.setattr(play.time, "sleep", lambda s: None)
     fake = _FakeSts2([_EVENT_STATE])
     planner = _FakePlanner([{"__error__": "Read timed out"}])
     last = play._one_step(fake, None, _EVENT_STATE, mode="llm", screen_planner=planner)
     assert last == "EVENT 0"
-    assert len(planner.calls) == 1
+    assert len(planner.calls) == 2
+    assert "超时" in planner.calls[1]["feedback"]
+
+
+_SHOP_STATE = {
+    "screen": "SHOP", "run_id": "r1",
+    "run": {"floor": 8, "act_id": "0", "current_hp": 55, "max_hp": 80, "gold": 34,
+            "deck": [], "relics": [], "potions": []},
+    "available_actions": ["close_shop_inventory", "buy_card"],
+    "shop": {"is_open": True,
+             "cards": [{"name": "余烬", "price": 130, "available": True}]},
+}
+
+
+def test_shop_with_shelf_open_closes_it_when_the_model_fails(monkeypatch):
+    """货架开着时本地兜底必须能关货架，否则整局停在商店（run-0111）。"""
+    monkeypatch.setattr(play, "_remember_speech", lambda t: None)
+    monkeypatch.setattr(play.time, "sleep", lambda s: None)
+    fake = _FakeSts2([_SHOP_STATE])
+    planner = _FakePlanner([{"__error__": "Read timed out"}])
+    last = play._one_step(fake, None, _SHOP_STATE, mode="llm", screen_planner=planner)
+    assert last == "SHOP close"
+    assert fake.calls == [("close_shop_inventory", {})]
+
+
+def test_shop_model_can_pick_close_shelf(monkeypatch):
+    monkeypatch.setattr(play, "_remember_speech", lambda t: None)
+    fake = _FakeSts2([_SHOP_STATE])
+    planner = _FakePlanner([{"say": ["没缺口了，关货架走人。"],
+                             "act": "close_shop_inventory"}])
+    last = play._one_step(fake, None, _SHOP_STATE, mode="llm", screen_planner=planner)
+    assert last == "SHOP close_shop_inventory"
+    assert fake.calls == [("close_shop_inventory", {})]
+
+
+def test_shop_after_buying_leaves_when_no_shelf_is_open(monkeypatch):
+    state = {"screen": "SHOP",
+             "run": {"floor": 8, "current_hp": 55, "max_hp": 80, "gold": 10,
+                     "deck": [], "relics": [], "potions": []},
+             "available_actions": ["leave_shop", "buy_card"],
+             "shop": {"is_open": False, "cards": []}}
+    fake = _FakeSts2([state])
+    last = play._one_step(fake, None, state, mode="local")
+    assert last == "SHOP leave"
+    assert fake.calls == [("leave_shop", {})]
 
 
 def test_local_mode_never_calls_the_screen_planner():

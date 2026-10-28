@@ -141,6 +141,7 @@ AOE 清算：总量A vs 全场血H；A≥H清场；A<H收最危险1–2只；N=1
 
 - 地图：ctx.choice.opts→route --commit <i> --note "…"→每节点plan对账（PLAN_OK/REPLAN）。低血优先级：营火>问号>商店>怪>精英。
 - 非战斗：读choice.eval的need/best/skip/buy/bar/why（提示非胜率）；冲突按牌面/手册再do --option i；事件读原文，地图走route；--full复盘。
+- 商店：货架开着（acts 只有 close_shop_inventory）先关货架，再 leave_shop；买不起/没缺口立刻走，别在店里磨。
 - REPLAN：血线<70%｜掉血≥20%最大｜拿首张AOE｜金币100+｜牌组+3｜多诅咒。金币只删牌；诅咒局拒全金币换牌。
 
 ## 7. 构筑

@@ -117,6 +117,10 @@ def _shop_menu(state: dict) -> list[dict]:
     out = []
     if "open_shop_inventory" in acts:
         out.append({"a": "open_shop_inventory", "i": None, "n": "看货架", "fx": ""})
+    # 货架打开时游戏只给 close_shop_inventory，不给 leave_shop；不列这一项，
+    # 模型和本地兜底都没有出口，商店就卡死了（实机 run-0111）。
+    if "close_shop_inventory" in acts:
+        out.append({"a": "close_shop_inventory", "i": None, "n": "关闭货架", "fx": ""})
     for sec, act in (("cards", "buy_card"), ("relics", "buy_relic"),
                      ("potions", "buy_potion")):
         if act not in acts:
