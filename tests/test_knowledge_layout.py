@@ -107,3 +107,23 @@ def test_prompts_put_potions_in_seq_not_fx():
     assert '{"p": 槽位' in text
     assert "fx 只写 e/hp/take" in text
     assert "fx 的 p" not in text
+
+
+def test_prompt_protocol_claims_match_executor():
+    """提示词里的协议断言必须和 act.py/sim.py 的真实行为一致。
+
+    这一组都是「提示词写错了、模型照着做就白打一手」的教训：
+    - end 不是必须的（sim.validate 允许半手，返回 mid:1）；写死「必须 end」
+      会让模型抽完牌硬结束回合；
+    - 非战斗的 i 是 acts 里那一条的 i（宝箱/选牌的 choice 没有 i 列表），
+      不能教模型去 choice.* 里数下标；
+    - fx.p 现在会被 normalize 挪进 seq，旧文案「不会被执行」已经不成立。
+    """
+    text = (ROOT / "games/slay-the-spire-2/decision/prompts.py").read_text(
+        encoding="utf-8")
+    assert "seq 最后必须是" not in text
+    assert "不写 end" in text and "mid:1" in text
+    assert "choice.*[].i" not in text
+    assert "fx.p" not in text or "别写进 fx" in text
+    # 回合目标文本也不能说死「最后 end」，否则抽牌后模型会硬结束回合
+    assert "先挡满，最后 end。" not in text

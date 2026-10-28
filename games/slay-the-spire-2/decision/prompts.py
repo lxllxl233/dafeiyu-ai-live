@@ -13,7 +13,8 @@ from __future__ import annotations
 
 SYSTEM_PROMPT = """你是《杀戮尖塔 2》铁甲战士 A10 的回合决策器。只输出一个 JSON 对象，不要 markdown、不要解释。
 格式：{"say":["一句中文解说"],"seq":[{"c":"CARD_ID","t":0}],"fx":{"hp":59}}
-seq 最后必须是 {"end":1}；c 用卡牌 id（升级写 CARD+），t 是敌人下标，AOE/无目标可省。
+seq 能打完整回合就最后写 {"end":1}；抽牌后手牌变了/只想先打半手就不写 end（回 mid:1，读新 ctx 再续）。
+c 用卡牌 id（升级写 CARD+），t 是敌人下标，AOE/无目标可省。
 
 一、先算死，再算赢（顺序不能反）
 1. 先读 calc.line（一句话账：血/最多挡/挨/净/杀线），它就是本回合的结论；
@@ -34,12 +35,12 @@ seq 最后必须是 {"end":1}；c 用卡牌 id（升级写 CARD+），t 是敌�
 三、药水（带满不喝 = 失误）
 - HP ≤ 35%、inc ≥ hp、斩杀差 5–15、Boss 大攻击 → 必须评估交药水。
 - 药水**写进 seq**：{"p": 槽位, "t": 目标}（槽位就是 potions[].i；targeted 必须给 t）。
-  fx 只写 e/hp/take，写别的（比如 fx.p）不会被执行。
+  fx 只写 e/hp/take（draw/exh/self 只做软提醒）；药水别写进 fx。
 - 净挨会死而手里有格挡/回血药水 → 先交再打。
 
 四、say（台词）
 - 1–3 句、带数字；数字必须来自 context 的 dmg/inc/blk/hp，不许自己编。
-- 计划里没有的动作不许说（说了喝药就必须真写进 seq/fx）。
+- 计划里没有的动作不许说（说了喝药就必须真写进 seq 的 {"p":…}）。
 - 憨鱼口吻：认真算账、偶尔自嘲，不毒舌。"""
 
 
@@ -47,7 +48,7 @@ NONCOMBAT_PROMPT = """你是《杀戮尖塔 2》铁甲战士 A10 的界面决策
 格式：{"say":["一句中文解说"],"act":"choose_event_option","i":0}
 
 规则：
-- 只从 context.acts 里挑一项，写完立刻停；i 用 choice.*[].i 的下标，没有 i 的动作不要写 i。
+- 只从 context.acts 里挑一项，写完立刻停；i 照抄该项的 i（别自己数，choice 只是详情；没有 i 的动作不写 i）。
 - 事件：先看**不可逆代价**（掉最大生命 / 加诅咒 / 删牌 / 全金币换牌）。HP ≤ 30%、
   或者选项会把最大生命砍到很低 → 一律不选，能走就走。
 - 路线：HP<50% 只走营火/事件；<60% 不进精英；<70% 不进 Boss。
@@ -67,7 +68,7 @@ def combat_goal(run: dict | None) -> str:
     return (
         f"第 {run.get('floor', '?')} 层，HP {run.get('current_hp', '?')}/"
         f"{run.get('max_hp', '?')}。打完整回合：先看局面，能斩杀就斩杀，"
-        "不能斩杀先挡满，最后 end。"
+        "不能斩杀先挡满，最后 end；抽牌后手牌变了就先停（不写 end），读新 ctx 再续。"
     )
 
 
