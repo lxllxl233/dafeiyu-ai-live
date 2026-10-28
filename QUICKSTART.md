@@ -107,6 +107,11 @@ LangGraph，地图/奖励/事件仍本地处理。自动玩默认自动开 OBS �
 `events.jsonl` / `chapters.md` / `timeline.json`（画面、楼层、战斗、台词和对应
 时间段，方便混剪）；控制台「Agent 流程」会显示本轮实际 Token（输入/输出/合计）
 与 LLM 回合数。自动玩法只处理已知界面，未知界面会停下并写 `logs/autoplay.json`，不猜按钮。
+
+B 站礼物：控制台「基础配置 → B 站直播间」填房间号，勾选「开启 B 站礼物监听」。
+桌宠会在后台连 B 站直播 WebSocket，收到礼物/醒目留言/上舰就让鱼绕两圈；若提示
+`-352` 风控，在同一张卡填浏览器里的 `SESSDATA` Cookie（只存本机 config.json）。
+房间号/Cookie 改动会自动重连，不用重启桌宠。
 python main.py games        # 应该看到「杀戮尖塔 2 ● 在线」
 ```
 

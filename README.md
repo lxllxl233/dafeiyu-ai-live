@@ -36,6 +36,7 @@ v1 把四样东西焊在一个「打杀戮尖塔」的工程里；v2 把它们�
 - **让她玩**：右键「让她玩」二级菜单选**本地算账 / LLM 规划**；默认慢速播报，等语音再出下一步。战斗之外（奖励/地图/营火/事件）仍走本地，控制台也能切。自动玩默认自动开 OBS 录像，控制台「Agent 流程」能看到本轮累计 Token 和 LLM 回合数。当前只支持杀戮尖塔 2。
 - **Agent 流程**：LangGraph 把一回合拆成观察 → 规划 → 验算 → 执行 → 反思，节点耗时/token/重试写本机轨迹，控制台「Agent 流程」可看。
 - **录像回放**：自动玩开始即开录（OBS 没开会自动拉起），停止时收成 `recordings/<游戏>/run-NNNN/run.mp4`；同目录 `events.jsonl` / `chapters.md` / `timeline.json` 记录画面、楼层、战斗、台词和对应时间段，方便出混剪；`meta.json` 记角色/进阶/结果。
+- **B 站礼物**：控制台「基础配置」填直播间房间号并勾选监听，桌宠会连 B 站直播 WebSocket，收到 `SEND_GIFT` / 醒目留言 / 上舰就让鱼绕两圈并气泡道谢；匿名被风控时再填可选 Cookie（只存本机，不回显）。
 - **离线演示**：`python main.py demo` 不需要游戏，跑通「游戏 → 性格 → 语音 → UI」。
 
 ![直播姬控制台](docs/studio.png)
@@ -200,6 +201,20 @@ python main.py replay list
 - **三态气泡**：空闲「吃饭ing」，决策「思考ing」，说话显示这一句台词。
 - **录屏可见性**：「录屏里隐藏」默认不勾，桌宠默认会进录像；勾上后用 `WDA_EXCLUDEFROMCAPTURE` 排除。要启动即隐藏可加 `--exclude-capture`。
 - `python main.py` 默认桌宠；`--panel` 回旧版横幅，`--preview out.png` 只渲染不上屏。
+
+## B 站礼物
+
+控制台「基础配置」里填 **B 站直播间**（`https://live.bilibili.com/12345` 里的 `12345`），
+勾选「开启 B 站礼物监听」，桌宠进程会：
+
+- 取 B 站 `getDanmuInfo`（带 WBI 签名）并连直播 WebSocket；
+- 心跳保持连接，断线自动重连；
+- 收到 `SEND_GIFT`、醒目留言、上舰时，鱼身绕小圈转两圈 + 金色星星，并气泡道谢；
+- 状态写 `logs/bilibili.json`，控制台会显示「监听中 / 连接失败」。
+
+匿名请求被 B 站风控（错误 `-352`）时，在同一张配置卡里填 `SESSDATA` Cookie；
+Cookie 只写本机 `config.json`，接口只返回「已配置」，不会回显。房间号/Cookie
+改了之后桌宠会自动重连，不用重启。礼物动画在桌宠上；OBS 里的 overlay 页面不额外画脸。
 
 ## 录像回放
 
@@ -367,6 +382,8 @@ python main.py play --stop       # 从另一个进程停手
 - **LLM 规划**：战斗回合进 LangGraph `observe → plan → validate → execute`，默认用
   `deepseek-chat`（非推理模型，避免长局面把 content 挤空），轨迹仍写
   `logs/agent_trace.jsonl`；规划/验算/执行失败都会按最新手牌用本地兜底，不再整局停手；
+- 右键「模型」会同时改 `llm_model` 和 `autoplay_llm_model`；
+  自动玩运行中改，下一个 LLM 回合生效，不用重开；
 - **慢速播报**：按上一句台词长度估算播完时间，至少留 2 秒再出下一步；
 - **普通节奏**：旧版 0.7 秒，适合静音或只想快进。
 
@@ -470,7 +487,7 @@ OBS 场景仍叫 `StS2`：`StS2 Game`（game_capture）+ `AI Commentary`（浏�
 ## 测试
 
 ```powershell
-python -m pytest -q tests          # 直播姬：总线/性格/语音/游戏/启动/配置/Agent/自动玩法/录像（64 项）
+python -m pytest -q tests          # 直播姬：总线/性格/语音/游戏/启动/配置/Agent/自动玩法/录像/B站（71 项）
 python tools/test_ctx_act.py       # 决策层：ctx + act（离线）
 python tools/test_streamer.py      # 桌宠渲染/透明/换行/配音
 python tools/test_overlay_playback.py

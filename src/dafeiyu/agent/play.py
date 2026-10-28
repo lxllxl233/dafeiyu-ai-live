@@ -440,9 +440,28 @@ def _choose_map(sts2, state: dict) -> str:
 
 
 # ---------------------------------------------------------------- 战斗
+def _sync_llm_planner(planner) -> None:
+    """右键/控制台改模型后，不必重开整局，下一个 LLM 回合就换。"""
+    if planner is None:
+        return
+    try:
+        from ..core.config import LiveConfig  # noqa: PLC0415
+
+        cfg = LiveConfig.load()
+        want = str(cfg.autoplay_llm_model or cfg.llm_model or "deepseek-chat")
+        if getattr(planner, "model", "") != want:
+            planner.model = want
+            planner.cfg = cfg
+            _log("llm_model_switch", model=want)
+    except Exception:
+        pass
+
+
 def _combat_llm(tools, planner, state: dict, game: str) -> str:
     """战斗回合交给 LangGraph + LLM；非战斗界面仍用本地快速处理。"""
     from .graph import run_turn  # noqa: PLC0415
+
+    _sync_llm_planner(planner)
 
     run = state.get("run") or {}
     goal = (f"第 {run.get('floor', '?')} 层，HP {run.get('current_hp', '?')}/"

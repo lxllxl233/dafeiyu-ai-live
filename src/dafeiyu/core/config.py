@@ -65,6 +65,11 @@ class LiveConfig:
     autoplay_llm_model: str = "deepseek-chat"
     # voice = 每步等语音/留出发音时间；normal = 旧版快节奏
     autoplay_pace: str = "voice"
+
+    # B 站直播间：启用后由桌宠监听礼物事件（房间号填直播间 URL 里的数字）
+    bilibili_enabled: bool = False
+    bilibili_room_id: int = 0
+    bilibili_cookie: str = ""       # 可选：需要登录态时填 SESSDATA 等；只写本机
     extra: dict = field(default_factory=dict)
 
     # ---------------------------------------------------------------- 读取
@@ -101,6 +106,9 @@ class LiveConfig:
             "DAFEIYU_AUTOPLAY_MODE": "autoplay_mode",
             "DAFEIYU_AUTOPLAY_LLM_MODEL": "autoplay_llm_model",
             "DAFEIYU_AUTOPLAY_PACE": "autoplay_pace",
+            "DAFEIYU_BILIBILI_ENABLED": "bilibili_enabled",
+            "DAFEIYU_BILIBILI_ROOM_ID": "bilibili_room_id",
+            "DAFEIYU_BILIBILI_COOKIE": "bilibili_cookie",
             "DAFEIYU_HOST": "host",
             "DAFEIYU_PORT": "port",
             "DAFEIYU_OVERLAY": "overlay_url",
@@ -151,6 +159,9 @@ class LiveConfig:
         key = out.pop("llm_api_key", "") or ""
         out["llm_api_key"] = ""
         out["llm_api_key_set"] = bool(key)
+        cookie = out.pop("bilibili_cookie", "") or ""
+        out["bilibili_cookie"] = ""
+        out["bilibili_cookie_set"] = bool(cookie)
         return out
 
     def save_patch(self, patch: dict) -> "LiveConfig":
@@ -169,6 +180,8 @@ class LiveConfig:
                 continue
             if key == "llm_api_key" and value == "***":
                 continue        # 控制台回显的占位符，不是真 Key
+            if key == "bilibili_cookie" and value == "***":
+                continue
             setattr(self, key, value)
         data = {f.name: getattr(self, f.name) for f in fields(self) if f.name != "extra"}
         data.update(self.extra)

@@ -289,6 +289,15 @@
           <div class="field"><label for="cfgKey">API Key</label>
             <input id="cfgKey" type="password" autocomplete="off" placeholder="留空 = 保持">
             <span class="hint" id="cfgKeyHint">未配置</span></div>
+          <div class="field"><label for="cfgBiliRoom">B 站直播间</label>
+            <input id="cfgBiliRoom" type="number" min="0" placeholder="直播间 URL 里的数字">
+            <span class="hint" id="cfgBiliHint">开启后桌宠监听礼物并绕圈</span></div>
+          <div class="field"><label for="cfgBiliCookie">B 站 Cookie（可选）</label>
+            <input id="cfgBiliCookie" type="password" autocomplete="off" placeholder="留空 = 匿名；只存本机">
+            <span class="hint" id="cfgBiliCookieHint">匿名不够时再填</span></div>
+          <label class="hint" style="display:flex;align-items:center;gap:7px;cursor:pointer">
+            <input id="cfgBiliEnabled" type="checkbox"> 开启 B 站礼物监听
+          </label>
           <div class="row" style="display:flex;gap:8px">
             <button class="btn" id="cfgSave">保存配置</button>
             <button class="btn ghost" id="cfgClearKey">清除 Key</button>
@@ -676,6 +685,19 @@ function renderConfig(){
   $("#cfgModels").innerHTML = (cfg.llm_models || []).map(m => `<option value="${esc(m)}"></option>`).join("");
   $("#cfgKeyHint").textContent = cfg.llm_api_key_set ? "已配置（不会回显，留空保持）" : "未配置";
   $("#cfgKey").placeholder = cfg.llm_api_key_set ? "已配置，留空保持" : "粘贴 API Key";
+  setIfIdle("#cfgBiliRoom", cfg.bilibili_room_id || "");
+  setIfIdle("#cfgBiliCookie", "");
+  if (document.activeElement !== $("#cfgBiliEnabled")) {
+    $("#cfgBiliEnabled").checked = !!cfg.bilibili_enabled;
+  }
+  $("#cfgBiliCookieHint").textContent = cfg.bilibili_cookie_set
+    ? "已保存 Cookie（不会回显，留空保持）" : "匿名不够时再填；只存本机";
+  const bili = DATA?.bilibili || {};
+  $("#cfgBiliHint").textContent = cfg.bilibili_enabled && cfg.bilibili_room_id
+    ? (bili.connected
+      ? `监听中：房间 ${cfg.bilibili_room_id} · 礼物 ${bili.gifts || 0}`
+      : (bili.error ? `连接失败：${bili.error}` : "连接中…"))
+    : "开启后桌宠监听礼物并绕圈";
 
   const games = cfg.game_options || DATA?.games || [];
   const sig = games.map(g => `${g.id}:${g.name}`).join("|");
@@ -892,9 +914,13 @@ async function saveConfig(){
     llm_provider: $("#cfgProvider").value.trim(),
     llm_base_url: $("#cfgBase").value.trim(),
     llm_model: $("#cfgModel").value.trim(),
+    bilibili_enabled: $("#cfgBiliEnabled").checked,
+    bilibili_room_id: Number($("#cfgBiliRoom").value || 0),
   };
   const key = $("#cfgKey").value.trim();
   if(key) body.llm_api_key = key;
+  const biliCookie = $("#cfgBiliCookie").value.trim();
+  if(biliCookie) body.bilibili_cookie = biliCookie;
   try{
     const r = await fetch("/api/config", {
       method:"POST", headers:{"content-type":"application/json"},
@@ -903,6 +929,7 @@ async function saveConfig(){
     const res = await r.json();
     if(!res.ok) throw new Error(res.error || "HTTP " + r.status);
     $("#cfgKey").value = "";
+    $("#cfgBiliCookie").value = "";
     const vs = res.voice_start || {};
     if(vs && !vs.online && vs.starting) toast("配置已保存；曼波引擎启动中，稍后点「试听」");
     else if(vs && !vs.ok) toast("配置已保存；" + (vs.message || "曼波启动失败"), true);

@@ -16,8 +16,14 @@
   "mambo_dir": "",
   "llm_provider": "deepseek",
   "llm_base_url": "https://api.deepseek.com/v1",
-  "llm_model": "deepseek-chat",
-  "llm_models": ["deepseek-chat", "deepseek-reasoner"],
+  "llm_model": "deepseek-flash",
+  "llm_models": ["deepseek-flash", "deepseek-chat", "deepseek-reasoner"],
   "push_overlay": true,
-  "strict_lint": false
+  "strict_lint": false,
+  "autoplay_mode": "llm",
+  "autoplay_llm_model": "deepseek-flash",
+  "autoplay_pace": "voice",
+  "bilibili_enabled": false,
+  "bilibili_room_id": 0,
+  "bilibili_cookie": ""
 }

@@ -854,6 +854,20 @@ def render_pet(text: str, mode: str, scale: float, now: float, pet) -> Image.Ima
         talk = min(1.0, max(0.0, (now - pet.talk_start_at) / span))
     bounce = abs(math.sin((now - pet.talk_start_at) * 9.0)) * 4.0 * scale if talk else 0.0
 
+    # 礼物庆祝：鱼身绕着一个小圆转两圈，同时轻微摆头；停止后自动回正。
+    celebrate_start = float(getattr(pet, "celebrate_start", 0.0) or 0.0)
+    celebrate_until = float(getattr(pet, "celebrate_until", 0.0) or 0.0)
+    celebrating = bool(celebrate_start and now < celebrate_until)
+    orbit_x = orbit_y = 0.0
+    if celebrating:
+        span = max(0.001, celebrate_until - celebrate_start)
+        progress = min(1.0, max(0.0, (now - celebrate_start) / span))
+        angle = progress * math.tau * 2.0
+        radius = (26.0 + 8.0 * math.sin(progress * math.pi)) * scale
+        orbit_x = math.cos(angle) * radius
+        orbit_y = math.sin(angle) * radius * 0.55 - radius * 0.2
+        lean += math.sin(angle * 2.0) * 9.0
+
     sx = 1.0 - 0.035 * energy
     sy = breathe + 0.06 * energy
     sprite = sprite.resize((max(1, int(sprite.width * sx)), max(1, int(sprite.height * sy))),
@@ -862,8 +876,25 @@ def render_pet(text: str, mode: str, scale: float, now: float, pet) -> Image.Ima
         sprite = sprite.rotate(lean, resample=Image.BICUBIC, expand=True)
 
     sway = 2.0 * scale * math.sin(now * 1.3)
-    x = (W - sprite.width) // 2 + int(sway)
-    y = H - sprite.height - int(10 * scale) + int(bounce)
+    x = (W - sprite.width) // 2 + int(sway + orbit_x)
+    y = H - sprite.height - int(10 * scale) + int(bounce + orbit_y)
+
+    # 金色轨迹 + 小星星，让「礼物绕圈」在桌面上真的看得见。
+    if celebrating:
+        d = ImageDraw.Draw(canvas)
+        cx = x + sprite.width // 2
+        cy = y + sprite.height // 2
+        rx = int(sprite.width * 0.58)
+        ry = int(sprite.height * 0.25)
+        d.arc((cx - rx, cy - ry, cx + rx, cy + ry), 0, 360,
+              fill=(244, 201, 104, 130), width=max(1, int(1.5 * scale)))
+        for k in range(5):
+            a = (now - celebrate_start) * 4.2 + k * math.tau / 5
+            px = cx + math.cos(a) * rx
+            py = cy + math.sin(a) * ry
+            r = max(2, int(3.2 * scale))
+            d.polygon([(px, py - r), (px + r * 0.7, py), (px, py + r),
+                       (px - r * 0.7, py)], fill=(255, 226, 145, 220))
 
     # 拖动速度线（只在侧面、真有速度时出现，很淡）
     if energy > 0.25 and facing == "side":
@@ -1649,12 +1680,13 @@ class StreamerWindow:
             print(f"停手失败：{exc}")
 
     def set_model(self, model: str) -> None:
-        """切换模型（只写本机 config.json；API Key 不进菜单）。"""
+        """切换模型：桌宠对话和自动玩同时生效（都写本机 config.json）。"""
         try:
             from ..core.config import LiveConfig
 
-            LiveConfig.load().save_patch({"llm_model": model})
-            print(f"模型：{model}")
+            cfg = LiveConfig.load()
+            cfg.save_patch({"llm_model": model, "autoplay_llm_model": model})
+            print(f"模型：{model}（自动玩也跟随）")
         except Exception as exc:
             print(f"模型配置保存失败：{exc}")
 
@@ -2113,6 +2145,8 @@ class PetWindow(StreamerWindow):
         self.pet_lean = 0.0
         self.pet_energy = 0.0
         self.bubble_until = 0.0
+        self.celebrate_start = 0.0
+        self.celebrate_until = 0.0
         self._drag_prev: tuple[int, int] | None = None
         self._drag_until = 0.0
         self._release_at = 0.0
@@ -2161,7 +2195,7 @@ class PetWindow(StreamerWindow):
         return True   # 呼吸/摇摆是常驻的
 
     def _frame_interval(self, now: float) -> float:
-        if now < self._drag_until or now < self.talk_until:
+        if now < self._drag_until or now < self.talk_until or now < self.celebrate_until:
             return 0.025
         return 0.05
 
@@ -2335,6 +2369,30 @@ class PetWindow(StreamerWindow):
             if not (self.talk_start_at and self.talk_until > time.perf_counter()):
                 self.bubble_until = time.perf_counter() + (15.0 if self.speaker.enabled else 5.0)
 
+    def celebrate_gift(self, username: str = "", gift_name: str = "礼物",
+                       count: int = 1, kind: str = "gift", coin: int = 0) -> None:
+        """收到 B 站礼物：鱼身绕两圈 + 气泡道谢（不抢当前语音）。"""
+        now = time.perf_counter()
+        self.celebrate_start = now
+        self.celebrate_until = now + 4.2
+        who = str(username or "观众")[:24]
+        gift = str(gift_name or "礼物")[:24]
+        if kind == "super_chat":
+            text = f"谢谢 {who} 的醒目留言！"
+        elif kind == "guard":
+            text = f"谢谢 {who} 上舰！"
+        else:
+            text = f"谢谢 {who} 的 {gift} ×{max(1, int(count))}！"
+        self.text = text
+        self.enter_at = now
+        self.talk_start_at = 0.0
+        self.talk_until = 0.0
+        self.bubble_until = now + 4.8
+        presence = getattr(self, "presence", None)
+        if presence is not None:
+            presence.on_line(text)
+        self.dirty = True
+
     def _run_hint(self) -> str:
         return ("桌宠已启动：左键拖（左右/上下换朝向，带倾斜和速度线）· 滚轮/右下角=缩放 · "
                 "右键菜单 · 穿透时鼠标贴鱼身 · Ctrl+Alt+D 穿透 · Ctrl+Alt+S 声音 · "
@@ -2423,6 +2481,88 @@ def ensure_server(port: int) -> bool:
             continue
     print("WARN overlay server 没起来：窗口还能显示，但收不到新弹幕")
     return False
+
+
+class GiftBridge:
+    """把 config 里的 B 站房间变成后台监听；配置改了自动重连。"""
+
+    def __init__(self, win: "PetWindow"):
+        self.win = win
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._listener = None
+        self._sig: tuple | None = None
+        self._lock = threading.Lock()
+
+    def start(self) -> None:
+        if self._thread and self._thread.is_alive():
+            return
+        self._thread = threading.Thread(target=self._loop, name="dafeiyu-gift-bridge",
+                                        daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        with self._lock:
+            listener, self._listener = self._listener, None
+        if listener is not None:
+            listener.stop()
+
+    def _write_status(self, payload: dict) -> None:
+        try:
+            paths.LOGS.mkdir(parents=True, exist_ok=True)
+            (paths.LOGS / "bilibili.json").write_text(
+                json.dumps(payload, ensure_ascii=False, indent=1), encoding="utf-8")
+        except OSError:
+            pass
+
+    def _loop(self) -> None:
+        while not self._stop.is_set():
+            try:
+                from ..core.config import LiveConfig
+                from ..live.bilibili import BilibiliGiftListener
+
+                cfg = LiveConfig.load()
+                enabled = bool(cfg.bilibili_enabled)
+                room = int(cfg.bilibili_room_id or 0)
+                cookie = str(cfg.bilibili_cookie or "")
+                sig = (enabled, room, cookie)
+                if sig != self._sig:
+                    self._sig = sig
+                    with self._lock:
+                        old, self._listener = self._listener, None
+                    if old is not None:
+                        old.stop()
+                    if enabled and room > 0:
+                        listener = BilibiliGiftListener(
+                            room, self._on_gift, cookie,
+                            logger=lambda text: print(text, flush=True))
+                        listener.start()
+                        with self._lock:
+                            self._listener = listener
+                        print(f"[bilibili] 开始监听房间 {room}", flush=True)
+                    elif enabled:
+                        print("[bilibili] 已开启，但还没有填房间号", flush=True)
+                with self._lock:
+                    listener = self._listener
+                status = listener.status() if listener is not None else {
+                    "ok": False, "connected": False, "room_id": room,
+                    "error": "" if not enabled else "未填房间号", "gifts": 0}
+                status["enabled"] = enabled
+                self._write_status(status)
+            except Exception as exc:  # noqa: BLE001
+                self._write_status({"ok": False, "connected": False,
+                                    "error": f"{type(exc).__name__}: {exc}",
+                                    "enabled": False})
+            self._stop.wait(2.0)
+
+    def _on_gift(self, event) -> None:
+        try:
+            self.win.celebrate_gift(event.username, event.gift_name, event.count,
+                                    event.kind, event.coin)
+            print(f"[bilibili] 礼物 {event.username} · {event.amount_text}", flush=True)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[bilibili] 动画失败：{type(exc).__name__}: {exc}", flush=True)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -2534,12 +2674,18 @@ def main(argv: list[str] | None = None) -> int:
     stop = threading.Event()
     th = threading.Thread(target=poll_loop, args=(win, a.port, stop, a.demo), daemon=True)
     th.start()
+    gift_bridge = None
+    if isinstance(win, PetWindow):
+        gift_bridge = GiftBridge(win)
+        gift_bridge.start()
     try:
         win.run()
     except KeyboardInterrupt:
         pass
     finally:
         stop.set()
+        if gift_bridge is not None:
+            gift_bridge.stop()
         win._save_pos()
         instance_lock.release(instance_lock.LOCK_PATH)
     return 0

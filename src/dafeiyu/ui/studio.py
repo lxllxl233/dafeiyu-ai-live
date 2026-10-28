@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import json
 import queue
 import threading
 import time
@@ -141,6 +142,7 @@ class StudioRuntime:
             "studio": {"said": said, "pushed": pushed, "last": last, "voice": voice_state},
             "agent": agent_summary(),
             "play": play_status(),
+            "bilibili": self._bilibili_status(),
             "samples": list(card.openers[:2]) + list(card.quips[:4]),
             "links": {
                 "overlay": "/",
@@ -157,6 +159,14 @@ class StudioRuntime:
             return paths.CONFIG_FILE.stat().st_mtime_ns
         except OSError:
             return 0
+
+    @staticmethod
+    def _bilibili_status() -> dict:
+        try:
+            raw = json.loads((paths.LOGS / "bilibili.json").read_text(encoding="utf-8"))
+            return raw if isinstance(raw, dict) else {}
+        except (OSError, ValueError):
+            return {}
 
     def _sync_config(self) -> None:
         """桌宠右键菜单也会写 config.json；控制台下一次轮询要跟上。"""
@@ -215,6 +225,19 @@ class StudioRuntime:
                     "autoplay_mode", "autoplay_pace", "autoplay_llm_model"):
             if body.get(key) is not None:
                 patch[key] = str(body[key]).strip()
+        if "bilibili_enabled" in body:
+            patch["bilibili_enabled"] = bool(body.get("bilibili_enabled"))
+        if "bilibili_room_id" in body:
+            try:
+                room_id = int(body.get("bilibili_room_id") or 0)
+            except (TypeError, ValueError):
+                raise ValueError("B 站房间号必须是数字")
+            if room_id < 0:
+                raise ValueError("B 站房间号不能为负")
+            patch["bilibili_room_id"] = room_id
+        cookie = str(body.get("bilibili_cookie") or "").strip()
+        if cookie not in ("", "***"):
+            patch["bilibili_cookie"] = cookie
         if patch.get("voice") not in (None, "", "mambo", "animal", "off"):
             raise ValueError("voice 只能是 mambo / animal / off")
         if patch.get("autoplay_mode") not in (None, "", "local", "llm"):
