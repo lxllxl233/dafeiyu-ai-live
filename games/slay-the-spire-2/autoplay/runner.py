@@ -494,9 +494,10 @@ def _combat(sts2, advisor, state: dict, *, mode: str = "local",
         out = _combat_llm(llm_tools, llm_planner, state, game)
         if out == "STOPPED" or _stopping():
             return "STOPPED"
-        if out.startswith(("LLM_FAILED_PLAN", "LLM_FAILED_VALIDATE", "LLM_FAILED_EXECUTE")):
-            # 规划/验算/执行失败时重新读当前局面，用本地算账兜底；执行失败
-            # 也可能是 LLM 只打了一半，此时更不能把整局停在这里。
+        if out.startswith("LLM_FAILED"):
+            # 规划/验算/执行失败、或者网络抖动直接抛异常，都重新读当前局面用
+            # 本地算账兜底。无人值守连播时，一次 Read timeout 不该让整局停掉；
+            # 兜底同样不推进的话，主循环的卡住守卫会在 3 次后收尾。
             _log("llm_fallback", error=out)
             try:  # 执行失败可能已经打了一半，必须按最新手牌重算，不能用旧 state
                 fresh = sts2.get_state()
@@ -904,6 +905,20 @@ class _StallGuard:
 
 
 # ---------------------------------------------------------------- 循环
+def _relaunch_game(game: str) -> bool:
+    """游戏进程没了/API 一直连不上时重启一次；失败只记日志，不抛。"""
+    try:
+        from dafeiyu.games.launch import launch_game  # noqa: PLC0415
+
+        out = launch_game(game)
+        _log("relaunch", ok=bool(out.get("ok")),
+             error=str(out.get("error") or "")[:120])
+        return bool(out.get("ok"))
+    except Exception as exc:  # noqa: BLE001
+        _log("relaunch_failed", error=f"{type(exc).__name__}: {exc}")
+        return False
+
+
 def _wait_game(sts2, timeout: float = 120.0) -> dict | None:
     end = time.time() + timeout
     while time.time() < end:
@@ -963,6 +978,12 @@ def _run(game: str, mode: str = "local") -> None:
             _write_status(last="已停手")
             return
         state = _wait_game(sts2, timeout=150)
+        if state is None and not _stopping():
+            # 启动慢、或上一次游戏没退干净导致等不到 API：重启一次再等，
+            # 无人值守时不能因为一次启动超时就整晚不播。
+            _log("start_timeout", relaunch=True)
+            if _relaunch_game(game):
+                state = _wait_game(sts2, timeout=180)
         if state is None:
             _write_status(running=False, error="启动超时：游戏 API 未就绪")
             return
@@ -974,6 +995,11 @@ def _run(game: str, mode: str = "local") -> None:
         guard = _StallGuard()
         unknown_key: tuple[str, str] | None = None
         unknown_hits = 0
+        # 游戏进程失联（崩溃/被关掉）时的看门狗：连续 40 次读不到状态
+        # （约 60 秒）就重启游戏；重启后能连上就继续，连不上 3 次才收尾。
+        dead_reads = 0
+        alive_steps = 0
+        restarts = 0
         while not _stopping():
             if step >= 5000:
                 _write_status(running=False, last="达到步数上限，停手")
@@ -981,9 +1007,38 @@ def _run(game: str, mode: str = "local") -> None:
             try:
                 state = sts2.get_state()
             except Exception as exc:  # noqa: BLE001
-                _write_status(last="读取游戏状态失败", error=f"{type(exc).__name__}: {exc}")
+                dead_reads += 1
+                _write_status(last="读取游戏状态失败",
+                              error=f"{type(exc).__name__}: {exc}")
+                if dead_reads >= 40:
+                    dead_reads = 0   # 重新计数，别每次循环都触发重启
+                    _log("game_lost", error=str(exc)[:160], restarts=restarts)
+                    restarts += 1
+                    if restarts > 3:
+                        _write_status(running=False, last="游戏失联，重启无效，停手",
+                                      error=f"游戏失联：{type(exc).__name__}")
+                        _log("game_lost_giveup", restarts=restarts)
+                        return
+                    _write_status(last="游戏失联，正在重启…", error=str(exc)[:120])
+                    if _relaunch_game(game):
+                        state = _wait_game(sts2, timeout=180)
+                        dead_reads = 0
+                        if state is not None:
+                            _set_from_state(state, "游戏已重启")
+                            _log("game_relaunched", restarts=restarts)
+                            continue
+                        _log("game_relaunch_timeout", restarts=restarts)
+                    time.sleep(3.0)
+                    continue
                 time.sleep(1.5)
                 continue
+            dead_reads = 0
+            alive_steps += 1
+            if alive_steps >= 600:
+                # 稳定跑了十分钟就把重启配额还回去，避免长直播里几次崩溃后
+                # 后面再崩就直接停手。
+                restarts = 0
+                alive_steps = 0
             if not state.get("screen"):
                 _write_status(last="等待游戏…")
                 time.sleep(1.0)
@@ -994,7 +1049,20 @@ def _run(game: str, mode: str = "local") -> None:
                 _write_status(last="GAME_OVER，回主菜单", route_seq="",
                               route_option=None, route_note="", route_floor=0)
                 _pace()
-                new_state = _ensure_run(sts2, state)
+                # 结算动画/过场里动作可能还没出来：连试三次（每次都重读局面），
+                # 无人值守时不能因为一次没点动就整晚停手。
+                new_state = None
+                for attempt in range(3):
+                    try:
+                        cur = state if attempt == 0 else sts2.get_state()
+                        new_state = _ensure_run(sts2, cur)
+                    except Exception as exc:  # noqa: BLE001
+                        _log("game_over_retry", attempt=attempt + 1,
+                             error=f"{type(exc).__name__}: {exc}")
+                        new_state = None
+                    if new_state:
+                        break
+                    time.sleep(1.2)
                 if new_state:
                     _set_from_state(new_state, "新一局")
                     _log("restart_run")
@@ -1017,7 +1085,14 @@ def _run(game: str, mode: str = "local") -> None:
                 _log("stop")
                 break
             step += 1
-            _set_from_state(sts2.get_state() if not last.startswith("WAIT") else state, last)
+            # 这一步之后的状态刷新也可能失败（游戏正好在切场景/退出）：
+            # 用旧 state 继续，别让一次读状态异常把整局打成 fatal。
+            try:
+                fresh = state if last.startswith("WAIT") else sts2.get_state()
+            except Exception as exc:  # noqa: BLE001
+                fresh = state
+                _log("state_refresh_failed", error=f"{type(exc).__name__}: {exc}")
+            _set_from_state(fresh, last)
             _write_status(step=step, error="" if not last.startswith("ERROR") else _state.get("error", ""))
             _log("step", step=step, last=last)
             if last.startswith("UNKNOWN") or last.endswith("unknown"):

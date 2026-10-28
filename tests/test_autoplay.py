@@ -288,6 +288,24 @@ def test_malformed_json_extra_quote_is_repaired():
     assert plan["seq"][0]["c"] == "STRIKE_IRONCLAD"
 
 
+# ---------------------------------------------------------------- LLM 失败兜底
+def test_combat_llm_transport_failure_falls_back_to_local(monkeypatch):
+    """Read timeout / 连接重置这类异常也要本地兜底，不能把整局停掉。
+
+    以前只认 LLM_FAILED_PLAN/VALIDATE/EXECUTE 三种前缀，run_turn 直接抛异常
+    返回的「LLM_FAILED ReadTimeout」会落到主循环的 LLM_FAILED 分支收尾。
+    """
+    monkeypatch.setattr(play, "_combat_llm",
+                        lambda *a, **k: "LLM_FAILED ReadTimeout: read timed out")
+    monkeypatch.setattr(play, "_combat_local",
+                        lambda sts2, advisor, st: "COMBAT 6dmg")
+    state = {"screen": "COMBAT", "available_actions": ["play_card", "end_turn"]}
+    fake = _FakeSts2([state])
+    last = play._combat(fake, None, state, mode="llm", llm_tools=object(),
+                        llm_planner=object(), game=play.GAME_ID)
+    assert last == "LLM 失败，本地兜底（COMBAT 6dmg）"
+
+
 def test_unknown_screen_does_not_guess_a_button():
     state = {"screen": "SOMETHING_NEW", "available_actions": ["proceed", "confirm"]}
     fake = _FakeSts2([state])

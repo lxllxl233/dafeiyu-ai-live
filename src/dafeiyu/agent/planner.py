@@ -15,6 +15,36 @@ import requests
 
 from ..core.config import LiveConfig
 
+# 这些状态码是「过一会儿再试可能就好」的：限流 / 网关 / 上游超时。
+_RETRY_HTTP = frozenset({408, 425, 429, 500, 502, 503, 504})
+
+
+def _merge_usage(first: dict, second: dict | None) -> dict:
+    """合并两次调用的 token；``ms`` 取两段耗时之和（重试也是真花的时间）。"""
+    second = second if isinstance(second, dict) else {}
+
+    def _i(d: dict, k: str) -> int:
+        try:
+            return int(d.get(k) or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    out = {"input": _i(first, "input") + _i(second, "input"),
+           "output": _i(first, "output") + _i(second, "output"),
+           "total": _i(first, "total") + _i(second, "total"),
+           "ms": _i(first, "ms") + _i(second, "ms")}
+    if out["total"] <= 0:
+        out["total"] = out["input"] + out["output"]
+    return out
+
+
+def _retryable(resp) -> bool:
+    try:
+        return int(resp.status_code) in _RETRY_HTTP
+    except (TypeError, ValueError, AttributeError):
+        return False
+
+
 def _extract_plan(text: str) -> dict:
     raw = (text or "").strip()
     if raw.startswith("```"):
@@ -94,30 +124,51 @@ class LLMPlanner:
         if self.thinking is not None:
             payload["thinking"] = {"type": "enabled" if self.thinking else "disabled"}
         t0 = time.perf_counter()
-        try:
-            resp = requests.post(
-                self._url(),
-                headers={"Authorization": f"Bearer {self.cfg.llm_api_key}",
-                         "Content-Type": "application/json"},
-                json=payload, timeout=self.timeout,
-            )
-            if resp.status_code >= 400 and "thinking" in payload:
-                # 换 provider / 换模型后可能不认 thinking 字段：去掉再试一次，
-                # 记住这个实例以后都不带，别让一个可选优化把规划打死。
-                payload.pop("thinking", None)
-                self.thinking = None
+        resp = None
+        attempts = 3
+        for attempt in range(1, attempts + 1):
+            try:
                 resp = requests.post(
                     self._url(),
                     headers={"Authorization": f"Bearer {self.cfg.llm_api_key}",
                              "Content-Type": "application/json"},
                     json=payload, timeout=self.timeout,
                 )
-        except Exception as exc:  # noqa: BLE001
-            return {"ok": False, "error": f"{type(exc).__name__}: {exc}", "planner": self.name}
+            except Exception as exc:  # noqa: BLE001
+                # 无人值守连播时，一次超时/连接重置不该让这一手直接判死：
+                # 退避重试两次（1.2s / 2.4s），还不行才交给调用方降级。
+                if attempt < attempts:
+                    time.sleep(1.2 * attempt)
+                    continue
+                return {"ok": False, "error": f"{type(exc).__name__}: {exc}",
+                        "planner": self.name}
+            if _retryable(resp) and attempt < attempts:
+                time.sleep(1.2 * attempt)
+                continue
+            break
+        if resp is not None and resp.status_code in (400, 422) and "thinking" in payload:
+            # 换 provider / 换模型后可能不认 thinking 字段：去掉再试一次，
+            # 记住这个实例以后都不带，别让一个可选优化把规划打死。
+            payload.pop("thinking", None)
+            self.thinking = None
+            try:
+                resp = requests.post(
+                    self._url(),
+                    headers={"Authorization": f"Bearer {self.cfg.llm_api_key}",
+                             "Content-Type": "application/json"},
+                    json=payload, timeout=self.timeout,
+                )
+            except Exception as exc:  # noqa: BLE001
+                return {"ok": False, "error": f"{type(exc).__name__}: {exc}",
+                        "planner": self.name}
+        if resp is None:
+            return {"ok": False, "error": "没有拿到响应", "planner": self.name}
         elapsed_ms = int((time.perf_counter() - t0) * 1000)
         if resp.status_code >= 400:
+            hint = "（API Key 无效或过期，去控制台「基础配置」更新）" \
+                if resp.status_code in (401, 403) else ""
             return {"ok": False, "planner": self.name,
-                    "error": f"HTTP {resp.status_code}: {resp.text[:240]}"}
+                    "error": f"HTTP {resp.status_code}: {resp.text[:240]}{hint}"}
         try:
             body = resp.json()
             choice = body["choices"][0]
@@ -138,28 +189,28 @@ class LLMPlanner:
         if not plan and reasoning:
             # 少数推理模型把最终 JSON 落在 reasoning_content 末尾；能解析就用。
             plan = _extract_plan(reasoning)
+        usage = body.get("usage") or {}
+        first = {"input": int(usage.get("prompt_tokens") or 0),
+                 "output": int(usage.get("completion_tokens") or 0),
+                 "total": int(usage.get("total_tokens") or 0),
+                 "ms": elapsed_ms}
         if not plan:
             if _retry < 1:
                 # 只重试一次：网络/格式抖动通常第二次就好；别无限烧 token。
-                return self.plan(
+                retry = self.plan(
                     context,
                     feedback=(feedback + " 上次输出不是合法 JSON。只输出一个 JSON 对象，"
                               "不要解释、不要多引号。").strip(),
                     goal=goal, _retry=_retry + 1)
+                if retry.get("ok"):
+                    # 第一次那笔 token 也是真花掉的，账单要算上。
+                    retry["usage"] = _merge_usage(first, retry.get("usage"))
+                return retry
             finish = str(choice.get("finish_reason") or "")
             return {"ok": False, "planner": self.name,
                     "error": (f"模型没有返回可解析的 JSON 计划（content {len(content)} 字，"
                               f"reasoning {len(reasoning)} 字，finish={finish or '?'}）")}
-        usage = body.get("usage") or {}
-        return {
-            "ok": True, "plan": plan, "planner": self.name,
-            "usage": {
-                "input": int(usage.get("prompt_tokens") or 0),
-                "output": int(usage.get("completion_tokens") or 0),
-                "total": int(usage.get("total_tokens") or 0),
-                "ms": elapsed_ms,
-            },
-        }
+        return {"ok": True, "plan": plan, "planner": self.name, "usage": first}
 
 
 class ProvidedPlanner:

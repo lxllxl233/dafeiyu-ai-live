@@ -40,6 +40,26 @@ def test_host_status_stop_and_tokens(tmp_path):
     assert (st["llm_calls"], st["tokens_last"]) == (2, 100)
 
 
+def test_log_compaction_keeps_every_llm_usage_row(tmp_path, monkeypatch):
+    """连播一晚上日志会很大；压缩可以丢普通行，但账单行一行都不能丢。"""
+    import dafeiyu.agent.host as hostmod
+
+    monkeypatch.setattr(hostmod, "MAX_LOG_BYTES", 2048)
+    monkeypatch.setattr(hostmod, "KEEP_ROWS", 20)
+    host = _host(tmp_path)
+    for i in range(60):
+        host.add_usage({"input": 10, "output": 5, "total": 15}, "run-a",
+                       note="战斗 f1 t1", step=i)
+        host.log("step", step=i, last="COMBAT")
+    host.log("flush", step=999)
+
+    text = host.log_path.read_text(encoding="utf-8")
+    assert text.count('"msg": "llm_usage"') == 60
+    usage = host.token_usage()
+    assert usage["total"] == 60 * 15
+    assert usage["calls"] == 60
+
+
 def test_status_ignores_stale_game_from_finished_run(tmp_path):
     """上一局（toy-duel）留下的状态文件不能盖住当前宿主的游戏。"""
     host = _host(tmp_path)

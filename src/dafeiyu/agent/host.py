@@ -14,6 +14,12 @@ from typing import Callable
 
 from .. import paths
 
+# 无人值守连播一晚上，autoplay.jsonl 会长到几十 MB；控制台每 3 秒的 token
+# 汇总也要整文件解析。超过阈值就压缩：**llm_usage 账单行一行不丢**（总额
+# 才对得上），其余旧行只留最近 KEEP_ROWS 行。
+MAX_LOG_BYTES = 6 * 1024 * 1024
+KEEP_ROWS = 1500
+
 DEFAULT_STATE: dict = {
     "running": False, "screen": "", "floor": 0, "hp": 0, "max_hp": 0,
     "step": 0, "last": "", "error": "", "started_at": 0, "updated_at": 0,
@@ -213,12 +219,39 @@ class AutoplayHost:
 
     def log(self, msg: str, **data) -> None:
         row = {"ts": time.time(), "msg": msg, **data}
+        with self.lock:
+            try:
+                paths.LOGS.mkdir(parents=True, exist_ok=True)
+                with self.log_path.open("a", encoding="utf-8") as f:
+                    f.write(json.dumps(row, ensure_ascii=False) + "\n")
+            except OSError:
+                return
+            try:
+                if self.log_path.stat().st_size > MAX_LOG_BYTES:
+                    self._compact_log()
+            except OSError:
+                pass
+
+    def _compact_log(self) -> None:
+        """按大小压缩 autoplay.jsonl；调用方必须持有 self.lock。"""
         try:
-            paths.LOGS.mkdir(parents=True, exist_ok=True)
-            with self.log_path.open("a", encoding="utf-8") as f:
-                f.write(json.dumps(row, ensure_ascii=False) + "\n")
+            lines = self.log_path.read_text(encoding="utf-8",
+                                            errors="replace").splitlines()
         except OSError:
-            pass
+            return
+        if len(lines) <= KEEP_ROWS:
+            return
+        head, tail = lines[:-KEEP_ROWS], lines[-KEEP_ROWS:]
+        keep = [ln for ln in head if '"msg": "llm_usage"' in ln] + tail
+        tmp = self.log_path.with_name(self.log_path.name + ".tmp")
+        try:
+            tmp.write_text("\n".join(keep) + "\n", encoding="utf-8")
+            os.replace(tmp, self.log_path)
+        except OSError:
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
 
     # ---------------------------------------------------------------- Token
     def add_usage(self, usage: dict | None, run_id: str = "", note: str = "",

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import threading
 import time
@@ -15,6 +16,9 @@ from pathlib import Path
 
 from ..games.catalog import env_value
 from . import replay
+
+# 无人值守连播一晚上，OBS 一局几 GB 很常见：剩太少就直接不录（不影响打游戏）。
+MIN_FREE_BYTES = 2 * 1024 ** 3
 
 _lock = threading.RLock()
 _session: dict | None = None
@@ -214,6 +218,14 @@ def start_session(game: str = "", note: str = "") -> dict:
             return {"ok": True, "already": True, "path": _session.get("path", "")}
         if not _enabled():
             return {"ok": False, "error": "自动录像已关闭"}
+        try:
+            free = shutil.disk_usage(
+                replay.RECORDINGS if replay.RECORDINGS.exists() else replay.ROOT).free
+        except OSError:
+            free = 0
+        if free and free < MIN_FREE_BYTES:
+            return {"ok": False,
+                    "error": f"录像磁盘只剩 {replay.human_size(free)}，先不录了（游戏照打）"}
         ok, why = ensure_obs(game=game)
         if not ok:
             return {"ok": False, "error": why}

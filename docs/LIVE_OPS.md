@@ -70,11 +70,25 @@ python main.py agent trace --limit 5
 LLM 模式把**所有玩家决策**交给模型：战斗走 LangGraph `run_turn` + `decision/act.py`，
 地图/事件/营火/商店/宝箱/奖励/选牌走 `decision/actions.py` 的白名单菜单
 （`runner.py::_screen_llm`），默认模型 `deepseek-chat`；主菜单/角色选择/确认框仍是本地管道。
-模型超时或输出不可执行才本地兜底并记 `llm_fallback`，执行失败才停手；
+模型超时、限流、连不上或输出不可执行都会先本地兜底并记 `llm_fallback`，不会直接停手；
 GAME_OVER 会回主菜单再开一局。默认慢速播报按台词长度等语音，至少 2 秒一步；普通节奏是旧版 0.7 秒。整局循环在
 `src/dafeiyu/agent/play.py`，状态 `logs/autoplay.json`，步骤 `logs/autoplay.jsonl`，
 停手文件 `logs/autoplay.stop`。只处理已知界面；未知界面会停下，不猜按钮；
 同一画面同一失败连续 3 次也会收手。
+
+## 无人值守一晚上
+
+- **LLM 调用**：超时 / 连接重置 / 429 / 5xx 退避重试 3 次（间隔 1.2s、2.4s）；
+  401/403 不重试，状态里直接写「API Key 无效」。3 次都失败就本地兜底，日志
+  `llm_fallback`。重试期间第一次坏 JSON 的 token 也会算进账单。
+- **游戏掉线**：连续约 60 秒读不到局面（游戏崩了 / 被关了）会自动重启游戏；
+  重启后连不上就再等，连续 3 次无效才收手；稳定跑 10 分钟后重启配额重置。
+- **日志**：`logs/autoplay.jsonl` 超过 6MB 自动压缩，`llm_usage` 账单行一行不丢，
+  控制台的总 token 数始终对得上。
+- **录像**：录像盘剩余 < 2GB 就不开录（状态 `record_error` 写原因），游戏照打。
+- **会主动收手的情况**（其余时间一直循环）：未知界面连续 3 次、同一画面同一失败
+  连续 3 次、游戏失联且 3 次重启无效、单局 5000 步上限。收手会写
+  `logs/autoplay.json` 的 `last` / `error`，控制台能看到原因。
 
 ## 直播间互动
 
