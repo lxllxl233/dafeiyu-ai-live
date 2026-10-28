@@ -143,6 +143,8 @@ def _shop_menu(state: dict) -> list[dict]:
 def _chest_menu(state: dict) -> list[dict]:
     acts = _acts(state)
     ch = state.get("chest") or {}
+    rewards = [x for x in ((state.get("reward") or {}).get("rewards") or [])
+               if isinstance(x, dict)]
     out = []
     if "open_chest" in acts:
         out.append({"a": "open_chest", "i": None, "n": "打开宝箱", "fx": ""})
@@ -152,6 +154,18 @@ def _chest_menu(state: dict) -> list[dict]:
             out.append({"a": "choose_treasure_relic", "i": i,
                         "n": _short(r.get("name") or "?", 24),
                         "fx": _short(r.get("description") or "", 70)})
+    if "claim_reward" in acts:
+        for i, r in enumerate(rewards):
+            out.append({"a": "claim_reward", "i": i,
+                        "n": _short(r.get("name") or r.get("reward_type") or "奖励", 26),
+                        "fx": _short(r.get("description") or "", 60)})
+    if "claim_all_rewards" in acts:
+        out.append({"a": "claim_all_rewards", "i": None, "n": "收下全部", "fx": ""})
+    if "collect_rewards_and_proceed" in acts:
+        out.append({"a": "collect_rewards_and_proceed", "i": None,
+                    "n": "收下全部并继续", "fx": ""})
+    if "close_chest" in acts:
+        out.append({"a": "close_chest", "i": None, "n": "关掉宝箱", "fx": ""})
     if "proceed" in acts:
         out.append({"a": "proceed", "i": None, "n": "继续", "fx": ""})
     return out
@@ -160,9 +174,17 @@ def _chest_menu(state: dict) -> list[dict]:
 def _select_menu(state: dict) -> list[dict]:
     acts = _acts(state)
     sel = state.get("selection") or {}
+    cards = [x for x in (sel.get("cards") or []) if isinstance(x, dict)]
     out = []
+    # 卡牌奖励也是 CARD_SELECTION（actions 里叫 choose_reward_card），
+    # 旧菜单只认 select_deck_card，于是 llm 模式下选牌永远走本地启发式。
+    if "choose_reward_card" in acts:
+        for i, c in enumerate(cards):
+            out.append({"a": "choose_reward_card", "i": i,
+                        "n": _short(c.get("name") or c.get("card_id") or "?", 24),
+                        "fx": _short(c.get("resolved_rules_text") or c.get("rules_text") or "", 70)})
     if "select_deck_card" in acts:
-        for i, c in enumerate([x for x in (sel.get("cards") or []) if isinstance(x, dict)]):
+        for i, c in enumerate(cards):
             if c.get("is_selected") or c.get("selected"):
                 continue
             out.append({"a": "select_deck_card", "i": i,
@@ -170,6 +192,8 @@ def _select_menu(state: dict) -> list[dict]:
                         "fx": _short(c.get("resolved_rules_text") or c.get("rules_text") or "", 70)})
     if "confirm_selection" in acts:
         out.append({"a": "confirm_selection", "i": None, "n": "确认", "fx": ""})
+    if "skip_reward_cards" in acts:
+        out.append({"a": "skip_reward_cards", "i": None, "n": "跳过选牌", "fx": ""})
     return out
 
 

@@ -45,6 +45,16 @@
   「只支持 local 模式」，用户以为 LLM 拉起的是《杀戮尖塔 2》。现在启动以
   `config.game` 为准，只有状态文件确实 `running` 时才按它停手/看状态；
   `AutoplayHost.status()` 也不再让上一局的 `game/mode/pace` 盖住当前宿主。
+- **同类卡死审计（营火 / 商店之后）**：顺着这两个直接原因把「一步没推进就整局停」
+  的同源问题一起收了：
+  ① `UNKNOWN`/`* unknown` 原来第一次出现就收尾 → 现在同画面连续 3 次才停，
+  动画/过场/兜底缺口多给两步；② `CARD wait N/N`、`CARD ui wait`、
+  `WAIT_MAIN_MENU`/`WAIT_CHARACTER_SELECT` 这类「没推进」原来不计入原地打转，
+  会一直转到 5000 步上限 → 现在计入 `_StallGuard`；③ 宝箱/选牌的白名单菜单缺
+  `claim_all_rewards`、`choose_reward_card`、`skip_reward_cards` 等真实动作，
+  llm 模式下这两屏其实一直在悄悄走本地启发式 → 菜单补齐；本地兜底也补了
+  `claim_all_rewards`/`close_chest`/`dismiss_modal`。战斗侧确认 `_combat` 早就会在
+  `LLM_FAILED_*` 时落到本地算账，不用改。
 - **商店卡死（run-0111）**：货架打开时游戏只给 `close_shop_inventory`，不给
   `leave_shop`；`decision/actions.py` 的商店菜单和 `_shop` 兜底都没列这一项，于是
   模型在买完牌后一次 `Read timed out`，兜底返回 `SHOP unknown`，整局停在商店。

@@ -380,6 +380,47 @@ def test_stall_key_groups_the_same_failure_across_screens():
     assert play._stall_key("REST", "REST choose_rest_option 0") is None
 
 
+def test_stall_key_catches_selection_and_wait_loops():
+    # 选牌选够但没确认按钮、主菜单没动作：原来不算卡住，会一直转到 5000 步
+    assert play._stall_key("CARD_SELECTION", "CARD wait 2/2") == ("CARD_SELECTION", "CARD")
+    assert play._stall_key("CARD_SELECTION", "CARD ui wait 2") == ("CARD_SELECTION", "CARD")
+    assert play._stall_key("MAIN_MENU", "WAIT_MAIN_MENU") == ("MAIN_MENU", "WAIT_MAIN_MENU")
+
+
+def test_chest_and_modal_fallbacks_use_the_real_action_names():
+    fake = _FakeSts2([])
+    chest = {"screen": "CHEST", "available_actions": ["claim_all_rewards"]}
+    assert play._chest(fake, chest) == "CHEST claim all"
+    assert fake.calls[-1] == ("claim_all_rewards", {})
+    chest2 = {"screen": "CHEST", "available_actions": ["close_chest"]}
+    assert play._chest(fake, chest2) == "CHEST close"
+    modal = {"screen": "MODAL", "available_actions": ["dismiss_modal"]}
+    assert play._modal(fake, modal) == "MODAL dismiss_modal"
+
+
+def test_unknown_screen_is_retried_before_stopping(monkeypatch):
+    """一次未知不应直接判死：连续 3 次同画面才收尾（run-0111 的教训）。"""
+    state = {"screen": "SOMETHING_NEW", "available_actions": []}
+    fake = _FakeSts2([state])
+    monkeypatch.setattr(play, "_import_tools", lambda: (fake, None))
+    monkeypatch.setattr(play, "_start_autoplay_recording", lambda *a, **k: None)
+    monkeypatch.setattr(play, "_finish_autoplay_recording", lambda *a, **k: None)
+    monkeypatch.setattr(play, "_pace", lambda *a, **k: None)
+    monkeypatch.setattr(play.time, "sleep", lambda s: None)
+    logs = []
+    monkeypatch.setattr(play, "_log", lambda msg, **kw: logs.append((msg, kw)))
+    writes = []
+    monkeypatch.setattr(play, "_write_status",
+                        lambda **kw: writes.append(dict(kw)) or dict(kw))
+
+    play._run(play.GAME_ID, mode="local")
+
+    hits = [kw.get("hits") for msg, kw in logs if msg == "unknown_screen"]
+    assert hits == [1, 2, 3]
+    assert fake.calls == []
+    assert play._thread is None
+
+
 def test_stall_guard_trips_after_limit_and_resets_on_progress():
     guard = play._StallGuard(limit=3)
     key = ("REST", "REST all disabled")

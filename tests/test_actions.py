@@ -101,6 +101,29 @@ def test_shop_menu_lists_close_shelf_while_open():
     assert "save_and_quit" not in {e["a"] for e in menu}
 
 
+def test_card_reward_menu_uses_choose_reward_card():
+    """卡牌奖励也是 CARD_SELECTION；旧菜单只认 select_deck_card，llm 模式下永远走本地。"""
+    state = {"screen": "CARD_SELECTION", "available_actions": ["choose_reward_card",
+                                                               "skip_reward_cards"],
+             "selection": {"cards": [{"name": "余烬", "rules_text": "造成18点伤害"},
+                                     {"name": "防御", "rules_text": "获得5点格挡"}]}}
+    menu = actions.available(state)
+    assert [(e["a"], e["i"]) for e in menu] == [
+        ("choose_reward_card", 0), ("choose_reward_card", 1),
+        ("skip_reward_cards", None)]
+    entry, err = actions.check({"act": "choose_reward_card", "i": 1}, state)
+    assert entry is not None and err == "" and entry["n"] == "防御"
+
+
+def test_chest_menu_can_claim_rewards_and_close():
+    state = {"screen": "CHEST",
+             "available_actions": ["claim_all_rewards", "collect_rewards_and_proceed"],
+             "chest": {"relic_options": [{"name": "燃烧之血"}]}}
+    menu = actions.available(state)
+    assert [(e["a"], e["i"]) for e in menu] == [
+        ("claim_all_rewards", None), ("collect_rewards_and_proceed", None)]
+
+
 def test_map_menu_only_lists_available_nodes():
     state = {"screen": "MAP", "available_actions": ["choose_map_node"],
              "map": {"nodes": [{"row": 0, "col": 0, "node_type": "Monster",

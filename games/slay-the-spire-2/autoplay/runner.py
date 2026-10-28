@@ -766,12 +766,20 @@ def _chest(sts2, state: dict) -> str:
     if "choose_treasure_relic" in acts:
         sts2.act("choose_treasure_relic", option_index=0)
         return "CHEST relic"
-    if "claim_reward" in acts:
+    rewards = [r for r in ((state.get("reward") or {}).get("rewards") or [])
+               if isinstance(r, dict)]
+    if "claim_reward" in acts and rewards:
         sts2.act("claim_reward", option_index=0)
         return "CHEST claim"
+    if "claim_all_rewards" in acts:
+        sts2.act("claim_all_rewards")
+        return "CHEST claim all"
     if "collect_rewards_and_proceed" in acts:
         sts2.act("collect_rewards_and_proceed")
         return "CHEST collect"
+    if "close_chest" in acts:
+        sts2.act("close_chest")
+        return "CHEST close"
     if "proceed" in acts:
         sts2.act("proceed")
         return "CHEST proceed"
@@ -780,7 +788,8 @@ def _chest(sts2, state: dict) -> str:
 
 def _modal(sts2, state: dict) -> str:
     # 主菜单的 abandon_run 会弹确认框，只认 proceed/dismiss 会停手。
-    for name in ("proceed", "confirm_modal", "dismiss", "close"):
+    for name in ("proceed", "confirm_modal", "dismiss_modal", "dismiss",
+                 "close_modal", "close"):
         if name in _acts(state):
             sts2.act(name)
             return f"MODAL {name}"
@@ -842,6 +851,10 @@ def _stall_key(screen: str, last: str) -> tuple[str, str] | None:
         return (screen, "ERROR " + _error_code(last))
     if last in _NO_PROGRESS:
         return (screen, last)
+    # 选牌界面在「已选够但没出现确认按钮」时会一直回 CARD wait N/N；
+    # 主菜单/选角色没有可用动作时回 WAIT_*。这两类原来不算卡住，会一直转到 5000 步。
+    if last.startswith(("CARD wait", "CARD ui wait", "WAIT_")):
+        return (screen, last.split(" ", 1)[0])
     return None
 
 
@@ -928,6 +941,8 @@ def _run(game: str, mode: str = "local") -> None:
         _log("start", game=game, mode=mode)
         step = 0
         guard = _StallGuard()
+        unknown_key: tuple[str, str] | None = None
+        unknown_hits = 0
         while not _stopping():
             if step >= 5000:
                 _write_status(running=False, last="达到步数上限，停手")
@@ -975,9 +990,23 @@ def _run(game: str, mode: str = "local") -> None:
             _write_status(step=step, error="" if not last.startswith("ERROR") else _state.get("error", ""))
             _log("step", step=step, last=last)
             if last.startswith("UNKNOWN") or last.endswith("unknown"):
-                _write_status(error=last, last="未知界面，正在收尾…", stopping=True)
-                _log("unknown_screen", last=last)
-                return
+                # 一次「未知」不一定真卡死：动画/过场/兜底缺口都可能只出现一步。
+                # 连续 3 次同画面才收尾，避免像 run-0111 那样因为一次缺动作就整局停掉。
+                hit = (_screen(state), last)
+                if hit == unknown_key:
+                    unknown_hits += 1
+                else:
+                    unknown_key, unknown_hits = hit, 1
+                _log("unknown_screen", last=last, hits=unknown_hits,
+                     screen=_screen(state))
+                if unknown_hits >= 3:
+                    _write_status(error=last, last="未知界面，正在收尾…", stopping=True)
+                    return
+                _write_status(error=last, last="未知界面，再看一眼…")
+                _pace()
+                time.sleep(0.8)
+                continue
+            unknown_key, unknown_hits = None, 0
             if last.startswith("LLM_FAILED"):
                 _write_status(error=last, last="LLM 执行失败，正在收尾…", stopping=True)
                 _log("llm_stop", last=last)
