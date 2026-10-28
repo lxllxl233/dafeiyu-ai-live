@@ -13,6 +13,7 @@
   "tts_prompt": "大家好，欢迎来到我的频道，今天给大家分享一个有趣的内容",
   "tts_speed": 1.0,
   "tts_timeout": 60,
+  "mambo_dir": "",
   "llm_provider": "deepseek",
   "llm_base_url": "https://api.deepseek.com/v1",
   "llm_model": "deepseek-chat",

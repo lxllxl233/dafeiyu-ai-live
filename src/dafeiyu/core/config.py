@@ -46,6 +46,8 @@ class LiveConfig:
     tts_prompt: str = "大家好，欢迎来到我的频道，今天给大家分享一个有趣的内容"
     tts_speed: float = 1.0
     tts_timeout: float = 60.0
+    # 本地曼波引擎目录；空 = 自动探测（见 voice/startup.py）
+    mambo_dir: str = ""
 
     # 模型 / API（api_key 只写本机 config.json，绝不回显、绝不入库）
     llm_provider: str = "deepseek"
@@ -98,6 +100,7 @@ class LiveConfig:
             "DAFEIYU_TTS_PROMPT": "tts_prompt",
             "DAFEIYU_TTS_SPEED": "tts_speed",
             "DAFEIYU_TTS_TIMEOUT": "tts_timeout",
+            "DAFEIYU_MAMBO_DIR": "mambo_dir",
             "DAFEIYU_LLM_PROVIDER": "llm_provider",
             "DAFEIYU_LLM_BASE_URL": "llm_base_url",
             "DAFEIYU_LLM_MODEL": "llm_model",
@@ -109,6 +112,7 @@ class LiveConfig:
             "STS2_TTS_SPEED": "tts_speed",
             "STS2_OVERLAY": "overlay_url",
             "STS2_OVERLAY_PORT": "port",
+            "STS2_MAMBO_DIR": "mambo_dir",
         }
         for env, attr in pairs.items():
             val = os.environ.get(env)

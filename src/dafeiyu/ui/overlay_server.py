@@ -714,6 +714,20 @@ class Handler(BaseHTTPRequestHandler):
                                            ensure_ascii=False).encode("utf-8"),
                            "application/json; charset=utf-8")
             return
+        if self.path == "/api/voice/start":
+            try:
+                n = int(self.headers.get("Content-Length", "0"))
+                payload = json.loads(self.rfile.read(n) or b"{}")
+                from dafeiyu.ui.studio import get_runtime
+
+                result = get_runtime().start_voice(str(payload.get("voice") or "mambo"))
+                code = 200 if result.get("ok") else 503
+                self._send(code, json.dumps(result, ensure_ascii=False).encode("utf-8"),
+                           "application/json; charset=utf-8")
+            except Exception as exc:
+                self._send(500, json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False)
+                           .encode("utf-8"), "application/json; charset=utf-8")
+            return
         if self.path == "/api/voice":
             try:
                 n = int(self.headers.get("Content-Length", "0"))
@@ -729,7 +743,22 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 from dafeiyu.ui.studio import get_runtime
 
-                result = get_runtime().audio(text, voice)
+                runtime = get_runtime()
+                # 曼波未就绪时，点「试听」等于点「启动」：先把引擎拉起来，
+                # 本次返回 202 让前端提示稍后重试，不让用户以为没反应。
+                if voice == "mambo":
+                    mambo = runtime.voice.voices.get("mambo")
+                    if mambo is not None and not mambo.available():
+                        started = runtime.start_voice("mambo")
+                        if not started.get("online"):
+                            code = 202 if started.get("starting") else 503
+                            self._send(code, json.dumps(
+                                {"ok": False, **started,
+                                 "error": started.get("message") or "曼波引擎未就绪"},
+                                ensure_ascii=False).encode("utf-8"),
+                                "application/json; charset=utf-8")
+                            return
+                result = runtime.audio(text, voice)
                 if result.ok:
                     self._send(200, result.wav, "audio/wav")
                 else:

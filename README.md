@@ -25,19 +25,19 @@ v1 把四样东西焊在一个「打杀戮尖塔」的工程里；v2 把它们�
 能做的事：
 
 - **一键启动**：双击根目录 `start.bat`，或 `python main.py`。
-- **桌宠右键菜单**：置顶 / 点击穿透 / 声音 / 录屏里隐藏 / **语音** / **模型** / **配置 API** / **打开管理端** / 示例 / 关闭。
-- **直播姬控制台** `http://127.0.0.1:8730/studio`：四层状态、决策记录、运行日志、Token 估算、发台词、lint、语音试听、语音/模型/API 配置。
+- **桌宠右键菜单**：置顶 / 点击穿透 / 声音 / 录屏里隐藏 / **语音** / **模型** / **游戏** / **配置 API** / **打开管理端** / 示例 / 关闭。
+- **直播姬控制台** `http://127.0.0.1:8730/studio`：左侧经典管理端导航（基础配置 / 游戏 / 人设配置 / 互动 / 决策与日志），含语音、模型、游戏切换、决策日志和 Token 估算。
 - **OBS 桌宠弹幕**：浏览器源 `/`，大肥鱼精灵 + 漫画气泡，带逐像素 alpha，直接进录像。
 - **桌面桌宠**：Win32 分层窗口，三视图精灵可拖；空闲气泡「吃饭ing」，决策「思考ing」，说话显示台词；默认能被录屏拍到（「录屏里隐藏」默认不勾）。
 - **性格层**：改 `persona/dafeiyu/card.json` 就能换语气/禁语/招牌；通用梗放 `persona/memes/`。
-- **语音层**：曼波语（MamboTTS）为主，引擎不在线自动回退动物语，直播不哑。
-- **游戏列表**：`games/registry.json` 注册；游戏专属代码放各自 `game-skill/`。
+- **语音层**：曼波语（MamboTTS）为主，引擎不在线时点「启动」/「试听」会自动拉起本地引擎，仍失败才回退动物语。
+- **游戏切换**：桌宠右键「游戏 ▸」或管理端「游戏」页切换，写入 `config.game`，游戏适配器和 Agent 下一轮读取。
 - **录像回放**：`recordings/<游戏>/run-NNNN/run.mp4`，一局一个录像，`meta.json` 记角色/进阶/结果。
 - **离线演示**：`python main.py demo` 不需要游戏，跑通「游戏 → 性格 → 语音 → UI」。
 
 ![直播姬控制台](docs/studio.png)
 
-*控制台：四层状态、决策/日志/Token、台词 lint、语音试听、语音/模型/API 配置（截图时游戏未开、曼波引擎未起）。*
+*控制台：左侧管理导航（基础配置 / 游戏 / 人设配置 / 互动 / 决策与日志），决策、日志、Token 和语音启动都在这里。*
 
 ![桌宠与气泡](docs/overlay_pet.png)
 
@@ -45,7 +45,7 @@ v1 把四样东西焊在一个「打杀戮尖塔」的工程里；v2 把它们�
 
 ![桌宠右键菜单](docs/pet_menu.png)
 
-*桌面桌宠：右键鱼身直接出菜单（置顶 / 点击穿透 / 声音 / 录屏里隐藏 / 语音 / 模型 / 配置 API / 打开管理端 / 示例 / 关闭）。*
+*桌面桌宠：右键鱼身直接出菜单（置顶 / 点击穿透 / 声音 / 录屏里隐藏 / 语音 / 模型 / 游戏 / 配置 API / 打开管理端 / 示例 / 关闭）。*
 
 ---
 
@@ -148,12 +148,12 @@ python main.py replay stop --result win_a10
 python main.py replay list
 ```
 
-控制台里可以直接：
+控制台左侧是经典管理端导航：**基础配置 / 游戏 / 人设配置 / 互动 / 决策与日志**。可以直接：
 
 - 写 `thought` + `meme` → 「只算 lint」看规则 / 「送到直播」推给 OBS 和桌面窗；
 - 看 **决策记录**（thought / 实际台词 / token 估算）和 **运行日志**；
-- 切 **语音**、**模型**，配置 **API 提供方 / Base URL / API Key**；
-- 点「试听」分别听动物语和曼波语；
+- 切 **语音**、**模型**、**当前游戏**，配置 **API 提供方 / Base URL / API Key**；
+- 曼波离线时点「启动」或「试听」自动拉起本地 MamboTTS；
 - 看游戏包是否在线、语料库多大、overlay 当前几路连接。
 
 离线演示的输出长这样：
@@ -175,7 +175,8 @@ python main.py replay list
 - 说话是漫画气泡：奶白底 + 金边 + 尾巴，出现淡入上浮，说完 1.6 秒淡出；
   思考中显示「思考ing」，不会一直挂着上一句。
 - 窗口空白像素不吃鼠标：只有鱼身和气泡可点，其余点击直接落到游戏里。
-- **右键鱼身**：置顶 / 点击穿透 / 声音 / 录屏里隐藏 / **语音**（曼波 / 动物语 / 静音）/ **模型** / **配置 API…** / **打开管理端** / 重新显示示例 / 关闭。
+- **右键鱼身**：置顶 / 点击穿透 / 声音 / 录屏里隐藏 / **语音**（曼波 / 动物语 / 静音）/ **模型** / **游戏** / **配置 API…** / **打开管理端** / 重新显示示例 / 关闭。
+- **语音未就绪**：点「曼波语」或语音子菜单的「启动曼波引擎」会后台拉起 `run_engine.py`；控制台语音行的「启动」/「试听」也会自动启动。
 - **三态气泡**：空闲「吃饭ing」，决策「思考ing」，说话显示这一句台词。
 - **录屏可见性**：「录屏里隐藏」默认不勾，桌宠默认会进录像；勾上后用 `WDA_EXCLUDEFROMCAPTURE` 排除。要启动即隐藏可加 `--exclude-capture`。
 - `python main.py` 默认桌宠；`--panel` 回旧版横幅，`--preview out.png` 只渲染不上屏。
@@ -271,6 +272,9 @@ python main.py voice status
 
 - 曼波引擎不在仓库里（模型太大）：起引擎后把参考音频填进 `voice/mambo/ref.json` 的 `ref_wav`，
   或设 `STS2_TTS_REF`；合成结果缓存在 `logs/tts_cache/`。
+- 引擎没起时，桌宠语音菜单 / 控制台「启动 / 试听」会调用 `src/dafeiyu/voice/startup.py`：
+  默认从 `D:\MamboTTS\app\MamboTTS-v1.2.1-full` 拉起 `run_engine.py`；目录不同就设
+  `DAFEIYU_MAMBO_DIR`（或控制台「MamboTTS 目录」）。
 - 引擎连续失败由 `tools/tts_guard.py --auto` 拉起看护；掉线时路由自动回退动物语。
 - 同一个进程里曼波串行合成（锁 + 缓存），不会并发压引擎。
 
@@ -283,6 +287,9 @@ python main.py games
 # ○ 离线  杀戮尖塔 2     slay-the-spire-2   Steam · 2868840
 # ● 在线  演示信号源     demo               内置
 ```
+
+当前游戏用桌宠右键「游戏 ▸」或管理端「游戏」页切换，写到 `config.game`；不会重启游戏或 Agent。
+游戏专属代码仍放各自 `game-skill/`，注册表在 `games/registry.json`。
 
 以《杀戮尖塔 2》为例，一个游戏包只有三份东西：
 
@@ -343,11 +350,12 @@ OBS 场景仍叫 `StS2`：`StS2 Game`（game_capture）+ `AI Commentary`（浏�
 | GET | `/` | OBS 桌宠气泡页 |
 | GET | `/studio` | 直播姬控制台 |
 | GET | `/api/studio` | 四层状态 + 最近决策/日志/Token + 游戏包 |
-| GET | `/api/config` | 语音/模型/API 配置（Key 只返回是否已配置） |
-| POST | `/api/config` | 保存语音/模型/API；Key 只写本机 `config.json` |
+| GET | `/api/config` | 语音/模型/游戏/API 配置（Key 只返回是否已配置） |
+| POST | `/api/config` | 保存语音/模型/游戏/API；Key 只写本机 `config.json` |
 | GET | `/api/games` | 游戏列表（强制刷新在线状态） |
 | POST | `/api/say` | `{thought, meme}` 或 `{text}`；`dry_run: true` 只 lint |
-| POST | `/api/voice` | `{text, voice}` 返回 WAV（控制台试听） |
+| POST | `/api/voice` | `{text, voice}` 返回 WAV；曼波离线会自动启动并返回 202 |
+| POST | `/api/voice/start` | `{voice: "mambo"}` 启动本地曼波引擎 |
 | GET | `/health` | overlay 连接数 / TTS 统计 / 播放状态 |
 | GET | `/tts?text=...` | 页面与桌面窗共用的曼波合成缓存 |
 
@@ -363,7 +371,7 @@ OBS 场景仍叫 `StS2`：`StS2 Game`（game_capture）+ `AI Commentary`（浏�
 ## 测试
 
 ```powershell
-python -m pytest -q tests          # 直播姬：总线/性格/语音/游戏/会话/配置/录像（35 项）
+python -m pytest -q tests          # 直播姬：总线/性格/语音/游戏/会话/配置/启动器/录像（37 项）
 python tools/test_ctx_act.py       # 决策层：ctx + act（离线）
 python tools/test_streamer.py      # 桌宠渲染/透明/换行/配音
 python tools/test_overlay_playback.py

@@ -121,7 +121,8 @@ class GameAdapter:
 | `/` | 桌宠气泡页（OBS 源）：大肥鱼精灵 + 漫画气泡 |
 | `/studio` | 控制台单页 |
 | `/api/studio` | 四层状态聚合 + 决策/日志/Token 遥测（人设/语音/游戏/overlay/最近台词） |
-| `/api/config` | GET 配置（Key 只报是否已配置）/ POST 保存语音、模型、API |
+| `/api/config` | GET 配置（Key 只报是否已配置）/ POST 保存语音、模型、游戏、API |
+| `/api/voice/start` | 启动本地曼波引擎（MamboTTS `run_engine.py`） |
 | `/api/say` | 拼句 + lint + `add_comment`；`dry_run` 只算 lint |
 | `/api/voice` | 同步合成返回 WAV（试听） |
 | `/events` | SSE，新台词即时到页 |
@@ -131,9 +132,10 @@ class GameAdapter:
 这样 seq 单调、页面不会把新台词当旧消息、桌面窗和 OBS 永远同一句。`add_comment()` 同时
 写决策和日志环形缓冲，并用本地字符估算 Token；API Key 只在内存/`config.json`，不进响应。
 
-桌面桌宠右键菜单与 `/api/config` 共用同一份本机配置：语音、模型、API 都写 `config.json`，
-菜单里的「打开管理端 / 配置 API」直接开 `/studio#settings`。空闲/思考气泡文案在
-`caster_state.py` 固定为「吃饭ing」「思考ing」，说话时显示台词。
+桌面桌宠右键菜单与 `/api/config` 共用同一份本机配置：语音、模型、游戏、API 都写 `config.json`，
+菜单里的「打开管理端 / 配置 API」直接开 `/studio#settings`。语音菜单在曼波离线时会调用
+`voice/startup.py` 后台拉起 `run_engine.py`；控制台 `/api/voice/start` 走同一个启动器。
+空闲/思考气泡文案在 `caster_state.py` 固定为「吃饭ing」「思考ing」，说话时显示台词。
 
 ### 录像回放
 

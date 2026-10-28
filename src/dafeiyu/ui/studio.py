@@ -30,6 +30,7 @@ class StudioRuntime:
 
     def __init__(self) -> None:
         self.cfg = LiveConfig.load()
+        self._cfg_mtime = self._config_mtime()
         self.persona = Persona.load(self.cfg.persona)
         self.voice = build_router(self.cfg)
         self.registry = GameRegistry()
@@ -145,21 +146,67 @@ class StudioRuntime:
         }
 
     # ---------------------------------------------------------------- 配置
+    @staticmethod
+    def _config_mtime() -> int:
+        try:
+            return paths.CONFIG_FILE.stat().st_mtime_ns
+        except OSError:
+            return 0
+
+    def _sync_config(self) -> None:
+        """桌宠右键菜单也会写 config.json；控制台下一次轮询要跟上。"""
+        mtime = self._config_mtime()
+        if mtime == self._cfg_mtime:
+            return
+        old = (self.cfg.voice, self.cfg.tts_url, self.cfg.mambo_dir,
+               self.cfg.tts_ref, self.cfg.tts_prompt, self.cfg.tts_speed,
+               self.cfg.tts_timeout)
+        fresh = LiveConfig.load()
+        self.cfg = fresh
+        self._cfg_mtime = mtime
+        new = (fresh.voice, fresh.tts_url, fresh.mambo_dir,
+               fresh.tts_ref, fresh.tts_prompt, fresh.tts_speed, fresh.tts_timeout)
+        if old != new:
+            self.voice = build_router(self.cfg)
+            self._voice_cache = (0.0, {})
+
     def config_payload(self) -> dict:
         """控制台配置视图：API Key 只显示是否已配置。"""
+        self._sync_config()
         out = self.cfg.to_dict()
         out["voice_options"] = ["mambo", "animal", "off"]
         out["llm_api_key_set"] = bool(self.cfg.llm_api_key)
+        out["game_options"] = [
+            {"id": g["id"], "name": g["name"], "platform": g.get("platform", ""),
+             "status": g.get("status", "")}
+            for g in self.registry.list()
+        ]
         return out
+
+    def start_voice(self, voice: str) -> dict:
+        """启动指定音色引擎；目前只有曼波需要启动。"""
+        self._sync_config()
+        voice = str(voice or "mambo").strip().lower()
+        if voice in ("animal", "animalese"):
+            return {"ok": True, "voice": "animal", "online": True, "starting": False,
+                    "message": "动物语是内置合成，不需要启动"}
+        if voice != "mambo":
+            return {"ok": False, "voice": voice, "message": "未知音色"}
+        from ..voice.startup import start_from_config
+
+        return {"voice": "mambo", **start_from_config(self.cfg)}
 
     def update_config(self, body: dict) -> dict:
         """从控制台/桌宠菜单保存语音、模型、API 配置。"""
         patch: dict = {}
-        for key in ("voice", "llm_provider", "llm_base_url", "llm_model"):
+        for key in ("voice", "game", "mambo_dir", "llm_provider", "llm_base_url", "llm_model"):
             if body.get(key) is not None:
                 patch[key] = str(body[key]).strip()
         if patch.get("voice") not in (None, "", "mambo", "animal", "off"):
             raise ValueError("voice 只能是 mambo / animal / off")
+        if "game" in patch and patch["game"]:
+            if self.registry.get(patch["game"]) is None:
+                raise ValueError("未知游戏")
         if str(body.get("llm_api_key") or "").strip() not in ("", "***"):
             patch["llm_api_key"] = str(body["llm_api_key"]).strip()
         if body.get("clear_api_key"):
@@ -174,10 +221,14 @@ class StudioRuntime:
         if not patch:
             return {"ok": True, "config": self.config_payload()}
         self.cfg.save_patch(patch)
+        self._cfg_mtime = self._config_mtime()
         if "voice" in patch:
             self.voice = build_router(self.cfg)
             self._voice_cache = (0.0, {})
-        return {"ok": True, "config": self.config_payload()}
+        voice_start = None
+        if patch.get("voice") == "mambo":
+            voice_start = self.start_voice("mambo")
+        return {"ok": True, "config": self.config_payload(), "voice_start": voice_start}
 
     # ---------------------------------------------------------------- 说话
     def say(self, body: dict, add_comment: Callable[[dict], Any], *,

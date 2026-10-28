@@ -976,6 +976,7 @@ RESIZE_GRIP = 20          # 右下角多少像素算「缩放把手」
 MOD_ALT = 0x0001
 MOD_CONTROL = 0x0002
 MF_STRING = 0x0000
+MF_GRAYED = 0x0001
 MF_CHECKED = 0x0008
 MF_POPUP = 0x0010
 MF_SEPARATOR = 0x0800
@@ -1170,6 +1171,7 @@ class StreamerWindow:
         self._hot = False
         self._menu_open = False
         self._menu_models: list[str] = []
+        self._menu_games: list[tuple[str, str]] = []
         self._transparent = bool(click_through)
         self._watch_stop = threading.Event()
         self._memdc = None
@@ -1402,7 +1404,7 @@ class StreamerWindow:
         user32.AppendMenuW(hmenu, MF_STRING | (MF_CHECKED if self.speaker.enabled else 0), 3, "声音")
         user32.AppendMenuW(hmenu, MF_STRING | (MF_CHECKED if self.exclude_capture else 0), 4, "录屏里隐藏")
 
-        # 语音 / 模型：配置写本机 config.json（.gitignore 已忽略，API Key 不在这里）
+        # 语音 / 模型 / 游戏：配置写本机 config.json（.gitignore 已忽略，API Key 不在这里）
         try:
             from ..core.config import LiveConfig
 
@@ -1419,6 +1421,8 @@ class StreamerWindow:
                 voice_menu,
                 MF_STRING | (MF_CHECKED if self.speaker.voice == key else 0),
                 10 + idx, label)
+        user32.AppendMenuW(voice_menu, MF_SEPARATOR, 0, None)
+        user32.AppendMenuW(voice_menu, MF_STRING, 13, "启动曼波引擎")
         user32.AppendMenuW(hmenu, MF_POPUP, voice_menu, "语音")
         model_menu = user32.CreatePopupMenu()
         for idx, model in enumerate(models[:12]):
@@ -1428,6 +1432,25 @@ class StreamerWindow:
                 20 + idx, model)
         user32.AppendMenuW(model_menu, MF_STRING, 40, "自定义模型…")
         user32.AppendMenuW(hmenu, MF_POPUP, model_menu, "模型")
+
+        # 游戏：从 games/registry.json 读；切换只写 config.game，由 Agent/游戏层消费。
+        games: list[tuple[str, str]] = []
+        try:
+            from ..games.registry import GameRegistry
+
+            games = [(p.info.id, p.info.name) for p in GameRegistry().packs()]
+        except Exception:
+            games = []
+        self._menu_games = games
+        game_menu = user32.CreatePopupMenu()
+        for idx, (game_id, name) in enumerate(games[:12]):
+            user32.AppendMenuW(
+                game_menu,
+                MF_STRING | (MF_CHECKED if cfg and cfg.game == game_id else 0),
+                50 + idx, name)
+        if not games:
+            user32.AppendMenuW(game_menu, MF_STRING | MF_GRAYED, 0, "没有注册游戏")
+        user32.AppendMenuW(hmenu, MF_POPUP, game_menu, "游戏")
         user32.AppendMenuW(hmenu, MF_SEPARATOR, 0, None)
         user32.AppendMenuW(hmenu, MF_STRING, 41, "配置 API…")
         user32.AppendMenuW(hmenu, MF_STRING, 42, "打开管理端")
@@ -1445,8 +1468,12 @@ class StreamerWindow:
         self.tick_interaction()
         if 10 <= cmd < 10 + len(_VOICE_CHOICES):
             self.set_voice(_VOICE_CHOICES[cmd - 10][0])
+        elif cmd == 13:
+            self.start_mambo()
         elif 20 <= cmd < 20 + len(self._menu_models):
             self.set_model(self._menu_models[cmd - 20])
+        elif 50 <= cmd < 50 + len(self._menu_games):
+            self.set_game(self._menu_games[cmd - 50][0])
         elif cmd == 40:
             self.open_studio("#settings")
         elif cmd == 41:
@@ -1470,16 +1497,47 @@ class StreamerWindow:
             self.close()
 
     def set_voice(self, voice: str) -> None:
-        """切换桌宠发声并持久化到本机 config.json。"""
+        """切换桌宠发声并持久化；曼波未就绪时顺手拉起引擎。"""
         self.speaker.voice = voice
         self.speaker.enabled = voice != "off"
         try:
             from ..core.config import LiveConfig
 
-            LiveConfig.load().save_patch({"voice": "animal" if voice == "animalese" else voice})
+            cfg = LiveConfig.load()
+            cfg.save_patch({"voice": "animal" if voice == "animalese" else voice})
+            if voice == "mambo":
+                self.start_mambo(cfg)
         except Exception as exc:
             print(f"语音配置保存失败：{exc}")
         print(f"语音：{dict(_VOICE_CHOICES).get(voice, voice)}")
+
+    def start_mambo(self, cfg=None) -> None:
+        """点击「曼波语 / 启动曼波引擎」时后台拉起 MamboTTS，不阻塞桌宠。"""
+        threading.Thread(target=self._start_mambo_bg, args=(cfg,), daemon=True).start()
+
+    def _start_mambo_bg(self, cfg=None) -> None:
+        try:
+            from ..core.config import LiveConfig
+            from ..voice.startup import start_from_config
+
+            result = start_from_config(cfg or LiveConfig.load())
+            print("曼波：" + str(result.get("message") or result))
+        except Exception as exc:
+            print(f"曼波引擎启动失败：{exc}")
+
+    def set_game(self, game_id: str) -> None:
+        """切换当前游戏（写 config.game；游戏适配器/Agent 下一轮读取）。"""
+        try:
+            from ..core.config import LiveConfig
+
+            cfg = LiveConfig.load()
+            if cfg.game == game_id:
+                return
+            cfg.save_patch({"game": game_id})
+            name = dict(self._menu_games).get(game_id, game_id)
+            print(f"游戏：{name}（{game_id}）")
+        except Exception as exc:
+            print(f"游戏配置保存失败：{exc}")
 
     def set_model(self, model: str) -> None:
         """切换模型（只写本机 config.json；API Key 不进菜单）。"""
