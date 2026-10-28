@@ -545,13 +545,14 @@ def _screen_llm(sts2, planner, state: dict, screen: str) -> str:
         if not res.get("ok"):
             _log("screen_plan_failed", screen=screen, attempt=attempt,
                  error=str(res.get("error") or "")[:180])
-            if attempt == 1:
-                # 超时/网络抖动很常见（run-0111 的商店就死在一次 Read timeout 上），
-                # 先重试一次再落本地兜底；不重试会把这一屏直接判死。
+            if attempt == 1 and not _transient_llm_error(res.get("error")):
+                # 只有「模型回了但不可执行」才值得再问一次；超时/限流/5xx 在
+                # LLMPlanner 里已经重试过 3 次了，再叠一层只会把这一步拖到几分钟。
                 time.sleep(1.0)
                 feedback = "上一次请求超时或失败，没有收到回复。只输出一个 JSON 对象。"
                 continue
-            _log("llm_fallback", screen=screen, error=feedback[:180])
+            _log("llm_fallback", screen=screen,
+                 error=str(res.get("error") or feedback)[:180])
             return ""
         plan = res.get("plan") if isinstance(res.get("plan"), dict) else {}
         entry, err = actions.check(plan, state)
@@ -866,6 +867,14 @@ def _error_code(last: str) -> str:
     """从 ``xxx failed: invalid_target 说明`` 里取错误码，判断是不是同一种失败。"""
     m = re.search(r"failed:\s*(\S+)", last or "")
     return m.group(1) if m else "unknown"
+
+
+def _transient_llm_error(err) -> bool:
+    """LLMPlanner 已经在内部退避重试过了：这些错误再问一遍只会更慢。"""
+    text = str(err or "")
+    return text.startswith(("HTTP 429", "HTTP 5", "ReadTimeout", "ConnectTimeout",
+                            "ConnectionError", "ConnectError", "Timeout",
+                            "ConnectionResetError", "RemoteDisconnected"))
 
 
 def _stall_key(screen: str, last: str) -> tuple[str, str] | None:

@@ -306,6 +306,40 @@ def test_combat_llm_transport_failure_falls_back_to_local(monkeypatch):
     assert last == "LLM 失败，本地兜底（COMBAT 6dmg）"
 
 
+def test_screen_llm_transient_error_does_not_double_retry():
+    """planner 内部已重试 3 次；再过一层就是 6 次请求，一步能拖几分钟。"""
+    calls = []
+
+    class _Planner:
+        def plan(self, brief, feedback="", goal=""):
+            calls.append(feedback)
+            return {"ok": False, "error": "ReadTimeout: read timed out"}
+
+    state = {"screen": "MAP", "available_actions": ["choose_map_node"],
+             "map": {"nodes": [{"node_type": "Monster", "row": 0, "col": 0,
+                                "is_available": True}]}}
+    fake = _FakeSts2([state])
+    assert play._screen_llm(fake, _Planner(), state, "MAP") == ""
+    assert len(calls) == 1
+
+
+def test_screen_llm_invalid_plan_is_asked_again():
+    calls = []
+
+    class _Planner:
+        def plan(self, brief, feedback="", goal=""):
+            calls.append(feedback)
+            return {"ok": True, "plan": {"act": "choose_map_node", "i": 9}}
+
+    state = {"screen": "MAP", "available_actions": ["choose_map_node"],
+             "map": {"nodes": [{"node_type": "Monster", "row": 0, "col": 0,
+                                "is_available": True}]}}
+    fake = _FakeSts2([state])
+    assert play._screen_llm(fake, _Planner(), state, "MAP") == ""
+    assert len(calls) == 2
+    assert "不能执行" in calls[1]
+
+
 def test_unknown_screen_does_not_guess_a_button():
     state = {"screen": "SOMETHING_NEW", "available_actions": ["proceed", "confirm"]}
     fake = _FakeSts2([state])
