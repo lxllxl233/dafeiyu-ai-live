@@ -75,8 +75,9 @@ dafeiyu-ai-live/
 │   │   ├── caster_state.py      # 主播状态机
 │   │   ├── instance_lock.py     # 单实例 / 重启接力
 │   │   └── assets/pet/          # 正面/侧面/背面精灵（MIT，见 SOURCE.md）
-│   ├── recording/               # 录制层：OBS 控制 + 录像回放目录
+│   ├── recording/               # 录制层：OBS 控制 + 自动玩会话 + 录像回放目录
 │   │   ├── obs.py
+│   │   ├── auto.py
 │   │   └── replay.py
 │   ├── games/                   # 游戏无关协议 + 注册表 + 演示源
 │   │   ├── base.py
