@@ -37,6 +37,7 @@ class _FakeSts2:
         self.states = list(states)
         self.calls = []
         self.said = []
+        self.order = []
         self.PLAN_PATH = None
         self.i = 0
 
@@ -46,6 +47,7 @@ class _FakeSts2:
 
     def overlay_say(self, tag, thought, meme, state=None, force=False):
         self.said.append((tag, thought, meme))
+        self.order.append(("say", tag))
         return {}
 
     def get_state(self):
@@ -53,6 +55,7 @@ class _FakeSts2:
 
     def act(self, action, **params):
         self.calls.append((action, params))
+        self.order.append(("act", action))
         self.i += 1
         return {}
 
@@ -502,6 +505,8 @@ def test_llm_mode_asks_the_model_for_event_choice(monkeypatch):
     assert seen and "石板" in seen[-1]
     # 只 remember 不说话是旧 bug：必须真的推给 overlay（桌面 OBS 才有字幕/配音）。
     assert fake.said and fake.said[-1][0] == "事件" and "石板" in fake.said[-1][1]
+    # 先说话再点：观众先听到理由，再看到画面变化
+    assert [x[0] for x in fake.order] == ["say", "act"]
     ctx = planner.calls[0]
     assert ctx["goal"].startswith("第 6 层")
     assert [a["i"] for a in ctx["context"]["acts"]] == [0, 1]

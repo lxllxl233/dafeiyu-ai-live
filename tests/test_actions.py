@@ -5,6 +5,22 @@ from dafeiyu.games.registry import GameRegistry
 
 actions = GameRegistry().load_game_module("slay-the-spire-2", "decision.actions")
 assert actions is not None
+act = GameRegistry().load_game_module("slay-the-spire-2", "decision.act")
+assert act is not None
+
+
+def test_potion_written_in_fx_is_moved_into_seq():
+    """旧提示词让模型写 fx.p；执行器只认 seq 里的 {"p": 槽位}，没这一步就一滴不喝。"""
+    seq, _lines, fx, _auto = act.normalize(
+        {"seq": [{"c": "BASH", "t": 0}, {"end": 1}], "fx": {"p": 1, "hp": 40}})
+    assert seq[0] == {"p": 1, "t": None}
+    assert seq[1]["c"] == "BASH"
+    assert "p" not in fx and fx["hp"] == 40
+
+
+def test_potion_in_seq_is_not_duplicated_by_fx():
+    seq, *_ = act.normalize({"seq": [{"p": 0, "t": 0}, {"end": 1}], "fx": {"p": 0}})
+    assert seq == [{"p": 0, "t": 0}, {"end": 1}]
 
 
 class _FakeSts2:

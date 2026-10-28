@@ -87,6 +87,20 @@ def normalize(spec: dict) -> tuple[list, list, dict, dict]:
             lines.append({"t": str(x.get("t") or x.get("thought") or ""),
                           "m": str(x.get("m") or x.get("meme") or "")})
     fx = spec.get("fx") or {}
+    # 旧提示词写过「药水写 fx.p」，但执行器只认 seq 里的 {"p": 槽位}；fx 只验
+    # e/hp/take。为兼容旧习惯，fx 里带 p/potion 时把它挪成一步药水放到最前面，
+    # 免得模型以为喝了药水、实际一滴没喝（run-0112 的「不会用药水」）。
+    if isinstance(fx, dict):
+        fx = dict(fx)
+        used = any(isinstance(s, dict) and "p" in s for s in seq)
+        for key in ("p", "potion"):
+            if not used and key in fx:
+                try:
+                    slot = sts2._int(fx.pop(key), 0)
+                except (TypeError, ValueError):
+                    slot = 0
+                seq.insert(0, {"p": slot, "t": fx.pop("t", None)})
+                break
     auto = spec.get("auto") or {}
     return seq, lines, fx, auto
 

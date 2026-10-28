@@ -10,6 +10,15 @@
   `autoplay_llm_thinking`（默认 `off`）→ 请求带 `thinking:{"type":"disabled"}`，
   同一局面 1.7s 出计划；`on` 恢复思维链，`auto` 只让战斗跟模型默认。provider
   不认这个字段时自动去掉重试。`llm_usage` 行和 Token 面板每一步都多一个耗时 `ms`。
+- **界面决策改为「先说话再操作」**：`_say_screen` 从 `actions.execute` 之后移到之前，
+  和战斗回合一致（`cmd_batch` 本来就是先推字幕再出牌）；观众先听到理由再看到画面变化。
+
+### Fixed
+
+- **不会用药水（run-0112）**：`SYSTEM_PROMPT` 把药水写成「fx 的 p」，但执行器
+  只认 `seq` 里的 `{"p": 槽位, "t": 目标}`，`fx` 只校验 e/hp/take——模型以为喝了，
+  实际一滴没喝。提示词改成 seq 写法并注明 fx 限制，决策手册同步；
+  `act.normalize` 兼容旧习惯：`fx` 里带 `p/potion` 时自动挪成一步药水放到最前面。
 
 ### Added
 

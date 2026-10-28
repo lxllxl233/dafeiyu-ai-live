@@ -100,8 +100,10 @@ def test_actions_whitelist_has_no_dangerous_actions():
         assert not re.search(rf'"a":\s*"{bad}"', body), f"{bad} 不该出现在菜单里"
 
 
-def test_prompts_do_not_instruct_potion_names_as_cards():
-    """老提示词的坑：把药水写进 seq。新提示词要求药水走 fx。"""
+def test_prompts_put_potions_in_seq_not_fx():
+    """药水必须写进 seq 的 {"p": 槽位}；旧提示词写成 fx.p，执行器不认、一滴不喝。"""
     text = (ROOT / "games/slay-the-spire-2/decision/prompts.py").read_text(
         encoding="utf-8")
-    assert "药水写 fx" in text or "fx 的 p" in text
+    assert '{"p": 槽位' in text
+    assert "fx 只写 e/hp/take" in text
+    assert "fx 的 p" not in text

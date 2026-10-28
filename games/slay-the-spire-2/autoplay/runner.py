@@ -562,15 +562,15 @@ def _screen_llm(sts2, planner, state: dict, screen: str) -> str:
         text = (" ".join(str(x) for x in say if str(x).strip())
                 if isinstance(say, list) else str(say or ""))
         _add_llm_usage(res.get("usage"), note=f"{screen_label(screen)} {actions.label(entry)}")
+        if text:
+            # 先说话再点：观众先听到「为什么」，再看到画面变化（和战斗回合一致）。
+            _say_screen(sts2, text, screen, state)
         try:
             actions.execute(sts2, entry)
         except Exception as exc:  # noqa: BLE001
             _log("screen_execute_failed", screen=screen, act=actions.label(entry),
                  error=f"{type(exc).__name__}: {exc}")
             return ""
-        if text:
-            # 点完再播，动作被游戏拒掉时不会说了半句没发生的事。
-            _say_screen(sts2, text, screen, state)
         _log("llm_screen", screen=screen, act=entry["a"], i=entry.get("i"),
              tokens=res.get("usage"), say=text[:120])
         return f"{screen} {actions.label(entry)}"
