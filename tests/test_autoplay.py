@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import time
 
 from dafeiyu.agent import play
@@ -182,6 +183,30 @@ def test_stop_from_other_process_keeps_remote_running(monkeypatch, tmp_path):
     assert "正在停手" in out["message"]
     assert any(w.get("stopping") is True for w in writes)
     assert not any(w.get("running") is False for w in writes)
+
+
+def test_stop_in_same_process_finalizes_recording(monkeypatch, tmp_path):
+    monkeypatch.setattr(play, "STOP_PATH", tmp_path / "autoplay.stop")
+    monkeypatch.setattr(play, "_thread", None)
+    monkeypatch.setattr(play, "_pid_alive", lambda pid: True)
+    monkeypatch.setattr(play, "status", lambda: {
+        "running": True, "pid": os.getpid(), "mode": "llm", "last": "LLM 思考…"})
+    finalized = []
+    monkeypatch.setattr(play, "_finish_autoplay_recording",
+                        lambda result: finalized.append(result) or {"ok": True})
+    writes = []
+
+    def fake_write(**kw):
+        writes.append(kw)
+        return {}
+
+    monkeypatch.setattr(play, "_write_status", fake_write)
+    play._stop.clear()
+    out = play.stop_autoplay()
+    assert finalized == ["stopped"]
+    assert out["message"] == "已停手"
+    assert any(w.get("running") is False and w.get("stopping") is False
+               for w in writes)
 
 
 def test_rest_prefers_heal_when_low():

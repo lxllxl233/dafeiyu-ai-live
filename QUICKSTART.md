@@ -103,9 +103,10 @@ python main.py play --stop       # 另一个进程里停手
 右键「让她玩」二级菜单、管理端「Agent 流程」和 CLI 是同一套控制。默认 **本地算账 +
 慢速播报**：每一步至少留 2 秒，台词更长时会等估算播完再动。LLM 模式只把战斗回合交给
 LangGraph，地图/奖励/事件仍本地处理。自动玩默认自动开 OBS 录像（OBS 没开会拉起），
-停止时收进 `recordings/<游戏>/run-NNNN/run.mp4`；控制台「Agent 流程」会显示本轮实际
-Token（输入/输出/合计）与 LLM 回合数。自动玩法只处理已知界面，未知界面会停下并写
-`logs/autoplay.json`，不猜按钮。
+停止时先把录像收进 `recordings/<游戏>/run-NNNN/run.mp4`，并在同目录写
+`events.jsonl` / `chapters.md` / `timeline.json`（画面、楼层、战斗、台词和对应
+时间段，方便混剪）；控制台「Agent 流程」会显示本轮实际 Token（输入/输出/合计）
+与 LLM 回合数。自动玩法只处理已知界面，未知界面会停下并写 `logs/autoplay.json`，不猜按钮。
 python main.py games        # 应该看到「杀戮尖塔 2 ● 在线」
 ```
 
@@ -133,7 +134,8 @@ python main.py replay stop --result win_a10
 python tools/sts2.py report
 ```
 
-录像默认一局一个 `run.mp4`，索引在 `recordings/INDEX.md`；旧的散放录像已迁进
+录像默认一局一个 `run.mp4`，索引在 `recordings/INDEX.md`；自动玩还会在同目录写
+`events.jsonl` / `chapters.md` / `timeline.json` 时间轴。旧的散放录像已迁进
 `recordings/slay-the-spire-2/run-NNNN/`，用法见 [`recordings/README.md`](recordings/README.md)。
 
 ## 4. 常见问题

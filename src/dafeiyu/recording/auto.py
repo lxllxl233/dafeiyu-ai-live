@@ -6,17 +6,24 @@
 """
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import threading
 import time
 from pathlib import Path
 
-from .. import paths
 from . import replay
 
 _lock = threading.RLock()
 _session: dict | None = None
+
+# 这些事件会写进 chapters.md；其余事件仍进 events.jsonl，供剪辑时找点。
+CHAPTER_KINDS = {
+    "run_start", "new_run", "combat_start", "combat_end", "boss",
+    "reward", "card", "map", "event", "rest", "shop", "chest",
+    "game_over", "floor", "speech", "stop",
+}
 
 
 def _enabled() -> bool:
@@ -104,6 +111,99 @@ def _prepare_scene(game: str) -> tuple[bool, str]:
         return False, f"{type(exc).__name__}: {exc}"
 
 
+def _events_path(run_dir: Path) -> Path:
+    return run_dir / "events.jsonl"
+
+
+def record_event(kind: str, label: str = "", **data) -> dict | None:
+    """写一条带视频时间戳的事件，停止后汇总成 chapters.md。"""
+    with _lock:
+        sess = _session
+        if not sess or not sess.get("active"):
+            return None
+        run_dir = Path(str(sess.get("path") or ""))
+        if not run_dir.is_dir():
+            return None
+        now = time.time()
+        offset = max(0.0, now - float(sess.get("record_started_at") or now))
+        row = {"t": round(now, 3), "offset": round(offset, 2),
+               "kind": str(kind)[:32], "label": str(label or "")[:160]}
+        for key, value in data.items():
+            if value is None or key in row:
+                continue
+            if isinstance(value, (str, int, float, bool)):
+                row[str(key)[:32]] = value if not isinstance(value, str) else value[:240]
+        try:
+            with _events_path(run_dir).open("a", encoding="utf-8") as f:
+                f.write(json.dumps(row, ensure_ascii=False) + "\n")
+        except OSError:
+            return None
+        sess["events"] = int(sess.get("events") or 0) + 1
+        return row
+
+
+def _fmt_offset(seconds: float) -> str:
+    seconds = max(0, int(seconds))
+    return f"{seconds // 3600:02d}:{(seconds % 3600) // 60:02d}:{seconds % 60:02d}"
+
+
+def write_timeline(run_dir: Path, video: Path | None = None) -> dict:
+    """把 events.jsonl 汇总成时间轴和章节；不删原始事件。"""
+    events = []
+    try:
+        for line in _events_path(run_dir).read_text(encoding="utf-8").splitlines():
+            try:
+                row = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(row, dict):
+                events.append(row)
+    except OSError:
+        pass
+    chapters = [e for e in events if str(e.get("kind") or "") in CHAPTER_KINDS]
+    last_t = max([float(e.get("offset") or 0) for e in events] or [0.0])
+    for idx, e in enumerate(chapters):
+        start = float(e.get("offset") or 0)
+        end = (float(chapters[idx + 1].get("offset") or 0)
+               if idx + 1 < len(chapters) else last_t)
+        e["start"], e["end"] = round(start, 2), round(max(start, end), 2)
+    lines = [
+        f"# {run_dir.name} 时间轴",
+        "",
+        f"- 视频：`{video.name if video else 'run.mp4'}`",
+        f"- 事件数：{len(events)}",
+        f"- 章节数：{len(chapters)}",
+        f"- 最后事件：{_fmt_offset(last_t)}",
+        "",
+        "| 开始 | 结束 | 事件 | 内容 |",
+        "|---|---|---|---|",
+    ]
+    for e in chapters:
+        detail = []
+        for key in ("label", "floor", "screen", "hp", "max_hp", "run_id",
+                    "text", "tokens", "note"):
+            value = e.get(key)
+            if value not in (None, ""):
+                detail.append(f"{key}={value}")
+        lines.append(
+            f"| {_fmt_offset(float(e.get('start') or 0))} | "
+            f"{_fmt_offset(float(e.get('end') or 0))} | {e.get('kind', '')} | "
+            f"{' · '.join(detail)[:500] or '—'} |"
+        )
+    (run_dir / "chapters.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    timeline = {
+        "run": run_dir.name,
+        "video": video.name if video else "run.mp4",
+        "events": events,
+        "chapters": chapters,
+    }
+    (run_dir / "timeline.json").write_text(
+        json.dumps(timeline, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+    replay.write_meta(run_dir, timeline="timeline.json", chapters="chapters.md",
+                      event_count=len(events), chapter_count=len(chapters))
+    return {"events": len(events), "chapters": len(chapters)}
+
+
 def start_session(game: str = "slay-the-spire-2", note: str = "") -> dict:
     """开一局自动玩录像；失败返回 ok=False，不阻断自动玩。"""
     global _session
@@ -130,10 +230,12 @@ def start_session(game: str = "slay-the-spire-2", note: str = "") -> dict:
             return {"ok": False, "error": f"OBS 开录失败：{type(exc).__name__}: {exc}",
                     "path": str(run_dir)}
         _session = {"active": True, "path": str(run_dir), "started_at": time.time(),
-                    "game": game}
+                    "record_started_at": time.time(), "game": game, "events": 0}
         replay.write_meta(run_dir, status="recording", source="autoplay",
                           scene_error="" if scene_ok else scene_why,
                           started_at=time.strftime("%Y-%m-%dT%H:%M:%S"))
+        record_event("run_start", note or "自动玩", game=game,
+                     note=note or "自动玩")
         return {"ok": True, "path": str(run_dir),
                 "warning": "" if scene_ok else f"场景源未完全就绪：{scene_why}"}
 
@@ -143,6 +245,8 @@ def stop_session(result: str = "") -> dict:
     global _session
     with _lock:
         sess = _session
+        if sess and sess.get("active"):
+            record_event("stop", result=result or "stopped")
         _session = None
     if not sess or not sess.get("active"):
         return {"ok": True, "active": False}
@@ -165,11 +269,15 @@ def stop_session(result: str = "") -> dict:
     except Exception:
         pass
     try:
+        timeline = write_timeline(run_dir, dst)
+    except Exception as exc:  # noqa: BLE001
+        timeline = {"error": f"{type(exc).__name__}: {exc}"}
+    try:
         size = dst.stat().st_size
     except OSError:
         size = 0
     return {"ok": True, "active": False, "path": str(dst),
-            "size": replay.human_size(size)}
+            "size": replay.human_size(size), "timeline": timeline}
 
 
 def status() -> dict:
@@ -180,4 +288,5 @@ def status() -> dict:
                 "started_at": _session.get("started_at", 0)}
 
 
-__all__ = ["ensure_obs", "start_session", "stop_session", "status"]
+__all__ = ["ensure_obs", "record_event", "start_session", "stop_session", "status",
+           "write_timeline"]

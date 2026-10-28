@@ -35,7 +35,7 @@ v1 把四样东西焊在一个「打杀戮尖塔」的工程里；v2 把它们�
 - **游戏启动**：右键「只启动游戏」、管理端按钮或 `python main.py game launch`，按 `game.json` 的 `launch` 拉起 Steam / exe。
 - **让她玩**：右键「让她玩」二级菜单选**本地算账 / LLM 规划**；默认慢速播报，等语音再出下一步。战斗之外（奖励/地图/营火/事件）仍走本地，控制台也能切。自动玩默认自动开 OBS 录像，控制台「Agent 流程」能看到本轮累计 Token 和 LLM 回合数。当前只支持杀戮尖塔 2。
 - **Agent 流程**：LangGraph 把一回合拆成观察 → 规划 → 验算 → 执行 → 反思，节点耗时/token/重试写本机轨迹，控制台「Agent 流程」可看。
-- **录像回放**：自动玩开始即开录（OBS 没开会自动拉起），停止时收成 `recordings/<游戏>/run-NNNN/run.mp4`；`meta.json` 记角色/进阶/结果。
+- **录像回放**：自动玩开始即开录（OBS 没开会自动拉起），停止时收成 `recordings/<游戏>/run-NNNN/run.mp4`；同目录 `events.jsonl` / `chapters.md` / `timeline.json` 记录画面、楼层、战斗、台词和对应时间段，方便出混剪；`meta.json` 记角色/进阶/结果。
 - **离线演示**：`python main.py demo` 不需要游戏，跑通「游戏 → 性格 → 语音 → UI」。
 
 ![直播姬控制台](docs/studio.png)
@@ -209,11 +209,15 @@ recordings/
 └── slay-the-spire-2/
     └── run-0094/
         ├── run.mp4
-        └── meta.json
+        ├── meta.json
+        ├── events.jsonl       # 视频秒数 + 画面/楼层/战斗/台词事件
+        ├── chapters.md        # 开始/结束时间段，直接照着剪
+        └── timeline.json      # 机器可读的完整时间轴
 ```
 
 - `python main.py replay start` 建当前局、把 OBS 录像目录指过去并开录；
 - `python main.py replay stop --result ...` 停录、收成该局唯一的 `run.mp4`、写 meta 和索引；
+- 自动玩的 `events.jsonl` / `chapters.md` / `timeline.json` 与 `run.mp4` 同目录，停止时一起收尾；
 - 一局一个视频，重复录制默认不覆盖（`--force` 才换）；多出来的段进 `_extra/`；
 - 视频不入 Git，只提交 `README.md` 和 `INDEX.md`；旧的散放 mp4 已迁进分游戏目录。
 
@@ -465,7 +469,7 @@ OBS 场景仍叫 `StS2`：`StS2 Game`（game_capture）+ `AI Commentary`（浏�
 ## 测试
 
 ```powershell
-python -m pytest -q tests          # 直播姬：总线/性格/语音/游戏/启动/配置/Agent/自动玩法/录像（62 项）
+python -m pytest -q tests          # 直播姬：总线/性格/语音/游戏/启动/配置/Agent/自动玩法/录像（64 项）
 python tools/test_ctx_act.py       # 决策层：ctx + act（离线）
 python tools/test_streamer.py      # 桌宠渲染/透明/换行/配音
 python tools/test_overlay_playback.py

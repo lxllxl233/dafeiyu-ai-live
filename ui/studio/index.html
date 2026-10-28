@@ -799,14 +799,14 @@ function renderPlay(){
   $("#playCalls").textContent = Number(p.llm_calls || 0) > 0
     ? `${p.llm_calls} 次` : "—";
   if (p.recording) {
-    $("#playRecord").textContent = "录像中";
-    $("#playRecord").title = p.record_path || "";
+    $("#playRecord").textContent = "录像中 · 记事件";
+    $("#playRecord").title = `${p.record_path || ""}\nevents.jsonl / chapters.md`;
   } else if (p.record_error) {
     $("#playRecord").textContent = `未录像：${p.record_error}`;
     $("#playRecord").title = p.record_error;
   } else if (p.record_path) {
-    $("#playRecord").textContent = "已保存";
-    $("#playRecord").title = p.record_path;
+    $("#playRecord").textContent = "已收尾 · 时间轴";
+    $("#playRecord").title = `${p.record_path}\nchapters.md / timeline.json`;
   } else {
     $("#playRecord").textContent = "未开录";
     $("#playRecord").title = "";
@@ -814,7 +814,7 @@ function renderPlay(){
   $("#playStart").disabled = running || stopping;
   $("#playStop").disabled = !(running || stopping);
   $("#playHint").textContent = stopping
-    ? "正在停手：不再出牌；如果卡在 LLM 回合，最多等它这次请求返回。"
+    ? "正在收尾：先停录像并写 chapters.md / timeline.json，再退出。"
     : (running
       ? "运行中切换玩法需先「停手」；播报节奏从下一步生效。"
       : "玩法/节奏会写本机 config.json；LLM 模式只分析战斗回合，其他界面仍走本地。");

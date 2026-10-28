@@ -9,10 +9,26 @@ recordings/
 ├── slay-the-spire-2/          ← 游戏 id，和 games/registry.json 对齐
 │   ├── run-0094/
 │   │   ├── run.mp4            ← 这一局唯一的录像
-│   │   └── meta.json          ← 局号/角色/进阶/结果/大小/时间
+│   │   ├── meta.json          ← 局号/角色/进阶/结果/大小/时间
+│   │   ├── events.jsonl       ← 自动玩逐条事件（视频秒数 + 画面/楼层/台词）
+│   │   ├── chapters.md        ← 可直接拿去剪的「开始/结束/事件」表
+│   │   └── timeline.json      ← 同一份机器可读时间轴
 │   └── run-0093/
 └── demo/                      ← 第二个游戏自动多一个目录
 ```
+
+## 自动玩时间轴
+
+自动玩录像每到一个画面/楼层、每次说话、每个 LLM 回合，都会写一条
+`events.jsonl`，`offset` 是从本局开录起的秒数。停止时自动汇总：
+
+- `chapters.md`：`开始 | 结束 | 事件 | 内容`，按时间顺序，适合直接对着剪；
+- `timeline.json`：同样的章节 + 全部原始事件，适合脚本/剪辑软件二次处理；
+- `meta.json`：多出 `timeline`、`chapters`、`event_count`、`chapter_count`。
+
+`chapters.md` 里的「结束」是下一条章节的开始；最后一条到本局最后一个事件为止。
+右键「让她停手」和 `python main.py play --stop` 都会先停 OBS、收成 `run.mp4`，
+再写时间轴，不会把录像停在半截。
 
 ## 命令
 

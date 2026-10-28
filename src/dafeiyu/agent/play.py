@@ -32,6 +32,7 @@ _thread: threading.Thread | None = None
 _stop = threading.Event()
 _speech_until = 0.0
 _ui_picks: set[str] = set()
+_timeline_prev: dict = {"screen": "", "floor": 0, "run_id": ""}
 _state: dict = {
     "running": False, "screen": "", "floor": 0, "hp": 0, "max_hp": 0,
     "step": 0, "last": "", "error": "", "started_at": 0, "updated_at": 0,
@@ -97,6 +98,8 @@ def _add_llm_usage(usage: dict | None, run_id: str = "") -> dict:
             pass
     _log("llm_usage", run_id=run_id, input=tin, output=tout, total=total,
          cumulative=int(_state.get("tokens_total") or 0))
+    _timeline_event("llm_turn", f"LLM 回合 · {total} tok", run_id=run_id,
+                    tokens=total, tokens_in=tin, tokens_out=tout)
     return {"input": tin, "output": tout, "total": total}
 
 
@@ -222,6 +225,7 @@ def _remember_speech(text: str) -> None:
     # 中文 TTS 约 4-5 字/秒，再加一点合成/出场余量；不要无限等。
     seconds = min(10.0, max(1.6, len(clean) * 0.22 + 1.0))
     _speech_until = max(_speech_until, time.time() + seconds)
+    _timeline_event("speech", clean[:160], text=clean)
 
 
 def _sleep(seconds: float) -> None:
@@ -273,10 +277,65 @@ def _run_meta(state: dict) -> tuple[int, int, int]:
             int(run.get("max_hp") or 0))
 
 
+def _timeline_event(kind: str, label: str = "", **extra) -> None:
+    """给录像时间轴写一条事件；没录像时安静跳过。"""
+    try:
+        from ..recording import auto  # noqa: PLC0415
+
+        auto.record_event(kind, label, **extra)
+    except Exception:
+        pass
+
+
+def _record_screen_transition(state: dict, last: str = "") -> None:
+    """只在画面/楼层/局号变化时标章节，不把每一步都刷进时间轴。"""
+    screen = _screen(state)
+    if not screen:
+        return
+    floor, hp, max_hp = _run_meta(state)
+    run_id = str(state.get("run_id") or (state.get("run") or {}).get("run_id") or "")
+    prev = _timeline_prev
+    if run_id and run_id != prev.get("run_id"):
+        if prev.get("run_id"):
+            _timeline_event("new_run", f"新的一局 · {run_id}",
+                            run_id=run_id, floor=floor, screen=screen)
+        prev["run_id"] = run_id
+    if screen != prev.get("screen"):
+        if screen == "COMBAT":
+            kind, label = "combat_start", f"第 {floor} 层 · 战斗开始"
+        elif prev.get("screen") == "COMBAT":
+            kind, label = "combat_end", f"第 {floor} 层 · 战斗结束"
+        elif screen == "GAME_OVER":
+            kind, label = "game_over", "本局结束"
+        else:
+            kind = {
+                "CARD_SELECTION": "card", "REWARD": "reward", "MAP": "map",
+                "EVENT": "event", "REST": "rest", "SHOP": "shop",
+                "CHEST": "chest", "MAIN_MENU": "menu",
+                "CHARACTER_SELECT": "character",
+            }.get(screen, "screen")
+            names = {
+                "card": "选牌", "reward": "奖励", "map": "地图",
+                "event": "事件", "rest": "营火", "shop": "商店",
+                "chest": "宝箱", "menu": "主菜单", "character": "选角色",
+            }
+            label = f"第 {floor} 层 · {names.get(kind, screen)}"
+            if last and not last.startswith(("MAP ", "WAIT", "LLM")):
+                label += f" · {last}"
+        _timeline_event(kind, label[:160], screen=screen, floor=floor,
+                        hp=hp, max_hp=max_hp, run_id=run_id)
+        prev["screen"] = screen
+    elif floor != prev.get("floor"):
+        _timeline_event("floor", f"进入第 {floor} 层", screen=screen,
+                        floor=floor, hp=hp, max_hp=max_hp, run_id=run_id)
+    prev["floor"] = floor
+
+
 def _set_from_state(state: dict, last: str = "") -> None:
     floor, hp, max_hp = _run_meta(state)
     _write_status(screen=_screen(state), floor=floor, hp=hp, max_hp=max_hp,
                   last=last or _screen(state))
+    _record_screen_transition(state, last)
 
 
 # ---------------------------------------------------------------- 开局
@@ -786,27 +845,28 @@ def _run(game: str, mode: str = "local") -> None:
             _write_status(step=step, error="" if not last.startswith("ERROR") else _state.get("error", ""))
             _log("step", step=step, last=last)
             if last.startswith("UNKNOWN") or last.endswith("unknown"):
-                _write_status(running=False, error=last, last="未知界面，停手")
+                _write_status(error=last, last="未知界面，正在收尾…", stopping=True)
                 _log("unknown_screen", last=last)
                 return
             if last.startswith("LLM_FAILED"):
-                _write_status(running=False, error=last, last="LLM 执行失败，停手")
+                _write_status(error=last, last="LLM 执行失败，正在收尾…", stopping=True)
                 _log("llm_stop", last=last)
                 return
             if last in ("CHEST", "REST no options", "MAP_NO_AVAILABLE", "REWARD_FAILED"):
                 stalled += 1
                 if stalled >= 4:
-                    _write_status(running=False, error=f"界面没有进展：{last}",
-                                  last="界面卡住，停手")
+                    _write_status(error=f"界面没有进展：{last}",
+                                  last="界面卡住，正在收尾…", stopping=True)
                     _log("stalled", last=last)
                     return
             else:
                 stalled = 0
             _pace()
-        _write_status(running=False, last="已停手")
+        _write_status(last="正在收尾…", stopping=True)
         _log("stop")
     except BaseException as exc:  # noqa: BLE001
-        _write_status(running=False, error=f"{type(exc).__name__}: {exc}", last="异常停手")
+        _write_status(error=f"{type(exc).__name__}: {exc}",
+                      last="异常收尾…", stopping=True)
         _log("fatal", error=f"{type(exc).__name__}: {exc}")
     finally:
         try:
@@ -815,9 +875,7 @@ def _run(game: str, mode: str = "local") -> None:
             pass
         with _lock:
             _thread = None
-            _state["stopping"] = False
-            _state["running"] = False
-            _write_status(stopping=False, running=False)
+            _write_status(stopping=False, running=False, last="已停手")
 
 
 def start_autoplay(game: str | None = None, *, mode: str | None = None,
@@ -879,6 +937,7 @@ def start_autoplay(game: str | None = None, *, mode: str | None = None,
             return {"ok": False, "message": launched.get("error") or "游戏启动失败",
                     "launch": launched}
         _stop.clear()
+        _timeline_prev.update({"screen": "", "floor": 0, "run_id": ""})
         _write_status(running=True, game=game, error="", last="启动中…",
                       screen="", step=0, mode=mode, pace=pace,
                       started_at=time.time(), pid=os.getpid(),

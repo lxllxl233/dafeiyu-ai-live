@@ -5,7 +5,7 @@ import json
 
 import pytest
 
-from dafeiyu.recording import replay
+from dafeiyu.recording import auto, replay
 
 
 @pytest.fixture()
@@ -52,3 +52,30 @@ def test_migrate_legacy(rec):
     meta = json.loads((rec / "slay-the-spire-2" / "run-0009" / "meta.json")
                       .read_text(encoding="utf-8"))
     assert meta["result"] == "win" and meta["legacy"] is True
+
+
+def test_timeline_records_offsets_and_chapters(tmp_path, monkeypatch):
+    d = tmp_path / "run-0042"
+    d.mkdir()
+    monkeypatch.setattr(auto, "_session", {
+        "active": True, "path": str(d), "record_started_at": 1000.0, "events": 0})
+    times = iter([1000.0, 1005.0, 1010.0, 1015.0])
+    monkeypatch.setattr(auto.time, "time", lambda: next(times))
+
+    assert auto.record_event("combat_start", "第 1 层 · 战斗开始", floor=1)
+    assert auto.record_event("llm_turn", "LLM 回合", tokens=123)
+    assert auto.record_event("speech", "冲！", text="冲！")
+    assert auto.record_event("stop", "停手")
+    out = auto.write_timeline(d)
+
+    assert out == {"events": 4, "chapters": 3}
+    events = [json.loads(line) for line in
+              (d / "events.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert [e["offset"] for e in events] == [0.0, 5.0, 10.0, 15.0]
+    chapters = json.loads((d / "timeline.json").read_text(encoding="utf-8"))["chapters"]
+    assert chapters[0]["start"] == 0 and chapters[0]["end"] == 10
+    assert chapters[-1]["kind"] == "stop" and chapters[-1]["end"] == 15
+    text = (d / "chapters.md").read_text(encoding="utf-8")
+    assert "第 1 层 · 战斗开始" in text and "00:00:10" in text
+    meta = json.loads((d / "meta.json").read_text(encoding="utf-8"))
+    assert meta["event_count"] == 4 and meta["chapters"] == "chapters.md"
