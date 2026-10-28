@@ -122,6 +122,27 @@ def _remember_speech(text: str) -> None:
     _speech_until = _host.speech_until
 
 
+def _say_screen(sts2, text: str, screen: str, state: dict | None = None) -> None:
+    """界面决策的解说也要推给 overlay 真说话。
+
+    旧实现只 ``_remember_speech``：计时窗口有了，但没有任何东西推给 overlay，
+    于是营火/宝箱/选牌/商店/事件这些屏角色一声不吭（实机反馈）。
+    """
+    text = " ".join(str(text or "").split())
+    if not text:
+        return
+    _remember_speech(text)
+    try:
+        tag_for = getattr(sts2, "tag_for", None)
+        tag = tag_for(screen) if callable(tag_for) else "思路"
+        try:
+            sts2.overlay_say(tag, text, "", state)
+        except TypeError:
+            sts2.overlay_say(tag, text, "")
+    except Exception as exc:  # noqa: BLE001
+        _log("say_failed", screen=screen, error=f"{type(exc).__name__}: {exc}")
+
+
 def _sleep(seconds: float) -> None:
     _host.sleep(seconds)
 
@@ -540,8 +561,6 @@ def _screen_llm(sts2, planner, state: dict, screen: str) -> str:
         say = plan.get("say")
         text = (" ".join(str(x) for x in say if str(x).strip())
                 if isinstance(say, list) else str(say or ""))
-        if text:
-            _remember_speech(text)
         _add_llm_usage(res.get("usage"), note=f"{screen_label(screen)} {actions.label(entry)}")
         try:
             actions.execute(sts2, entry)
@@ -549,6 +568,9 @@ def _screen_llm(sts2, planner, state: dict, screen: str) -> str:
             _log("screen_execute_failed", screen=screen, act=actions.label(entry),
                  error=f"{type(exc).__name__}: {exc}")
             return ""
+        if text:
+            # 点完再播，动作被游戏拒掉时不会说了半句没发生的事。
+            _say_screen(sts2, text, screen, state)
         _log("llm_screen", screen=screen, act=entry["a"], i=entry.get("i"),
              tokens=res.get("usage"), say=text[:120])
         return f"{screen} {actions.label(entry)}"

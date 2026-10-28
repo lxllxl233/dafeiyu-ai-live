@@ -45,6 +45,11 @@
   「只支持 local 模式」，用户以为 LLM 拉起的是《杀戮尖塔 2》。现在启动以
   `config.game` 为准，只有状态文件确实 `running` 时才按它停手/看状态；
   `AutoplayHost.status()` 也不再让上一局的 `game/mode/pace` 盖住当前宿主。
+- **营火/宝箱/选牌/事件不播报**：界面决策只调了 `_remember_speech`（它只设
+  「等语音」的计时窗口），没有调 `overlay_say`，所以 llm 模式下这些屏虽然记了
+  台词，桌面宠物和 OBS 一句都听不到。现在点完动作后走 `_say_screen`：
+  `sts2.overlay_say(tag_for(screen), text, "", state)` 真正推送，tag 按屏幕取
+  （营火/商店/宝箱/选牌…）。补回归测试断言快照的 `overlay_say` 收到台词与 tag。
 - **同类卡死审计（营火 / 商店之后）**：顺着这两个直接原因把「一步没推进就整局停」
   的同源问题一起收了：
   ① `UNKNOWN`/`* unknown` 原来第一次出现就收尾 → 现在同画面连续 3 次才停，
