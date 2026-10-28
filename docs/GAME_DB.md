@@ -147,8 +147,8 @@ python tools/gamedb.py search 易伤
 
 每局 Neow 后、第一次选节点前：
 
-1. 运行 `python sts2.py route`，枚举当前可选节点到 Boss 的路径，按 HP 给营火/商店/宝箱与精英/小怪打分。
-2. 选最优路径，把计划发到 overlay：`python sts2.py say --thought "路线：opt0 ...；理由：..."`（只写内容，不加“大肥鱼：”）。
+1. 运行 `python tools/sts2.py route`，枚举当前可选节点到 Boss 的路径，按 HP 给营火/商店/宝箱与精英/小怪打分。
+2. 选最优路径，把计划发到 overlay：`python tools/sts2.py say --thought "路线：opt0 ...；理由：..."`（只写内容，不加“大肥鱼：”）。
 3. 按计划走；遇到以下情况重新跑 `route` 并简短说明：
    - HP < 35；
    - 单场掉血 > 20；

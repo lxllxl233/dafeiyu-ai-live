@@ -127,7 +127,7 @@ def main() -> int:
     env = dict(os.environ, PYTHONIOENCODING="utf-8", STS2_OVERLAY_PORT="8791",
                STS2_VOICE_DELEGATE="0")
     proc = subprocess.Popen(
-        [sys.executable, "-X", "utf8", os.path.join(ROOT, "streamer.py"),
+        [sys.executable, "-X", "utf8", os.path.join(ROOT, "main.py"),
          "--port", "8791", "--demo", "--mute", "--voice", "off", "--panel",
          "--scale", "1.0", "--pos", "300,300", "--click-through"],
         cwd=ROOT, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)

@@ -25,7 +25,8 @@ import os
 import threading
 import time
 
-LOG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs", "perf.jsonl")
+LOG = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                   "logs", "perf.jsonl")
 _ENABLED = os.environ.get("STS2_PERF", "1") != "0"
 _LOCK = threading.Lock()
 _COUNTERS: dict[str, int] = {}

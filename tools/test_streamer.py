@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""主播模式（streamer.py）回归：渲染尺寸/透明/换行/拼句/帧耗时。
+"""主播模式（main.py）回归：渲染尺寸/透明/换行/拼句/帧耗时。
 
 不建窗口、不碰游戏，纯离屏渲染，能在 CI/无桌面环境跑。
 用法：python tools/test_streamer.py

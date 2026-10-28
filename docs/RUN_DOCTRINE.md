@@ -124,7 +124,7 @@ A10 的胜负不在「打得凶」，在**四件事同时成立**：①有复利
 3. **滚石第 1–2 回合下**（0 伤回合优先），之后每回合白送的伤害就是你的 DPS 主体。
 
 ## 7. SL 规则（有限）
-- 只在「明显要死」的回合用 `python sts2.py do save_and_quit` → 主菜单 continue 回到这场战斗开头。
+- 只在「明显要死」的回合用 `python tools/sts2.py do save_and_quit` → 主菜单 continue 回到这场战斗开头。
 - **每一幕最多 2 次**，用完记在 `logs/runNN_notes.md`。
 
 ## 8. 每局必须记录

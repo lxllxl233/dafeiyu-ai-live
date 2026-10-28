@@ -21,7 +21,7 @@ compat/
 ## 安装 mod
 
 见 `mod/INSTALL.md`。要点：把 DLL 放进游戏 `mods/`，在 `settings.save` 里启用，
-启动游戏后 `python sts2.py state` 应返回 JSON（ConnectionRefused = 游戏/引擎没起，不是坏了）。
+启动游戏后 `python tools/sts2.py state` 应返回 JSON（ConnectionRefused = 游戏/引擎没起，不是坏了）。
 
 ## 兼容补丁
 
@@ -32,18 +32,18 @@ compat/
 ## 常用命令（仓库根执行，`sts2.py` 是兼容入口）
 
 ```powershell
-python sts2.py state              # 压缩状态（增量）
-python sts2.py state --full       # 全量状态
-python sts2.py acts               # 当前合法动作
-python sts2.py do play_card --card 0 --target 0 --thought "..." --meme "..."
-python sts2.py batch --file spec.json
+python tools/sts2.py state              # 压缩状态（增量）
+python tools/sts2.py state --full       # 全量状态
+python tools/sts2.py acts               # 当前合法动作
+python tools/sts2.py do play_card --card 0 --target 0 --thought "..." --meme "..."
+python tools/sts2.py batch --file spec.json
 python tools/ctx.py               # 结构化局面包（决策层用）
 python tools/act.py --file plan.json
 python tools/live.py check        # 主播链路体检
 ```
 
 CLI 的 `--thought/--meme` 会把台词推给 overlay；新链路也可以用
-`python dafeiyu.py say --thought ... --meme ...`（多走一遍性格层 lint）。
+`python main.py say --thought ... --meme ...`（多走一遍性格层 lint）。
 
 ## 状态结构（适配器读取的字段）
 

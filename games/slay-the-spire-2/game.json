@@ -4,7 +4,11 @@
   "name_en": "Slay the Spire 2",
   "platform": "Steam · 2868840",
   "status": "ready",
-  "adapter": "dafeiyu.games.sts2:Sts2Adapter",
+  "adapter": "game-skill/adapter.py:Sts2Adapter",
+  "links": {
+    "db": "corpus/db",
+    "tools/data": "corpus/data"
+  },
   "tags": ["卡牌", "肉鸽", "策略", "爬塔"],
   "compat": {
     "client": "compat/sts2.py",
@@ -12,7 +16,8 @@
     "api": "http://127.0.0.1:8080",
     "install": "compat/mod/INSTALL.md",
     "patch": "v0.8.0 在游戏 v0.107.1 上会调用不存在的 Player.CanUseOrRemovePotions；已把 IsPotionDiscardable 改为返回 true（原 DLL 在 backups/）",
-    "checks": ["python dafeiyu.py doctor", "python sts2.py state"]
+    "checks": ["python main.py doctor", "python main.py game state"],
+    "runbook": "game-skill/NEXT_PROMPT.txt"
   },
   "corpus": {
     "db": "corpus/db/sts2.db",
@@ -30,7 +35,7 @@
       "strategy_rules": 226
     },
     "docs": ["docs/GAME_DB.md", "docs/A10_IRONCLAD.md", "docs/COMBAT_TURN.md", "docs/LESSONS.md"],
-    "skills": [".dsh/skills/sts2-ironclad-ironclad", ".dsh/skills/sts2-caster"],
+    "skills": ["game-skill", ".dsh/skills/sts2-ironclad-ironclad", ".dsh/skills/sts2-caster"],
     "rebuild": ["python tools/build_cards_v3.py", "python tools/build_enemies_v3.py", "python tools/build_memes.py", "python tools/build_strategy.py"]
   }
 }

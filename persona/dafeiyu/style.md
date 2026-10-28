@@ -61,5 +61,5 @@
 ## 在直播姬里怎么用
 
 - 台词进 `live_session.say(thought, meme)`，自动 lint + 推 overlay + 后台配音。
-- 改动规则只改 `card.json`，不用动代码；`python dafeiyu.py say` 的 lint 读同一份卡。
+- 改动规则只改 `card.json`，不用动代码；`python main.py say` 的 lint 读同一份卡。
 - 旧工程的 `tools/check_caster.py --say` 仍是同一套阈值，两边不会漂。

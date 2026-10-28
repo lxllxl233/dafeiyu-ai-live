@@ -10,4 +10,4 @@
 - DECISIONS 16 (logs/decisions.jsonl)
 - RISK 血闸<50%
 
-> L2 当前状态：`python sts2.py state`；L3 原始流水：`python sts2.py journal --floor <n>`
+> L2 当前状态：`python tools/sts2.py state`；L3 原始流水：`python tools/sts2.py journal --floor <n>`

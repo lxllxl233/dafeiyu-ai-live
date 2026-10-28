@@ -13,6 +13,7 @@ from __future__ import annotations
 from .card import PersonaCard, Style
 from .lint import LintIssue, clip, compose, sentences, summarize
 from .lint import lint as lint_text
+from .memes import load_memes, pick_meme
 from .pacing import Pacing
 
 
@@ -58,6 +59,14 @@ class Persona:
 
     def note_sent(self, text: str) -> dict:
         return self.pacing.note_sent(text, self.card.quips)
+
+    # ---------------------------------------------------------------- 通用梗
+    def memes(self, name: str = "general") -> dict:
+        """和游戏无关的 meme 库（persona/memes/<name>.json）。"""
+        return load_memes(name)
+
+    def pick_meme(self, name: str = "general", tag: str | None = None) -> dict | None:
+        return pick_meme(name, tag)
 
     # ---------------------------------------------------------------- 展示
     def to_dict(self) -> dict:

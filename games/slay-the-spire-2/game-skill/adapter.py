@@ -13,8 +13,8 @@ import time
 import urllib.request
 from typing import Iterator
 
-from ...core.events import Event, Topics
-from ..base import GameAdapter, GameState
+from dafeiyu.core.events import Event, Topics
+from dafeiyu.games.base import GameAdapter, GameState
 
 
 def _int(value) -> int | None:

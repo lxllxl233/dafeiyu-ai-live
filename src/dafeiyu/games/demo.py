@@ -20,31 +20,31 @@ SCENARIO: list[dict] = [
     {
         "delay": 0.4,
         "state": {"screen": "MAP", "floor": 1, "hp": 80, "max_hp": 80, "gold": 99,
-                  "character": "铁甲战士", "ascension": 10},
+                  "character": "演示角色", "ascension": 10},
         "say": ("上路，80 血，目标活过第二幕。", "先算账再摸牌。"),
     },
     {
         "delay": 1.4,
         "state": {"screen": "COMBAT", "floor": 6, "hp": 63, "max_hp": 80, "gold": 99,
-                  "character": "铁甲战士", "ascension": 10, "in_combat": True, "turn": 1},
+                  "character": "演示角色", "ascension": 10, "in_combat": True, "turn": 1},
         "say": ("两只，11 和 34，入伤 9。", "先掐会塞牌的那只。"),
     },
     {
         "delay": 1.4,
         "state": {"screen": "COMBAT", "floor": 6, "hp": 52, "max_hp": 80, "gold": 99,
-                  "character": "铁甲战士", "ascension": 10, "in_combat": True, "turn": 2},
+                  "character": "演示角色", "ascension": 10, "in_combat": True, "turn": 2},
         "say": ("它 21，我最多挡 15。", "差 6，嗨呀。"),
     },
     {
         "delay": 1.4,
         "state": {"screen": "COMBAT", "floor": 6, "hp": 47, "max_hp": 80, "gold": 99,
-                  "character": "铁甲战士", "ascension": 10, "in_combat": True, "turn": 3},
+                  "character": "演示角色", "ascension": 10, "in_combat": True, "turn": 3},
         "say": ("9 点，它 9 血。", "刚好够。"),
     },
     {
         "delay": 1.4,
         "state": {"screen": "REWARD", "floor": 6, "hp": 47, "max_hp": 80, "gold": 114,
-                  "character": "铁甲战士", "ascension": 10},
+                  "character": "演示角色", "ascension": 10},
         "say": ("三选一，全是白板。", "这抓位还用想。"),
     },
 ]

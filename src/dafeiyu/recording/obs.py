@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""Minimal OBS WebSocket v5 controller for the StS2 recording setup.
+"""Minimal OBS WebSocket v5 controller for recording / scene setup.
 
-Usage examples:
-  python obsctl.py status
-  python obsctl.py setup          # create scene + game capture + audio + ticker
-  python obsctl.py shot preview.png
-  python obsctl.py start
-  python obsctl.py stop
-  python obsctl.py ticker "text"
+Usage examples (from repo root):
+  python main.py obs status
+  python main.py obs setup          # create scene + game capture + audio + ticker
+  python main.py obs shot preview.png
+  python main.py obs start
+  python main.py obs stop
+  python main.py obs ticker "text"
 """
 from __future__ import annotations
 
@@ -23,8 +23,10 @@ import uuid
 
 from websockets.sync.client import connect
 
-# 布局：src/dafeiyu/stream/obs.py（仓库根 = 上三级）
-BASE = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+from .. import paths
+
+# 布局：src/dafeiyu/recording/obs.py
+BASE = os.fspath(paths.ROOT)
 CONFIG_PATH = os.path.join(BASE, "obs_config.json")
 DEFAULT_WS = "ws://127.0.0.1:4455"
 OBS_WS_CONFIG = os.path.join(
@@ -779,14 +781,14 @@ def print_health(h: dict) -> None:
             print(f"  {e}")
 
 
-def main():
+def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument(
         "cmd",
         choices=["status", "setup", "start", "stop", "shot", "ticker", "mute", "free", "health", "nomute"],
     )
     ap.add_argument("arg", nargs="?")
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
     cfg = load_ws_config()
     obs = Obs(cfg.get("url", DEFAULT_WS), cfg.get("password", ""))
     try:

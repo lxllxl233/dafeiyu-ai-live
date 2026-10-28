@@ -15,7 +15,7 @@
 4. `python -X utf8 tools/preflight.py` → **必须 PREFLIGHT OK**；不 OK 就停下来报告，不许绕过
 5. `python -X utf8 tools/accuracy.py` → 抄下上一局固定口径基线：
    入伤 ±1 **24/38 = 63.2%**、平均|误差| 2.45、偏差 +1.18；斩杀 19 预测 / 12 确认 / **假 7**
-6. `python -X utf8 sts2.py state` → 确认 MAIN_MENU、无存档；`python obsctl.py status` → 确认没在录
+6. `python -X utf8 tools/sts2.py state` → 确认 MAIN_MENU、无存档；`python main.py obs status` → 确认没在录
 
 ## 1. 本局唯一目标：测三个数（口径写死，不许自创）
 
@@ -56,7 +56,7 @@
 
 ## 4. 收尾（每局必做，顺序别换）
 
-1. `python obsctl.py stop`；录像改名 `recordings/sts2_ironclad_a10_run86_<win|lose>_floor<M>.mp4`
+1. `python main.py obs stop`；录像改名 `recordings/sts2_ironclad_a10_run86_<win|lose>_floor<M>.mp4`
 2. `python -X utf8 tools/accuracy.py --run <RUN_ID>` 输出**原样**贴进报告
 3. 写 `docs/RUN86_REPORT.md`：三指标实测（含分母）+ 假斩杀逐条 + `approx` 清单 +
    未解释偏差 + 与 run85 基线对比 + 本局死因

@@ -8,18 +8,18 @@
 
 ## 环境
 - 游戏通过本地 mod API 控制：http://127.0.0.1:8080
-- 指挥脚本：`python sts2.py ...`（state / acts / play <CARD_ID> [--target N] / do <action> [--option N] / route / wait --player-turn / report）
-- OBS：ws://127.0.0.1:4455，场景 StS2，浏览器源「AI Commentary」；`python obsctl.py start|stop|status`
+- 指挥脚本：`python tools/sts2.py ...`（state / acts / play <CARD_ID> [--target N] / do <action> [--option N] / route / wait --player-turn / report）
+- OBS：ws://127.0.0.1:4455，场景 StS2，浏览器源「AI Commentary」；`python main.py obs start|stop|status`
 - 解说 overlay：http://127.0.0.1:8730（/comment /reset /state），脚本里 --thought / --meme 会自动推过去
 
 ## 每局固定流程
-1. `python sts2.py state` 确认在主菜单、`python obsctl.py status` 确认没在录
+1. `python tools/sts2.py state` 确认在主菜单、`python main.py obs status` 确认没在录
 2. POST http://127.0.0.1:8730/reset ，然后刷新 OBS 浏览器源（PressInputPropertiesButton + refreshnocache）
-3. `python obsctl.py start`
-4. `python sts2.py do open_character_select --thought "<开场白>"`（开场白要独立成句，不提上一局）
+3. `python main.py obs start`
+4. `python tools/sts2.py do open_character_select --thought "<开场白>"`（开场白要独立成句，不提上一局）
 5. 确认 IRONCLAD、ascension=10、can_embark，再 `do embark`
 6. 涅奥：优先「上限最高」的选项（稀有牌/遗物/路线控制），不要只看安全
-7. `python sts2.py route` 规划路线，把路线贴到 overlay
+7. `python tools/sts2.py route` 规划路线，把路线贴到 overlay
 8. 逐层打，每场战斗按下面的决策顺序
 
 ## 战斗决策顺序（顺序不能变）
@@ -55,16 +55,16 @@
 - 开场白要独立，不能提「上局/上次/第 N 局」
 
 ## 收尾（每局结束）
-1. `python obsctl.py stop`
+1. `python main.py obs stop`
 2. 录像改名为 `recordings/sts2_ironclad_a10_run<N>_<win|lose>_floor<M>.mp4`
-3. `python sts2.py report`
+3. `python tools/sts2.py report`
 4. 写 `logs/run<N>_review.md`（资源曲线/关键错误/规则更新）
 5. 更新 `docs/LESSONS.md`，并把新规则写进 `db/sts2.db` 的 `strategy_rules` 表
 
 ## 工具坑（踩过的）
 - 多选卡牌界面每次必须选**不同下标**（重复点同一张=取消，界面会卡住）
 - `use_potion` 用 `--option <槽位>`；目标型药水再加 `--target`
-- 出牌后状态可能瞬时返回空手牌：用 `python sts2.py wait --player-turn` 等稳定
+- 出牌后状态可能瞬时返回空手牌：用 `python tools/sts2.py wait --player-turn` 等稳定
 - PowerShell 不支持 `&&`，用 `;`；`python -c` 里用单引号避免转义问题
 
 ## 知识来源

@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import importlib
+import importlib.util
 import json
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -81,9 +83,8 @@ class GameRegistry:
         if not pack or not pack.info.adapter:
             return None
         module_name, _, attr = pack.info.adapter.partition(":")
-        try:
-            module = importlib.import_module(module_name)
-        except ImportError:
+        module = self._load_module(pack, module_name)
+        if module is None:
             return None
         cls = getattr(module, attr or "Adapter", None)
         if cls is None:
@@ -92,6 +93,33 @@ class GameRegistry:
             return cls(**kwargs)  # type: ignore[call-arg]
         except TypeError:
             return cls()
+
+    @staticmethod
+    def _load_module(pack: GamePack, module_name: str):
+        """支持两种写法：`dafeiyu.games.demo:DemoAdapter` 或
+        `game-skill/adapter.py:MyAdapter`（游戏包自己的技能层，不进 src）。"""
+        if module_name.endswith(".py") or "/" in module_name or "\\" in module_name:
+            if pack.root is None:
+                return None
+            path = (pack.root / module_name).resolve()
+            if not path.is_file():
+                return None
+            mod_name = f"dafeiyu_game_{pack.info.id.replace('-', '_')}_adapter"
+            spec = importlib.util.spec_from_file_location(mod_name, path)
+            if spec is None or spec.loader is None:
+                return None
+            module = importlib.util.module_from_spec(spec)
+            sys.modules[mod_name] = module
+            try:
+                spec.loader.exec_module(module)
+            except Exception:
+                sys.modules.pop(mod_name, None)
+                return None
+            return module
+        try:
+            return importlib.import_module(module_name)
+        except ImportError:
+            return None
 
 
 __all__ = ["GamePack", "GameRegistry"]

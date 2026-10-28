@@ -29,10 +29,10 @@
 ## 4. 工具用法与坑
 
 ```
-python sts2.py state                     # 看 POTIONS 行（槽位号 + 药水名 + FX）
-python sts2.py do use_potion --option 0                  # 不需要目标（抽牌/回血类）
-python sts2.py do use_potion --option 1 --target 0       # 给敌人上状态的药水必须带目标
-python sts2.py do discard_potion --option 0              # 槽满要先腾
+python tools/sts2.py state                     # 看 POTIONS 行（槽位号 + 药水名 + FX）
+python tools/sts2.py do use_potion --option 0                  # 不需要目标（抽牌/回血类）
+python tools/sts2.py do use_potion --option 1 --target 0       # 给敌人上状态的药水必须带目标
+python tools/sts2.py do discard_potion --option 0              # 槽满要先腾
 ```
 
 - **已验证（2026-10-25 第 52 局）**：虚弱药水 `--target 0` 让入伤 16→12（虚弱 3 生效）、火焰药水 20 伤直接结算、癫狂之触选中手牌后该牌 0 费。药水本身**没有坏**。

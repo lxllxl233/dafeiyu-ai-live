@@ -8,10 +8,10 @@
 数据还是从 `overlay_server.py` 的 `/state` 拿，和 OBS 里那条气泡同一份。
 
 用法：
-    python streamer.py                 # 起弹幕窗（自动拉起 overlay server）
-    python streamer.py --demo          # 不接游戏，先放一条示例弹幕试位置
-    python streamer.py --click-through # 开局就点击穿透（打游戏时鼠标直接穿过去）
-    python streamer.py --preview out.png   # 只渲染一张图（不看窗口，用于验收/截图）
+    python main.py                 # 起弹幕窗（自动拉起 overlay server）
+    python main.py --demo          # 不接游戏，先放一条示例弹幕试位置
+    python main.py --click-through # 开局就点击穿透（打游戏时鼠标直接穿过去）
+    python main.py --preview out.png   # 只渲染一张图（不看窗口，用于验收/截图）
 
 窗口里能做的事：
     左键拖动  → 挪位置（松手自动记住，下次原地开）
@@ -24,7 +24,7 @@
     Ctrl+Alt+S 声音开关
     Ctrl+Alt+Q 退出
 
-主播状态（气泡里显示什么，状态机在 tools/caster_state.py）：
+主播状态（气泡里显示什么，状态机在 dafeiyu/ui/caster_state.py）：
     说话中  → 台词（喇叭真的开始播才抖，时长用 WAV 实测）
     思考中  → 「思考中……」（overlay 的 /thinking 由 tools/ctx.py、tools/act.py 上报）
     空闲    → 保持上一句
@@ -60,23 +60,24 @@ except ImportError:  # pragma: no cover
     print("需要 Pillow：pip install -r requirements.txt")
     raise SystemExit(2)
 
-# 布局：ui/desktop/streamer.py（仓库根 = 上两级）
-ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-_TOOLS = os.path.join(ROOT, "tools")
-if _TOOLS not in sys.path:
-    sys.path.insert(0, _TOOLS)
-from caster_state import CasterState, THINKING_TEXT  # noqa: E402  (主播三态状态机)
-import instance_lock  # noqa: E402  (单实例锁：屏幕上不许出现两个弹窗)
+# 布局：src/dafeiyu/ui/desktop.py（仓库根 = 上三级）
+from .. import paths
+from . import instance_lock              # 单实例锁：屏幕上不许出现两个弹窗
+from .caster_state import CasterState, THINKING_TEXT  # 主播三态状态机
+
+ROOT = os.fspath(paths.ROOT)
 ASSETS = os.path.join(ROOT, "ui", "overlay", "assets")
 STATE_FILE = os.path.join(ROOT, "logs", "streamer_window.json")
 TTS_CACHE = os.path.join(ROOT, "logs", "tts_cache")
 PORT = int(os.environ.get("STS2_OVERLAY_PORT", "8730"))
+# 可选：游戏窗口标题（只用于「把桌宠放到游戏旁边」；不填就按主屏居中）
+GAME_WINDOW_TITLE = os.environ.get("DAFEIYU_GAME_WINDOW_TITLE", "")
 PLACEHOLDER = "（还没收到弹幕 —— agent 一开口，这里就换成它说的话）"
 
 # ---------------------------------------------------------------- 桌宠形象
 # 精灵来自 https://github.com/1190fasheqi/dafeiyu-pet（MIT，见 assets/pet/SOURCE.md）。
 # 三视图没有逐帧动画：呼吸/摇摆/拖拽倾斜/拉伸/速度线/回弹都在这里实时画。
-PET_DIR = os.path.join(ROOT, "ui", "desktop", "assets", "pet")
+PET_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "pet")
 PET_STATE_FILE = os.path.join(ROOT, "logs", "streamer_pet.json")
 PET_BASE_W, PET_BASE_H = 560, 500      # 1.0× 时的画布（气泡区 + 精灵区）
 PET_FISH_H = 300                       # 1.0× 时的精灵高度
@@ -1225,7 +1226,7 @@ class StreamerWindow:
     def _game_window_center() -> tuple[int, int]:
         """游戏窗口中心（物理像素）；找不到就退回主屏中心。"""
         try:
-            h = user32.FindWindowW(None, "Slay the Spire 2")
+            h = user32.FindWindowW(None, GAME_WINDOW_TITLE) if GAME_WINDOW_TITLE else 0
             if h:
                 r = wintypes.RECT()
                 user32.GetWindowRect(h, ctypes.byref(r))
@@ -1416,7 +1417,7 @@ class StreamerWindow:
             self.apply_capture_exclusion(not self.exclude_capture)
         elif cmd == 5:
             self.push("这一手先算账：它 21，我最多挡 15。", "差 6，嗨呀。",
-                      {"character": "铁甲战士", "ascension": 10, "floor": 8, "hp": 23, "max_hp": 80, "gold": 20})
+                      {"character": "演示角色", "ascension": 10, "floor": 8, "hp": 23, "max_hp": 80, "gold": 20})
         elif cmd == 6:
             self.close()
 
@@ -2100,7 +2101,7 @@ def poll_loop(win: StreamerWindow, port: int, stop: threading.Event, demo: bool)
     beat_at = 0.0
     if demo:
         win.push("这一手先算账：它 21，我最多挡 15。", "差 6，嗨呀。",
-                 {"character": "铁甲战士", "ascension": 10, "floor": 8, "hp": 23, "max_hp": 80, "gold": 20})
+                 {"character": "演示角色", "ascension": 10, "floor": 8, "hp": 23, "max_hp": 80, "gold": 20})
     while not stop.is_set():
         try:
             d = fetch_state(port, last_id)
@@ -2150,12 +2151,15 @@ def ensure_server(port: int) -> bool:
                 return True
     except Exception:
         pass
-    import subprocess
 
     print(f"overlay server 没在跑，正在启动（端口 {port}）…")
-    env = dict(os.environ, STS2_OVERLAY_PORT=str(port))
-    subprocess.Popen([sys.executable, os.path.join(ROOT, "overlay_server.py")],
-                     cwd=ROOT, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        from .overlay_server import start_background
+
+        start_background(port)
+    except Exception as exc:
+        print(f"WARN overlay server 起不来：{exc}")
+        return False
     for _ in range(20):
         time.sleep(0.2)
         try:
@@ -2169,8 +2173,9 @@ def ensure_server(port: int) -> bool:
     return False
 
 
-def main() -> int:
-    ap = argparse.ArgumentParser(description="主播模式：可拖动的透明弹幕窗")
+def main(argv: list[str] | None = None) -> int:
+    raw_argv = list(sys.argv[1:] if argv is None else argv)
+    ap = argparse.ArgumentParser(description="大肥鱼桌宠：透明窗 + 漫画气泡 + 右键菜单")
     ap.add_argument("--port", type=int, default=PORT)
     ap.add_argument("--scale", type=float, default=0.0,
                     help="缩放 0.5~1.8（默认用上次拖出来的大小；桌宠 1.0≈560px 宽，面板 1.0=1180px 宽）")
@@ -2188,16 +2193,17 @@ def main() -> int:
     ap.add_argument("--multi", action="store_true",
                     help="允许多开（默认：发现旧窗口还活着就关掉它，避免屏幕上出现两个弹窗）")
     ap.add_argument("--preview", help="只渲染一张 PNG 就退出（验收/截图用）")
+    ap.add_argument("--no-server", action="store_true", help="不自动拉起 overlay 服务")
     ap.add_argument("--think", action="store_true",
                     help="和 --preview 一起用：截「思考中……」那一帧")
-    a = ap.parse_args()
+    a = ap.parse_args(raw_argv)
 
     # 预览图的缩放：命令行优先，否则跟 DPI；装不下就自动缩（按目标显示器宽度算）
     scale = a.scale or dpi_scale()
 
     def _target_screen_w() -> int:
         try:
-            g = user32.FindWindowW(None, "Slay the Spire 2")
+            g = user32.FindWindowW(None, GAME_WINDOW_TITLE) if GAME_WINDOW_TITLE else 0
             if g:
                 r = wintypes.RECT()
                 user32.GetWindowRect(g, ctypes.byref(r))
@@ -2220,7 +2226,7 @@ def main() -> int:
         if a.panel:
             mode = "thinking" if a.think else "speaking"
             text = THINKING_TEXT if a.think else "它 21，我最多挡 15。差 6，嗨呀。"
-            img = render(text, {"character": "铁甲战士", "ascension": 10, "floor": 8,
+            img = render(text, {"character": "演示角色", "ascension": 10, "floor": 8,
                                 "hp": 23, "max_hp": 80, "gold": 20}, scale,
                          chip=a.click_through,
                          layout_text=None if mode != "thinking" else "它 21，我最多挡 15。差 6，嗨呀。")
@@ -2242,10 +2248,11 @@ def main() -> int:
         return 0
 
     # 单实例：屏幕上一个弹窗就够（历史坑：pythonw 起的旧进程没关，再开一个 → 两个弹窗）
-    instance_lock.take_over(instance_lock.LOCK_PATH, argv=sys.argv, multi=a.multi,
-                            note=lambda m: print(m, flush=True))
+    instance_lock.take_over(instance_lock.LOCK_PATH, argv=["main.py"] + raw_argv,
+                            multi=a.multi, note=lambda m: print(m, flush=True))
 
-    ensure_server(a.port)
+    if not a.no_server:
+        ensure_server(a.port)
     pos = None
     if a.pos:
         try:

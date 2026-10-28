@@ -734,7 +734,7 @@ def _combat(state: dict, mem: dict) -> dict:
         warns.append(f"cannot_full_block(-{calc['net']})")
     if calc["net"] >= hp:
         warns.append("incoming>=hp：必须全挡/斩杀/喝药")
-        warns.append("SL_INSURANCE：本回合可能致死——先 `python sts2.py do save_and_quit` 再 `continue_run` 回档到战斗开始，再打这一手（死透了就没 SL 可用）")
+        warns.append("SL_INSURANCE：本回合可能致死——先 `python tools/sts2.py do save_and_quit` 再 `continue_run` 回档到战斗开始，再打这一手（死透了就没 SL 可用）")
     if en_out and not calc["inc"] and not calc.get("tax"):
         warns.append("本回合无入伤：可少起防，全力输出")
     if calc.get("nx_inc") and calc["nx_inc"] >= hp:

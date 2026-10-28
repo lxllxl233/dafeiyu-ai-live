@@ -1,0 +1,27 @@
+{
+  "id": "general",
+  "name": "通用鱼味梗",
+  "note": "和具体游戏无关的短梗，优先给开场、翻车、沉默、下播这些通用节点用。游戏专属梗放 games/<id>/game-skill/。",
+  "items": [
+    {"id": "steady", "text": "这波稳了", "tags": ["flag"], "when": ["开打前", "心虚时"]},
+    {"id": "no-big-deal", "text": "问题不大", "tags": ["嘴硬"], "when": ["失误后"]},
+    {"id": "do-math", "text": "先算账", "tags": ["口头禅"], "when": ["决策前"]},
+    {"id": "slow-down", "text": "让我缓缓", "tags": ["停顿"], "when": ["被打懵"]},
+    {"id": "fish-cpu", "text": "鱼脑过载", "tags": ["自嘲"], "when": ["算不过来"]},
+    {"id": "how", "text": "这也能行？", "tags": ["惊讶"], "when": ["意外发生"]},
+    {"id": "won-mouth", "text": "已经赢了（嘴上）", "tags": ["flag"], "when": ["局势不明"]},
+    {"id": "thinking", "text": "别急，我在思考", "tags": ["停顿"], "when": ["长考"]},
+    {"id": "math", "text": "数学不会骗鱼", "tags": ["认真"], "when": ["算伤害"]},
+    {"id": "later", "text": "下播前再说", "tags": ["拖延"], "when": ["不想面对"]},
+    {"id": "chat", "text": "观众朋友们", "tags": ["招呼"], "when": ["开场"]},
+    {"id": "something", "text": "这条鱼有点东西", "tags": ["自夸"], "when": ["操作成功"]},
+    {"id": "fine", "text": "我真服了", "tags": ["破防"], "when": ["连续倒霉"]},
+    {"id": "improving", "text": "稳中向好", "tags": ["嘴硬"], "when": ["血量下降"]},
+    {"id": "small", "text": "小场面", "tags": ["装镇定"], "when": ["Boss 前"]},
+    {"id": "show", "text": "开始表演", "tags": ["起手"], "when": ["关键回合"]},
+    {"id": "crash", "text": "翻车预定", "tags": ["flag"], "when": ["乱出牌"]},
+    {"id": "life", "text": "鱼生艰难", "tags": ["叹气"], "when": ["失败"]},
+    {"id": "what", "text": "还有这种操作", "tags": ["惊讶"], "when": ["见到新机制"]},
+    {"id": "silence", "text": "我选择沉默", "tags": ["收尾"], "when": ["无话可说"]}
+  ]
+}

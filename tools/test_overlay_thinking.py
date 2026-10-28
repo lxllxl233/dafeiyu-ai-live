@@ -58,7 +58,7 @@ def post(port: int, path: str, body: dict) -> dict:
 def main() -> int:
     port = _free_port()
     env = dict(os.environ, STS2_OVERLAY_PORT=str(port), PYTHONIOENCODING="utf-8")
-    proc = subprocess.Popen([sys.executable, "-X", "utf8", os.path.join(ROOT, "overlay_server.py")],
+    proc = subprocess.Popen([sys.executable, "-X", "utf8", os.path.join(ROOT, "main.py"), "studio"],
                             cwd=ROOT, env=env,
                             stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
     try:

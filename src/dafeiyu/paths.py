@@ -24,6 +24,7 @@ UI: Path = ROOT / "ui"
 PERSONA: Path = ROOT / "persona"
 VOICE: Path = ROOT / "voice"
 GAMES: Path = ROOT / "games"
+RECORDINGS: Path = ROOT / "recordings"
 DOCS: Path = ROOT / "docs"
 TOOLS: Path = ROOT / "tools"
 LOGS: Path = ROOT / "logs"
@@ -46,6 +47,6 @@ def rel(path: os.PathLike[str] | str) -> str:
 
 
 __all__ = [
-    "ROOT", "SRC", "UI", "PERSONA", "VOICE", "GAMES", "DOCS", "TOOLS", "LOGS", "CACHE",
-    "CONFIG_FILE", "repo_root", "ensure_dirs", "rel",
+    "ROOT", "SRC", "UI", "PERSONA", "VOICE", "GAMES", "RECORDINGS", "DOCS", "TOOLS",
+    "LOGS", "CACHE", "CONFIG_FILE", "repo_root", "ensure_dirs", "rel",
 ]

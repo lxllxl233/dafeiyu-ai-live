@@ -160,7 +160,7 @@ def _save_seq() -> None:
 _seq = _load_seq()
 _SPEAKER_RE = re.compile(r"(?:大肥鱼|DeepSeek|AI)\s*[:：]\s*", re.I)
 _status = {
-    "character": "铁甲战士",
+    "character": "演示角色",
     "ascension": 10,
     "floor": 0,
     "hp": 80,
@@ -707,9 +707,25 @@ class Handler(BaseHTTPRequestHandler):
             self._send(404, b"not found", "text/plain")
 
 
-def main(port: int | None = None):
+def _make_server(port: int | None = None) -> ThreadingHTTPServer:
     os.makedirs(os.path.join(UI_DIR, "overlay"), exist_ok=True)
-    srv = ThreadingHTTPServer((HOST, port or PORT), Handler)
+    return ThreadingHTTPServer((HOST, port or PORT), Handler)
+
+
+def start_background(port: int | None = None) -> ThreadingHTTPServer | None:
+    """给 main.py 用：端口空就起后台服务；被占用返回 None（不抢正在跑的 studio）。"""
+    try:
+        srv = _make_server(port)
+    except OSError as exc:
+        print(f"overlay server 未启动（{exc}）", flush=True)
+        return None
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    print(f"overlay server on http://{HOST}:{port or PORT}", flush=True)
+    return srv
+
+
+def main(port: int | None = None):
+    srv = _make_server(port)
     print(f"overlay server on http://{HOST}:{port or PORT}", flush=True)
     srv.serve_forever()
 

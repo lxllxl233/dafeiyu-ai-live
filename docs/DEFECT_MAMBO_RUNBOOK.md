@@ -11,25 +11,25 @@ cd D:\aigame\sljt\sljt
 curl.exe -s -o NUL -w "%{http_code}" http://127.0.0.1:9880/control   # 200 = 好
 cd D:\MamboTTS\app\MamboTTS-v1.2.1-full; python run_engine.py          # 后台常驻
 # 2) 弹幕服务 8730（后台）
-cd D:\aigame\sljt\sljt; python overlay_server.py
+cd D:\aigame\sljt\sljt; python main.py studio
 # 3) 主播窗（后台，曼波配音默认；--capture 让直播姬的显示器捕获能抓到）
-python streamer.py --capture
+python main.py --capture
 # 4) OBS：切游戏采集 + 自检
-python obsctl.py free
-python obsctl.py health
+python main.py obs free
+python main.py obs health
 # 5) 游戏（Steam appid 2868840）
-python sts2.py state      # 连不上 8080 说明游戏没开
+python tools/sts2.py state      # 连不上 8080 说明游戏没开
 ```
 
 ## 1. 一局的完整流程
 
 ```powershell
-python obsctl.py start                       # 从选人开始录
-python sts2.py do open_character_select
-python sts2.py do select_character --option 4 # 4 = DEFECT（故障机器人）
+python main.py obs start                       # 从选人开始录
+python tools/sts2.py do open_character_select
+python tools/sts2.py do select_character --option 4 # 4 = DEFECT（故障机器人）
 # 进阶等级：A<n> 用 decrease_ascension 调到 n（Defect 首次是 A0）
-python sts2.py do embark
-python sts2.py route                         # 选路 + --commit
+python tools/sts2.py do embark
+python tools/sts2.py route                         # 选路 + --commit
 ```
 
 - 战斗（v20 协议，一回合两次调用）：
@@ -39,7 +39,7 @@ python sts2.py route                         # 选路 + --commit
   python tools/act.py --file tmp_plan.json    # 执行 + 回下一回合局面包
   ```
 - 事件/奖励：`do choose_event_option --option i`、`do claim_reward --option i`、`do choose_reward_card --option i`
-- 每幕结束：`python sts2.py memory --write`，然后**开新会话**继续（最大的一笔省 token）
+- 每幕结束：`python tools/sts2.py memory --write`，然后**开新会话**继续（最大的一笔省 token）
 
 ## 2. 升降阶规则（本模式的硬规则）
 
@@ -59,10 +59,10 @@ python sts2.py route                         # 选路 + --commit
 ## 4. 每局收尾
 
 ```powershell
-python obsctl.py stop        # 拿录像路径
+python main.py obs stop        # 拿录像路径
 # 改名成上面第 2 节的格式
-python sts2.py report        # JSONL → logs/run_*.md
-python sts2.py memory --write
+python tools/sts2.py report        # JSONL → logs/run_*.md
+python tools/sts2.py memory --write
 ```
 
 复盘只写三件事：死因链、这局的新教训、下一局改什么（新教训写进 `sts2-defect-defect` 技能，不改铁甲 skill）。

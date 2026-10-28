@@ -25,4 +25,4 @@ mod 里 `select_deck_card` 的点击路径大概只接了「手牌/奖励三选�
 
 **临时绕过（已写进 LESSONS.md / SKILL.md）**
 - 遇到会打开「从牌组移除 N 张」的选项，**不要选**；
-- 已经卡住：`python sts2.py do save_and_quit` → `python sts2.py do continue_run`，会回滚到该选项之前。
+- 已经卡住：`python tools/sts2.py do save_and_quit` → `python tools/sts2.py do continue_run`，会回滚到该选项之前。

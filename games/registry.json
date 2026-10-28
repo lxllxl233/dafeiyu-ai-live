@@ -7,7 +7,7 @@
       "platform": "Steam · 2868840",
       "status": "ready",
       "pack": "slay-the-spire-2",
-      "adapter": "dafeiyu.games.sts2:Sts2Adapter",
+      "adapter": "game-skill/adapter.py:Sts2Adapter",
       "tags": ["卡牌", "肉鸽", "策略", "爬塔"],
       "notes": "铁甲战士 A10 实况；mod 本地 HTTP :8080 只读状态，出牌走兼容层 CLI。"
     },

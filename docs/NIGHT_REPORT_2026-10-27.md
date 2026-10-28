@@ -161,7 +161,7 @@ test_combat_math / test_state_compact / test_batch` 全部 ALL OK。
 
 `powershell
 cd D:\aigame\sljt\sljt
-python sts2.py state                        # 看现在在哪（现在应是 GAME_OVER / 主菜单）
+python tools/sts2.py state                        # 看现在在哪（现在应是 GAME_OVER / 主菜单）
 python tools\run_start.py                  # 开新局（自动 return_to_main_menu + 起 OBS）
 python tools\ctx.py                        # 战斗内：读局面包
 python tools\act.py --file tmp_plan.json   # 执行 say+seq

@@ -38,7 +38,7 @@
 ```powershell
 python tools/live.py check                    # overlay/TTS/OBS 五项
 python tools/ctx.py                           # 确认 MAIN_MENU + continue_run
-python -X utf8 sts2.py do continue_run        # 回到 f1 那场战斗
+python -X utf8 tools/sts2.py do continue_run        # 回到 f1 那场战斗
 python -X utf8 tools/ctx.py                   # 读局面
 ```
 

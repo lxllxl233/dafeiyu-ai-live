@@ -97,9 +97,9 @@ run105 的复现：23:49:29 局面 hp 6、能量 3、手牌含血墙/防御；�
 
 ## 6. 有限新局验证：**没做成，原因写清楚**
 
-`python sts2.py state` → `ConnectionRefusedError [WinError 10061] 127.0.0.1:8080`，游戏/mod 没在跑。
+`python tools/sts2.py state` → `ConnectionRefusedError [WinError 10061] 127.0.0.1:8080`，游戏/mod 没在跑。
 所以本次**没有任何一局新对局**，不存在"新管线实战表现"的证据。要补就三步：
-起游戏 → `python sts2.py state` 确认通 → 开一局 A10 跑 `tools/replay_audit.py` 对比本季数字。
+起游戏 → `python tools/sts2.py state` 确认通 → 开一局 A10 跑 `tools/replay_audit.py` 对比本季数字。
 
 ## 7. 不能证明的事（别把回放当胜率）
 

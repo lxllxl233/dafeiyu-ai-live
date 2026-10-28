@@ -2,17 +2,21 @@
 # -*- coding: utf-8 -*-
 """大肥鱼直播姬 · 命令行。
 
-    python dafeiyu.py studio            起 overlay + 直播姬控制台（:8730）
-    python dafeiyu.py demo              离线跑一遍「游戏 → 性格 → 语音 → UI」
-    python dafeiyu.py say --thought "..." --meme "..."
-    python dafeiyu.py status            各层体检（JSON）
-    python dafeiyu.py games             游戏列表
-    python dafeiyu.py voice test "..."  合成一句试听
-    python dafeiyu.py doctor            环境自检
-    python dafeiyu.py setup             建兼容链接（db/、tools/data/）
+    python main.py studio            起 overlay + 直播姬控制台（:8730）
+    python main.py demo              离线跑一遍「游戏 → 性格 → 语音 → UI」
+    python main.py say --thought "..." --meme "..."
+    python main.py status            各层体检（JSON）
+    python main.py games             游戏列表
+    python main.py game state        读当前游戏状态（默认取 config.json 的 game）
+    python main.py voice test "..."  合成一句试听
+    python main.py doctor            环境自检
+    python main.py setup             建兼容链接（db/、tools/data/）
+    python main.py replay ...        录像回放（按游戏/按局）
+    python main.py obs health        OBS 控制（setup/start/stop/health）
 
-仓库根的同名入口（sts2.py / streamer.py / overlay_server.py / obsctl.py）是兼容 shim，
-老命令继续可用。
+不写子命令时 `python main.py` 直接起桌宠；右键菜单可交互。
+老脚本里的 `python sts2.py state` / `python obsctl.py health` 仍可用
+（`tools/sts2.py`、`tools/obsctl.py` 兼容入口）。
 """
 
 from __future__ import annotations
@@ -100,7 +104,7 @@ def cmd_demo(args) -> int:
             print(f"  大肥鱼> {res.text}", flush=True)
             if res.pushed.get("ok") is False and first:
                 print(f"  （overlay 没连上：{res.pushed.get('error')}；"
-                      f"用 `python dafeiyu.py studio` 起来再跑）", flush=True)
+                      f"用 `python main.py studio` 起来再跑）", flush=True)
                 first = False
             if args.once:
                 break
@@ -195,6 +199,34 @@ def cmd_games(args) -> int:
     return 0
 
 
+def cmd_game(args) -> int:
+    """读游戏适配器状态；默认取 config 的 game，离线也返回非 0，方便脚本判断。"""
+    registry = GameRegistry()
+    game_id = args.game or LiveConfig.load().game
+    pack = registry.get(game_id)
+    if not pack:
+        print(f"ERR 没有这个游戏包：{game_id}")
+        return 2
+    adapter = registry.create_adapter(game_id)
+    if not adapter:
+        print(f"ERR 适配器加载失败：{pack.info.adapter}")
+        return 2
+    status = adapter.status()
+    state = status.get("state") or adapter.snapshot().to_dict()
+    if args.json:
+        _print_json({"status": status, "state": state})
+    else:
+        print(_game_status_line(state))
+        print(f"screen={state.get('screen') or '—'} available={bool(status.get('available'))}")
+    return 0 if status.get("available") else 1
+
+
+def cmd_obs(args) -> int:
+    from dafeiyu.recording.obs import main as obs_main
+
+    return int(obs_main([args.action] + list(getattr(args, "rest", []) or [])) or 0)
+
+
 def cmd_voice(args) -> int:
     cfg = LiveConfig.load()
     router = build_router(cfg)
@@ -203,7 +235,7 @@ def cmd_voice(args) -> int:
         return 0
     text = " ".join(args.text) if isinstance(args.text, list) else str(args.text or "")
     if not text:
-        print("用法：python dafeiyu.py voice test \"一句话\" [--voice mambo|animal]")
+        print("用法：python main.py voice test \"一句话\" [--voice mambo|animal]")
         return 2
     result = router.speak(text, args.voice)
     if not result.ok:
@@ -250,7 +282,7 @@ def cmd_doctor(args) -> int:
         else f"离线（{ping.get('error')}）")
 
     try:
-        from dafeiyu.stream import replay
+        from dafeiyu.recording import replay
 
         rr = replay.scan()
         total = sum(r["size_bytes"] for r in rr)
@@ -258,17 +290,24 @@ def cmd_doctor(args) -> int:
     except Exception as exc:
         add("WARN", "replay", f"{type(exc).__name__}: {exc}")
 
-    db = paths.GAMES / "slay-the-spire-2" / "corpus" / "db" / "sts2.db"
-    add("OK" if db.exists() else "BAD", "corpus", f"{db.stat().st_size // 1024} KB" if db.exists() else f"缺 {db}")
-
     registry = GameRegistry()
-    adapter = registry.create_adapter("slay-the-spire-2")
+    corpus_db = None
+    for pack in registry.packs():
+        rel = str((pack.manifest.get("corpus") or {}).get("db") or "")
+        if rel and pack.root and (pack.root / rel).exists():
+            corpus_db = pack.root / rel
+            break
+    add("OK" if corpus_db else "BAD", "corpus",
+        f"{corpus_db.stat().st_size // 1024} KB" if corpus_db else "没有可用的 corpus db")
+
+    cfg = LiveConfig.load()
+    adapter = registry.create_adapter(cfg.game)
     try:
-        sts2_ok = bool(adapter and adapter.available())
+        game_ok = bool(adapter and adapter.available())
     except Exception:
-        sts2_ok = False
-    add("OK" if sts2_ok else "WARN", "sts2", "mod :8080 在线" if sts2_ok
-        else "游戏/mod 不在线（不影响离线演示）")
+        game_ok = False
+    add("OK" if game_ok else "WARN", "game",
+        f"{cfg.game} 在线" if game_ok else f"{cfg.game} 不在线（不影响离线演示）")
 
     for level, name, detail in rows:
         print(f"{level:<4s} {name:<8s} {detail}")
@@ -278,11 +317,15 @@ def cmd_doctor(args) -> int:
 
 
 def cmd_setup(args) -> int:
-    """建兼容链接：让老脚本继续用 db/ 和 tools/data/ 的相对路径。"""
-    pairs = [
-        (paths.ROOT / "db", paths.ROOT / "games" / "slay-the-spire-2" / "corpus" / "db"),
-        (paths.TOOLS / "data", paths.ROOT / "games" / "slay-the-spire-2" / "corpus" / "data"),
-    ]
+    """按 game.json 的 links 建兼容链接，让老脚本相对路径继续可用。"""
+    pairs = []
+    for pack in GameRegistry().packs():
+        for rel, target in (pack.manifest.get("links") or {}).items():
+            if pack.root:
+                pairs.append((paths.ROOT / str(rel), pack.root / str(target)))
+    if not pairs:
+        print("没有需要创建的兼容链接。")
+        return 0
     ok = True
     for link, target in pairs:
         shown = os.path.relpath(link, paths.ROOT)
@@ -312,7 +355,7 @@ def cmd_setup(args) -> int:
 
 def cmd_replay(args) -> int:
     """录像回放：按游戏分目录、一局一个 run.mp4。"""
-    from dafeiyu.stream import replay
+    from dafeiyu.recording import replay
 
     action = args.action
     if action == "list":
@@ -321,7 +364,7 @@ def cmd_replay(args) -> int:
             _print_json(rows)
             return 0
         if not rows:
-            print("还没有录像。开一局：python dafeiyu.py replay start")
+            print("还没有录像。开一局：python main.py replay start")
             return 0
         print(f"{'局':>5}  {'游戏':<18} {'角色':<10} {'进阶':<5} {'结果':<22} {'大小':>9}")
         for r in rows:
@@ -346,7 +389,7 @@ def cmd_replay(args) -> int:
         print(f"RUN {run_dir}")
         try:
             replay.start_recording(run_dir)
-            print("RECORDING（OBS 已开录；结束后 python dafeiyu.py replay stop --result ...）")
+            print("RECORDING（OBS 已开录；结束后 python main.py replay stop --result ...）")
         except Exception as exc:
             print(f"WARN OBS 没开录（{type(exc).__name__}: {exc}）")
             print("     目录已建好；OBS 恢复后重跑 replay start，或手动把录像放进该目录的 run.mp4")
@@ -435,6 +478,18 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("games", help="游戏列表")
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_games)
+
+    p = sub.add_parser("game", help="读游戏状态（默认取 config.json 的 game）")
+    p.add_argument("action", nargs="?", default="state", choices=["state", "status"])
+    p.add_argument("--game", default=None)
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_game)
+
+    p = sub.add_parser("obs", help="OBS WebSocket 控制")
+    p.add_argument("action", choices=["status", "setup", "start", "stop", "shot",
+                                      "ticker", "mute", "free", "health", "nomute"])
+    p.add_argument("rest", nargs=argparse.REMAINDER)
+    p.set_defaults(func=cmd_obs)
 
     p = sub.add_parser("voice", help="语音层")
     vs = p.add_subparsers(dest="action", required=True)

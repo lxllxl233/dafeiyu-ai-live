@@ -25,6 +25,10 @@
 依赖是单向的：`games` / `persona` / `voice` 不 import UI，UI 不 import 具体游戏；
 内核只依赖抽象（`GameAdapter`、`Voice` 协议、人设卡 JSON）。
 
+仓库只有一个根代码入口 `main.py`：无参数进 `dafeiyu.ui.desktop`（桌宠 + 右键菜单），
+带子命令进 `dafeiyu.cli`。所有 Python 实现都在 `src/dafeiyu/`；`ui/`、`persona/`、
+`voice/`、`games/` 根目录只放资产与清单。
+
 | 层 | 输入 | 输出 | 失败时 |
 |---|---|---|---|
 | 游戏适配器 | 游戏/兼容层状态 | `GameState`、`game.*` 事件 | 返回空状态，不影响开播 |
@@ -104,7 +108,7 @@ class GameAdapter:
 
 约定：
 
-- 适配器**只读**游戏状态，不执行动作。出牌/菜单操作仍归兼容层 CLI（`sts2.py`）或 Agent。
+- 适配器**只读**游戏状态，不执行动作。出牌/菜单操作仍归兼容层 CLI（`tools/sts2.py`）或 Agent。
 - `GameState.digest()` 决定去重：只有字段变化才发事件。
 - 适配器挂掉 = 游戏离线，不是直播故障；`LiveSession.status()` 会带上错误。
 
@@ -127,7 +131,7 @@ class GameAdapter:
 
 ### 录像回放
 
-`src/dafeiyu/stream/replay.py` 管目录和元数据，OBS 只负责开/关：
+`src/dafeiyu/recording/replay.py` 管目录和元数据，OBS 只负责开/关：
 
 ```text
 recordings/<game-id>/run-NNNN/
@@ -149,11 +153,11 @@ recordings/<game-id>/run-NNNN/
 | 换动物语音色 | `voice/animal/scale.json` |
 | 换曼波参考音 | `voice/mambo/ref.json` 或 `STS2_TTS_REF` |
 | 换默认语音/音量/间奏 | `config.json` 或 `DAFEIYU_*` 环境变量 |
-| 加游戏 | `games/<id>/` + `GameAdapter` + `games/registry.json` |
+| 加游戏 | `games/<id>/` + `game-skill/adapter.py` + `games/registry.json` |
 | 加 UI 面板 | `ui/studio/index.html` + `/api/studio` 字段 |
-| 换桌宠精灵 | `ui/desktop/assets/pet/`（正面/侧面/背面） |
+| 换桌宠精灵 | `src/dafeiyu/ui/assets/pet/`（正面/侧面/背面） |
 | 换 OBS 气泡样式 | `ui/overlay/index.html` 的 `#main` |
-| 改录像目录规则 | `src/dafeiyu/stream/replay.py` |
+| 改录像目录规则 | `src/dafeiyu/recording/replay.py` |
 
 ## 8. 测试策略
 
@@ -163,14 +167,15 @@ recordings/<game-id>/run-NNNN/
   - 语音：WAV 合法性、增益、离线失败、回退
   - 游戏：注册表、manifest 路径、离线适配器、语料库行数
   - 会话：推送 payload、事件顺序、状态合并
-- `tools/test_*.py`：v1 的决策/渲染/overlay 回归，继续保留；根 shim 保证 import 不变。
-- `python dafeiyu.py doctor`：环境层自检（人设/UI/两种语音/overlay/语料/游戏）。
+- `tools/test_*.py`：v1 的决策/渲染/overlay 回归，继续保留；`tools/` 下的同名 shim
+  保证 `import streamer` / `import sts2` 不变。
+- `python main.py doctor`：环境层自检（人设/UI/两种语音/overlay/语料/游戏）。
 
 ## 9. 兼容与迁移
 
-- 四个根 shim（`sts2.py` / `streamer.py` / `overlay_server.py` / `obsctl.py`）用
-  `sys.modules[__name__] = 真模块`，所以 `import sts2` 拿到的是真模块，老测试不用改。
-- `db/`、`tools/data/` 是兼容链接（`python dafeiyu.py setup` 创建），真实内容在
+- 兼容 shim 全部在 `tools/`（`sts2.py` / `streamer.py` / `obsctl.py` / `caster_state.py` /
+  `instance_lock.py`），用 `sys.modules[__name__] = 真模块`；根目录不再有代码文件。
+- `db/`、`tools/data/` 是兼容链接（`python main.py setup` 创建），真实内容在
   `games/slay-the-spire-2/corpus/`。这样 v1 里几十个 `"db/sts2.db"` 相对路径不用逐个改。
 - 迁移只搬文件、不改业务逻辑；唯一的行为修复是桌面窗 `push` / `start_talking` 对
   `presence` 缺省值的容错（单测用 `__new__` 构造窗口时没有该属性）。

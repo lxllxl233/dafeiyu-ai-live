@@ -47,11 +47,11 @@ def main() -> int:
     ok(il.read_lock(p) is None, "读不到的锁当 None")
 
     print("[2] 写进去 + 进程活着 + 创建时间对得上 → 认它")
-    info = il.claim(p, argv=["streamer.py"], pid=4242, ctime=123456)
+    info = il.claim(p, argv=["main.py"], pid=4242, ctime=123456)
     ok(info["pid"] == 4242, "claim 写了自己的 pid")
     got = il.owner(p, alive=lambda pid: pid == 4242, ctime=lambda pid: 123456)
     ok(got is not None and got["pid"] == 4242, "活着的旧实例被认出来")
-    ok(got["argv"] == ["streamer.py"], "argv 一起留着（方便排查是谁开的）")
+    ok(got["argv"] == ["main.py"], "argv 一起留着（方便排查是谁开的）")
 
     print("[3] 进程死了 → 当没有，不误杀")
     ok(il.owner(p, alive=lambda pid: False, ctime=lambda pid: 123456) is None,

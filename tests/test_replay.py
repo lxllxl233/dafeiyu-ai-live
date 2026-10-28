@@ -5,7 +5,7 @@ import json
 
 import pytest
 
-from dafeiyu.stream import replay
+from dafeiyu.recording import replay
 
 
 @pytest.fixture()

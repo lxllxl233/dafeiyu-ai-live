@@ -117,7 +117,7 @@ skill 里的命令默认项目目录里有一套工具：
 - **历史回放审计**：`tools/replay_audit.py` 拿 `decisions.jsonl` 每行的原始 `state` 重放，
   量四个数：规则触发/违反、经验命中、`forecast` vs 落地偏差、今天护栏对历史牌序的判定
   （0 误伤 / 0 放行才算没退化）。账本 v22 起多记 `input.allow`，否则分不清「护栏漏」和「显式豁免」。
-- 阈值只有 `tools/hard_rules.py` 一处；SKILL.md、`NEXT_PROMPT.txt`、README 只写指针，不复制数字。
+- 阈值只有 `tools/hard_rules.py` 一处；SKILL.md、`games/slay-the-spire-2/game-skill/NEXT_PROMPT.txt`、README 只写指针，不复制数字。
 
 ### v21（2026-10-27）
 

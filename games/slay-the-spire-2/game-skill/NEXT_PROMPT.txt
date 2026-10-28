@@ -1,9 +1,9 @@
 你现在接手一个 Slay the Spire 2 项目：在 Windows 工作目录 D:\aigame\sljt\sljt 下，用本地 mod API 打 A10 铁甲战士，同时录制游戏视频+游戏音频，并用 OBS 浏览器源显示 DeepSeek 大肥鱼 overlay 解说。
 
 > 2026-10 升级：仓库已是「大肥鱼直播姬」——UI / 源码 / 性格层 / 语音层 / 游戏列表分层，杀塔是 `games/slay-the-spire-2/` 游戏包。
-> 本文仍是杀塔 A10 的开局流程；老命令全部不变（根 shim）。控制台 `python dafeiyu.py studio`，架构见 README.md / ARCHITECTURE.md。
+> 本文仍是杀塔 A10 的开局流程；老命令在 `tools/` 下仍有兼容入口。控制台 `python main.py studio`，架构见 README.md / ARCHITECTURE.md。
 
-当前状态：**别信这张便条**——开局先 `python sts2.py state` 确认（mod 没起会 ConnectionRefused，不是故障，先把游戏/引擎拉起来）。已知上一局 run106 在 act1 f7 战斗胜利后被中断（非死亡、非主动放弃，见 `logs/run106_review.md`）；中断/放弃的局不要恢复，直接新开。
+当前状态：**别信这张便条**——开局先 `python tools/sts2.py state` 确认（mod 没起会 ConnectionRefused，不是故障，先把游戏/引擎拉起来）。已知上一局 run106 在 act1 f7 战斗胜利后被中断（非死亡、非主动放弃，见 `logs/run106_review.md`）；中断/放弃的局不要恢复，直接新开。
 
 开始前只需要读两样（别再把 docs/ 全读一遍）：
 1. skill `sts2-ironclad-ironclad`（决策 OS v22，ctx 局面包 + act 牌序 + 动作回执，一次加载）
@@ -13,14 +13,14 @@
 目标：新开一局 A10 铁甲战士，从选人开始完整录制，打到本局结束；每局结束写战报/复盘/lessons。
 
 启动流程：
-1. python sts2.py state 确认 MAIN_MENU；python obsctl.py status 确认未录制。
+1. python tools/sts2.py state 确认 MAIN_MENU；python main.py obs status 确认未录制。
 2. **python tools/live.py check**：主播链路体检（弹幕窗心跳 / 曼波合成 / OBS 源）。
    有 BAD 就 `python tools/live.py restart-streamer`；全绿再开录，别带着哑弹幕直播。
 3. 重置 overlay（POST http://127.0.0.1:8730/reset），刷新 OBS 浏览器源 AI Commentary（PressInputPropertiesButton / refreshnocache）。
-4. python obsctl.py start（从选人开始录；只要游戏画面+游戏音频，mic/桌面静音）。
-5. python sts2.py do open_character_select；确认 IRONCLAD、A10、can_embark。
-6. python sts2.py do embark；Neow 按 docs/NEOW_DECISIONS.md 比较稀缺性（商店能补的删牌降权；变2牌在血线能兜住时优先），不要默认安全。
-7. 进地图先 python sts2.py route，把路线发到 overlay，再选第一格；血闸直接照 `ctx.rules` 执行（唯一源 `tools/hard_rules.py`，别自己另记一套数字）。
+4. python main.py obs start（从选人开始录；只要游戏画面+游戏音频，mic/桌面静音）。
+5. python tools/sts2.py do open_character_select；确认 IRONCLAD、A10、can_embark。
+6. python tools/sts2.py do embark；Neow 按 docs/NEOW_DECISIONS.md 比较稀缺性（商店能补的删牌降权；变2牌在血线能兜住时优先），不要默认安全。
+7. 进地图先 python tools/sts2.py route，把路线发到 overlay，再选第一格；血闸直接照 `ctx.rules` 执行（唯一源 `tools/hard_rules.py`，别自己另记一套数字）。
 
 战斗/操作硬规则（v22：结构化输入 + 结构化输出 + 5 条硬闸）：
 - **5 条硬闸只有一处出处 `tools/hard_rules.py`**：`ctx.py` 每回合把 `rules` 注入局面包，
@@ -58,18 +58,18 @@
 - Act1 目标：2 AOE、1–2 易伤、2–3 优质防御、1–2 运转、1 收尾，牌组≤15、最多 1 精英、Boss 前花光金币；Boss 前 **HP≥70% + 2 张 8+ 甲 + 药水先验过**（硬闸原文 `tools/hard_rules.py`）。
 - 解说 banner 只写一句自然中文，不写“大肥鱼/DeepSeek/AI:”前缀，不拆 tag/黄字，整句同色；适度社区梗，不要每句都玩梗。
 - 配音不必每刀配：进精英/Boss/低血时用
-  `python sts2.py quip "句1" "句2" "句3"` 一次埋 3–5 句（并行预热 TTS，页面排队播），
+  `python tools/sts2.py quip "句1" "句2" "句3"` 一次埋 3–5 句（并行预热 TTS，页面排队播），
   台词从 `docs/IRONCLAD_VOICE.md` 挑（战士梗：燃烧之血/打击/痛击/自伤换血/营火）。
 
 省 token 的五条习惯：
 - **算术不进模型**：伤害/格挡/入伤/斩杀/变费/抽牌全在 `ctx`/`sim` 里算；模型只读 `ctx` 的 `calc/plans` 并做取舍。
 - **一回合一份 JSON**：别再 `state` 读自然语言快照；`ctx` 是唯一局面来源。
 - **杂怪 auto**：一场杂怪 1 次请求；精英/Boss 才逐回合。
-- 每幕结束 `python sts2.py memory --write`，然后**开新会话续跑**（旧 transcript 不再被每次请求重读，这是单笔最大的一省）。
+- 每幕结束 `python tools/sts2.py memory --write`，然后**开新会话续跑**（旧 transcript 不再被每次请求重读，这是单笔最大的一省）。
 - 不整份读长文档/日志；要查就 grep 行号再 read 窗口。
 
 结束：
-python obsctl.py stop；把录像重命名为 recordings/sts2_ironclad_a10_run<N>_<result>_floor<M>.mp4；python sts2.py report；按 docs/RUN_REVIEW.md 复盘（**中止/未结算的局也要写 `logs/runNN_review.md`**，否则统计漏局）；更新 docs/LESSONS.md 和策略规则；跑 `python tools/test_docs_consistency.py`。
+python main.py obs stop；把录像重命名为 recordings/sts2_ironclad_a10_run<N>_<result>_floor<M>.mp4；python tools/sts2.py report；按 docs/RUN_REVIEW.md 复盘（**中止/未结算的局也要写 `logs/runNN_review.md`**，否则统计漏局）；更新 docs/LESSONS.md 和策略规则；跑 `python tools/test_docs_consistency.py`。
 复盘时加跑 `python tools/replay_audit.py`：它会拿账本里每条决策的原始 `state` 回放，
 给出规则触发/违反、经验命中、模拟偏差、护栏回归四个数（口径见 docs/REPLAY_AUDIT.md）；
 有「历史执行今天被拒」或「历史被拒今天放行」就是回归，先修再继续。

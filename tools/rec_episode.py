@@ -3,9 +3,9 @@
 """旧入口（保留）：一局一段 OBS 录像，收进 ``recordings/<游戏>/run-NNNN/run.mp4``。
 
 新命令更清楚，推荐用：
-  python dafeiyu.py replay start --run 97 --character ironclad --ascension 10
-  python dafeiyu.py replay stop  --result win_a10
-  python dafeiyu.py replay list
+  python main.py replay start --run 97 --character ironclad --ascension 10
+  python main.py replay stop  --result win_a10
+  python main.py replay list
 
 这个脚本兼容老调用：
   python tools/rec_episode.py start --run 81 --note "..."
@@ -22,7 +22,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from dafeiyu.stream import replay  # noqa: E402
+from dafeiyu.recording import replay  # noqa: E402
 
 
 def start(run: int | None = None, note: str = "") -> str:

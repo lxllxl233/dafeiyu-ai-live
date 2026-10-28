@@ -71,3 +71,12 @@ def test_pacing_gap_repeat_and_quips():
     assert pace.quip_allowed("刚好够", now + 1) is False
     assert pace.quip_allowed("刚好够", now + 601) is True
     assert pace.stats(now + 1)["sent"] == 1
+
+def test_generic_memes_are_game_agnostic():
+    p = Persona.load()
+    bank = p.memes()
+    assert bank["id"] == "general"
+    assert len(bank["items"]) >= 10
+    item = p.pick_meme(tag="flag")
+    assert item is not None and item["text"]
+    assert p.pick_meme(tag="no-such-tag") is None

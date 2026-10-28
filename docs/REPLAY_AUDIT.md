@@ -127,7 +127,7 @@
 
 ### 2.5 胜率
 
-**不比较**。到 2026-10-28 11:50 为止 mod 没在跑（`python sts2.py state` → `ConnectionRefusedError 10061`），
+**不比较**。到 2026-10-28 11:50 为止 mod 没在跑（`python tools/sts2.py state` → `ConnectionRefusedError 10061`），
 没有新局可跑；历史上是 **0 胜 / 9 败 / 2 中止**，样本也不足以谈胜率（见 `docs/EVALUATION.md`）。
 回放能证明的是「输入与拦截变对了」，不能证明「会赢」。
 

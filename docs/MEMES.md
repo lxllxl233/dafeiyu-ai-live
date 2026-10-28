@@ -176,7 +176,7 @@ python tools/memedb.py suggest --situation combat --avoid strike_deck,gg --limit
 选好后直接放进 `sts2.py` 的 `--meme`：
 
 ```powershell
-python sts2.py do play_card --card 0 --target 0 --thought "先血墙，再打击。" --meme "血墙：2血换16甲，这买卖我熟。"
+python tools/sts2.py do play_card --card 0 --target 0 --thought "先血墙，再打击。" --meme "血墙：2血换16甲，这买卖我熟。"
 ```
 
 ## 六、写梗/改梗原则

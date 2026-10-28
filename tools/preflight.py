@@ -79,7 +79,7 @@ def main(argv: list[str]) -> int:
             if screen == "MAIN_MENU":
                 legal = st.get("available_actions") or []
                 if "continue_run" in legal:
-                    print("有存档：python -X utf8 sts2.py do continue_run")
+                    print("有存档：python -X utf8 tools/sts2.py do continue_run")
                 else:
                     print("无存档：python -X utf8 tools/run_start.py")
             elif deck:

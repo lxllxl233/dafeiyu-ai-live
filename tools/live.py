@@ -76,7 +76,7 @@ def check_overlay():
             return OK, f"overlay :{PORT} 在跑"
         return WARN, f"overlay :{PORT} 有响应但 ok=False"
     except Exception as e:
-        return BAD, f"overlay :{PORT} 连不上（{type(e).__name__}）— 先 python overlay_server.py"
+        return BAD, f"overlay :{PORT} 连不上（{type(e).__name__}）— 先 python main.py studio"
 
 
 def check_tts():
@@ -183,7 +183,7 @@ def cmd_restart_streamer(args):
     pyw = os.path.join(os.path.dirname(exe), "pythonw.exe")
     if os.path.exists(pyw):
         exe = pyw
-    cmd = [exe, "streamer.py"]
+    cmd = [exe, "main.py"]
     if args.capture:
         cmd.append("--capture")
     if getattr(args, "click_through", False):

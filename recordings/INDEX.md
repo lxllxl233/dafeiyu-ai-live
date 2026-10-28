@@ -1,6 +1,6 @@
 # 录像回放
 
-> 一局一个文件夹，默认一个 `run.mp4`；这个文件由 `python dafeiyu.py replay index` 生成。
+> 一局一个文件夹，默认一个 `run.mp4`；这个文件由 `python main.py replay index` 生成。
 > 视频不进 Git（`.gitignore` 只放行本文件和 README）。
 
 ## 杀戮尖塔 2（`slay-the-spire-2`）

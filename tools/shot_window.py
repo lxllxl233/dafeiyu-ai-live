@@ -57,7 +57,7 @@ def main() -> int:
     a = ap.parse_args()
     hits = find(a.pid, a.cls)
     if not hits:
-        print("找不到主播窗（先起 streamer.py --capture）")
+        print("找不到主播窗（先起 main.py --capture）")
         return 1
     h, pid = hits[0]
     r = wintypes.RECT()

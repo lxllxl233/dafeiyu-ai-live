@@ -18,20 +18,20 @@ recordings/
 
 ```bash
 # 开一局：建目录 + 把 OBS 录像目录指过去 + 开始录
-python dafeiyu.py replay start --character ironclad --ascension 10
+python main.py replay start --character ironclad --ascension 10
 
 # 打完：停录，把 OBS 输出收成 <局>/run.mp4，补 meta，重写 INDEX
-python dafeiyu.py replay stop --result win_a10
+python main.py replay stop --result win_a10
 
 # 只建目录、不录（先排好再手动开 OBS）
-python dafeiyu.py replay new --run 97 --character ironclad --ascension 10 --note "实验卡组"
+python main.py replay new --run 97 --character ironclad --ascension 10 --note "实验卡组"
 
 # 看 / 重写索引
-python dafeiyu.py replay list
-python dafeiyu.py replay index
+python main.py replay list
+python main.py replay index
 
 # 把根目录散放的旧 mp4 收进分游戏目录（一次性）
-python dafeiyu.py replay migrate
+python main.py replay migrate
 ```
 
 - 局号默认自动 +1；也可以 `--run 98` 指定。

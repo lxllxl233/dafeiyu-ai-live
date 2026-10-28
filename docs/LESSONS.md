@@ -284,7 +284,7 @@
 - **结束前清 0 费牌**：Spite/Anger/Bloodletting/Battle Trance 这类 0 费牌，先用掉再结束；除非 Thorns/自伤致死或 Battle Trance 会关闭必要抽牌。`sts2.py end_turn` 会警告手里还有 0 费可打牌。
 - **状态稳定再结束**：出牌后 mod 可能返回“手牌0/能量未扣”的过渡快照；等 `play_card/end_turn` 合法且连续两次状态一致，再决定。`sts2.py` 现在会等待并告警，不在过渡态发 `end_turn`。
 - 目标：牌组 15–20；2 AOE；1 易伤；2–3 高质量防御；4 运转 + 2 回费；烧牌优先于纯力量。
-- 开局先 `python sts2.py route`，把路线发到 overlay，再选第一个节点；HP<70% 火堆权重提高；HP<50% 下一格必须营火。
+- 开局先 `python tools/sts2.py route`，把路线发到 overlay，再选第一个节点；HP<70% 火堆权重提高；HP<50% 下一格必须营火。
 - **弹幕格式**：banner 只写内容，不写“大肥鱼：”前缀；整句同色。
 
 
@@ -1447,7 +1447,7 @@ claim 金币 → claim 药水 → claim 卡 → choose/skip → collect。
 `DECK_PACE`（→ 要 --force）、`CARD_SELECTION_OPEN` / `REWARD_CARD_UNOPENED`（→ 要换动作）。
 run91 f11 实测：6 次调用才收完一个奖励界面，f14 又卡了 5 分钟。
 
-**修复**：新增 `python sts2.py rewards`，把整个 REWARD 界面放进**一个进程里循环**：
+**修复**：新增 `python tools/sts2.py rewards`，把整个 REWARD 界面放进**一个进程里循环**：
 - 金币/遗物/其它 → `claim_reward`；药水 → 有空格就领，满格默认留空（`--potion swap` 丢最差一瓶换）
 - 卡牌奖励 → 默认 claim→`skip_reward_cards`；`--take N` = 拿第 N 张（等价 `choose_reward_card --option N`）
 - 全处理完 → `collect_rewards_and_proceed`，循环到离开 REWARD 为止

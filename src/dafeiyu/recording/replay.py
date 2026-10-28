@@ -26,8 +26,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-ROOT = Path(__file__).resolve().parents[3]
-RECORDINGS = ROOT / "recordings"
+from .. import paths
+
+ROOT = paths.ROOT
+RECORDINGS = paths.RECORDINGS
 CURRENT = RECORDINGS / ".current.json"
 
 GAME_ALIASES = {
@@ -268,12 +270,12 @@ def render_index() -> str:
     lines = [
         "# 录像回放",
         "",
-        "> 一局一个文件夹，默认一个 `run.mp4`；这个文件由 `python dafeiyu.py replay index` 生成。",
+        "> 一局一个文件夹，默认一个 `run.mp4`；这个文件由 `python main.py replay index` 生成。",
         "> 视频不进 Git（`.gitignore` 只放行本文件和 README）。",
         "",
     ]
     if not groups:
-        lines.append("（还没有录像。`python dafeiyu.py replay new` 开一局。）")
+        lines.append("（还没有录像。`python main.py replay new` 开一局。）")
     for gid in sorted(groups):
         lines += [f"## {GAME_NAMES.get(gid, gid)}（`{gid}`）", "",
                   "| 局 | 角色 | 进阶 | 结果 | 大小 | 文件 |",

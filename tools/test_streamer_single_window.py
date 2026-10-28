@@ -75,7 +75,7 @@ def spawn(tag, out_dir=os.path.join(ROOT, "logs")):
     err = open(os.path.join(out_dir, f"single_{tag}.err"), "w", encoding="utf-8")
     env = dict(os.environ, STS2_OVERLAY_PORT=os.environ.get("STS2_OVERLAY_PORT", "8730"),
                PYTHONIOENCODING="utf-8")
-    p = subprocess.Popen([sys.executable, "-X", "utf8", "streamer.py", "--click-through"],
+    p = subprocess.Popen([sys.executable, "-X", "utf8", "main.py", "--click-through"],
                          cwd=ROOT, stdout=out, stderr=err, env=env)
     p._tag_files = (out, err)  # type: ignore[attr-defined]
     return p
@@ -138,7 +138,7 @@ def main() -> int:
     print("[3] --multi 允许并存（调试用）")
     env = dict(os.environ, STS2_OVERLAY_PORT=os.environ.get("STS2_OVERLAY_PORT", "8730"),
                PYTHONIOENCODING="utf-8")
-    c = subprocess.Popen([sys.executable, "-X", "utf8", "streamer.py", "--click-through", "--multi"],
+    c = subprocess.Popen([sys.executable, "-X", "utf8", "main.py", "--click-through", "--multi"],
                          cwd=ROOT, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env)
     got = wait_windows(2, timeout=15)
     ok(len(got) == 2, f"--multi 时确实两个窗口（实际 {len(got)}）")

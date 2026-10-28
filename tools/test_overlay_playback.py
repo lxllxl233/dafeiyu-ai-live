@@ -67,7 +67,7 @@ def main() -> int:
     env = dict(os.environ, STS2_OVERLAY_PORT=str(port), PYTHONIOENCODING="utf-8",
                STS2_OVERLAY_LOG_DIR=logdir, STS2_AUDIO_PENDING_TTL="2",
                STS2_TTS_URL="http://127.0.0.1:1")
-    proc = subprocess.Popen([sys.executable, "-X", "utf8", os.path.join(ROOT, "overlay_server.py")],
+    proc = subprocess.Popen([sys.executable, "-X", "utf8", os.path.join(ROOT, "main.py"), "studio"],
                             cwd=ROOT, env=env,
                             stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
     try:

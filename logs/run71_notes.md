@@ -49,7 +49,7 @@ f3 ?(蓝宝石种子：+9 血 + 升级痛击) → f4 ？(茂密植被：+83 金 
 
 ## 踩过的坑
 1. `act.py` 护栏「漏甲」会拦：起手有防御却没叠甲就换血，即使 plan 里排了防御也可能判失败 → 防御牌放 seq 最前面；确实要换血就写 `"allow_take":1` 并在 say 里给理由。
-2. `act.py` 发 `{"end":1}` 时若手牌正好打完（hand_n=0）会被误判成「过渡快照」拒掉 → 直接用 `python sts2.py do end_turn`。
+2. `act.py` 发 `{"end":1}` 时若手牌正好打完（hand_n=0）会被误判成「过渡快照」拒掉 → 直接用 `python tools/sts2.py do end_turn`。
 3. 头槌/攻击药水会产生 CARD_SELECTION，`seq` 会在那一步 `mid:1` 停下，要先 `select_deck_card` 再补 `end`。
 4. 药水槽只有 2 格（买第 3 瓶报 invalid_action）。
 

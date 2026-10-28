@@ -274,7 +274,7 @@ lethal   = 单体/AOE/伤害药水按 sim 实际结算 ≥ 敌人 HP+格挡
 8. **低血自伤**
    - Blood Wall/Offering/Breakthrough/Brand/Inferno 在低血时先算“自伤后是否还活着”。
 9. **手牌索引移位**
-   - 每打一张牌后重新读 `/state`；用 `python sts2.py play <CARD_ID>` 按卡牌 ID 出牌，避免旧索引。
+   - 每打一张牌后重新读 `/state`；用 `python tools/sts2.py play <CARD_ID>` 按卡牌 ID 出牌，避免旧索引。
 10. **药水留到死**
     - Boss/精英差一点时，抽牌/格挡/复制药水就是额外启动；该喝就喝。
 11. **硬吃致死伤害不查药水**

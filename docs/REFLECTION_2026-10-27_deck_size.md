@@ -57,11 +57,11 @@
 `sts2.py` 新增 `deck_cap()` / `deck_cap_guard()`：
 
 - 上限：**第一幕 16 / 第二幕 18 / 第三幕 20**。
-- 超限时 `python sts2.py do choose_reward_card --option N` **直接拒绝执行（exit 3）**，并打印当前全牌组；
+- 超限时 `python tools/sts2.py do choose_reward_card --option N` **直接拒绝执行（exit 3）**，并打印当前全牌组；
 - 真要拿必须 `--force`，且要求在 notes 里写清「踢掉谁」。
 
 ### 5.2 局面包提示（代码）
-`python sts2.py state` / `tools/ctx.py` 新增一行：
+`python tools/sts2.py state` / `tools/ctx.py` 新增一行：
 ```
 DECK_FAT 牌组 19 张 > 上限 16：引擎/甲牌/小刀全被稀释，接下来所有卡牌奖励 skip，商店优先删牌
 ```

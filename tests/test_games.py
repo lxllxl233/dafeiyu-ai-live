@@ -5,7 +5,6 @@ import json
 from dafeiyu import paths
 from dafeiyu.games import GameRegistry
 from dafeiyu.games.demo import DemoAdapter
-from dafeiyu.games.sts2 import Sts2Adapter
 from dafeiyu.core.events import Topics
 
 
@@ -20,7 +19,7 @@ def test_demo_adapter_emits_state():
     assert adapter.available() is True
     events = list(adapter.events())
     assert events and events[0].topic == Topics.GAME_STATE
-    assert events[0].data["character"] == "铁甲战士"
+    assert events[0].data["character"] == "演示角色"
 
 
 def test_sts2_manifest_paths_exist():
@@ -36,7 +35,9 @@ def test_sts2_manifest_paths_exist():
 
 
 def test_sts2_adapter_offline_is_quiet():
-    adapter = Sts2Adapter(api="http://127.0.0.1:1", timeout=0.2)
+    adapter = GameRegistry().create_adapter("slay-the-spire-2",
+                                           api="http://127.0.0.1:1", timeout=0.2)
+    assert adapter is not None
     assert adapter.available() is False
     state = adapter.snapshot()
     assert state.screen == ""
@@ -58,4 +59,4 @@ def test_corpus_db_counts():
 def test_game_json_is_valid():
     raw = json.loads((paths.GAMES / "slay-the-spire-2" / "game.json").read_text(encoding="utf-8"))
     assert raw["id"] == "slay-the-spire-2"
-    assert raw["adapter"].startswith("dafeiyu.games.")
+    assert raw["adapter"].startswith("game-skill/")
