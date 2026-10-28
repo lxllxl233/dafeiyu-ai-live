@@ -814,7 +814,7 @@ def _run(game: str, mode: str = "local") -> None:
             _write_status(running=False, error="启动超时：游戏 API 未就绪")
             return
         _set_from_state(state, "已连接游戏")
-        _say("我去打一局，先看开局。")
+        # 开局不主动播报招呼；第一条台词从实际战斗/事件开始。
         _pace()
         _log("start", game=game, mode=mode)
         step = 0
