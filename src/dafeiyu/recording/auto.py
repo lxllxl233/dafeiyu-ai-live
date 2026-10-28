@@ -22,7 +22,7 @@ _session: dict | None = None
 CHAPTER_KINDS = {
     "run_start", "new_run", "combat_start", "combat_end", "boss",
     "reward", "card", "map", "event", "rest", "shop", "chest",
-    "game_over", "floor", "speech", "stop",
+    "game_over", "floor", "speech", "stop", "route",
 }
 
 

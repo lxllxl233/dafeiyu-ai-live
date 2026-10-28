@@ -467,6 +467,7 @@
           </div>
           <div class="kv" style="margin-top:12px"><span>自动玩法</span><b id="playState">—</b></div>
           <div class="kv"><span>局面</span><b id="playDetail">—</b></div>
+          <div class="kv"><span>路线</span><b id="playRoute">—</b></div>
           <div class="kv"><span>步数</span><b id="playStep">—</b></div>
           <div class="kv"><span>Token 累计</span><b id="playTokens">—</b></div>
           <div class="kv"><span>LLM 调用</span><b id="playCalls">—</b></div>
@@ -812,6 +813,11 @@ function renderPlay(){
       : (p.error ? "异常停手" : "停手"));
   const where = p.screen ? `${p.screen} · f${p.floor || "?"} · HP ${p.hp || "?"}/${p.max_hp || "?"}` : (p.last || "—");
   $("#playDetail").textContent = where;
+  const route = p.route_seq ? String(p.route_seq) : "";
+  $("#playRoute").textContent = route || (p.screen === "MAP" ? "规划中…" : "—");
+  $("#playRoute").title = route
+    ? `opt${p.route_option ?? "?"} · f${p.route_floor ?? "?"}${p.route_note ? " · " + p.route_note : ""}`
+    : "";
   $("#playStep").textContent = p.step ? `${p.step} 步` : "—";
   const tin = Number(p.tokens_in || 0), tout = Number(p.tokens_out || 0);
   const total = Number(p.tokens_total || (tin + tout));

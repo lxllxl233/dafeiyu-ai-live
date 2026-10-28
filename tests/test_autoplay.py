@@ -15,6 +15,9 @@ import pytest
 def _isolate_live_stop(tmp_path, monkeypatch):
     # 真实直播时 logs/autoplay.stop 可能存在，测试不能继承这个状态。
     monkeypatch.setattr(play, "STOP_PATH", tmp_path / "autoplay.stop")
+    monkeypatch.setattr(play, "_write_status", lambda **kw: dict(play._state, **kw))
+    monkeypatch.setattr(play, "_log", lambda *a, **k: None)
+    monkeypatch.setattr(play, "_timeline_event", lambda *a, **k: None)
     play._stop.clear()
     yield
     play._stop.clear()
@@ -37,7 +40,11 @@ class _FakeSts2:
 
     def cmd_route(self, **kwargs):
         self.calls.append(("cmd_route", kwargs))
+        st = self.get_state()
+        run = st.get("run") or {}
         self.PLAN_PATH.write_text(json.dumps({
+            "identity": {"run_id": st.get("run_id") or run.get("run_id") or "",
+                         "act_id": str(run.get("act_id", ""))},
             "path": [[0, 0, "?"], [1, 1, "RestSite"]],
         }), encoding="utf-8")
 
@@ -80,7 +87,7 @@ def test_character_select_embarks_ironclad():
 def test_map_follows_route_next_node(tmp_path):
     plan_file = tmp_path / "route_plan.json"
     fake = _FakeSts2([{
-        "screen": "MAP", "run": {"current_hp": 70, "max_hp": 80},
+        "screen": "MAP", "run_id": "R", "run": {"act_id": 0, "current_hp": 70, "max_hp": 80},
         "available_actions": ["choose_map_node"],
         "map": {"nodes": [
             {"row": 0, "col": 0, "is_current": True, "node_type": "Monster"},
@@ -92,6 +99,23 @@ def test_map_follows_route_next_node(tmp_path):
     last = play._choose_map(fake, fake.get_state())
     assert last.startswith("MAP")
     assert ("choose_map_node", {"option_index": 1}) in fake.calls
+
+
+def test_route_plan_identity_and_next_target():
+    state = {
+        "run_id": "RUN1", "run": {"act_id": 0},
+        "map": {"nodes": [
+            {"row": 0, "col": 0, "is_current": True, "node_type": "Monster"},
+            {"row": 0, "col": 1, "is_available": True, "node_type": "RestSite"},
+        ]},
+    }
+    nodes, avail = play._map_nodes(state)
+    plan = {"identity": {"run_id": "RUN1", "act_id": "0"},
+            "path": [[0, 0], [0, 1]]}
+    assert play._route_current(plan, state) is True
+    assert play._route_target(plan, nodes, avail)["col"] == 1
+    assert play._route_current(
+        {"identity": {"run_id": "RUN2", "act_id": "0"}}, state) is False
 
 
 def test_card_selection_picks_each_required_card_once():

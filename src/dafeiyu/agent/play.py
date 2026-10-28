@@ -43,6 +43,8 @@ _state: dict = {
     # 录像/停止状态
     "recording": False, "record_path": "", "record_error": "",
     "stopping": False,
+    # 路线计划（由 sts2 cmd_route 生成，按 run/act 失效）
+    "route_seq": "", "route_option": None, "route_note": "", "route_floor": 0,
 }
 
 
@@ -395,47 +397,99 @@ def _route_plan(sts2) -> dict:
         return {}
 
 
+def _route_current(plan: dict, state: dict) -> bool:
+    """路线计划是否属于当前 run/act；没有身份的计划一律重算。"""
+    ident = plan.get("identity") if isinstance(plan, dict) else None
+    if not isinstance(ident, dict) or not ident:
+        return False
+    run = state.get("run") or {}
+    run_id = str(state.get("run_id") or run.get("run_id") or "")
+    act_id = str(run.get("act_id") if run.get("act_id") is not None
+                 else run.get("act") if run.get("act") is not None else "")
+    if ident.get("run_id") and run_id and str(ident["run_id"]) != run_id:
+        return False
+    if ident.get("act_id") is not None and act_id and str(ident["act_id"]) != act_id:
+        return False
+    map_sig = str(state.get("map_sig") or (state.get("map") or {}).get("map_sig") or "")
+    if ident.get("map_sig") and map_sig and str(ident["map_sig"]) != map_sig:
+        return False
+    return True
+
+
+def _route_target(plan: dict, nodes: list[dict], avail: list[dict]):
+    """取计划里下一格；计划起点是「下一次可选节点」，当前节点在路径里时取下一格。"""
+    path = [p for p in (plan.get("path") or []) if isinstance(p, list) and len(p) >= 2]
+    if not path:
+        return None
+    cur = next((n for n in nodes if n.get("is_current")), None)
+    idx = None
+    if cur is not None:
+        idx = next((i for i, p in enumerate(path)
+                    if int(p[0]) == int(cur.get("row", -1))
+                    and int(p[1]) == int(cur.get("col", -1))), None)
+    if idx is not None:
+        if idx + 1 >= len(path):
+            return None
+        target = (int(path[idx + 1][0]), int(path[idx + 1][1]))
+    else:
+        target = (int(path[0][0]), int(path[0][1]))
+    return next((n for n in avail
+                 if (int(n.get("row", -1)), int(n.get("col", -1))) == target), None)
+
+
+def _publish_route(sts2, state: dict, output: str = "", reason: str = "") -> dict:
+    plan = _route_plan(sts2)
+    seq = str(plan.get("seq") or "")
+    option = plan.get("option")
+    note = str(plan.get("note") or "")
+    start = plan.get("start") or {}
+    _write_status(route_seq=seq, route_option=option, route_note=note,
+                  route_floor=int((state.get("run") or {}).get("floor") or 0))
+    _log("route_plan", seq=seq, option=option, reason=reason,
+         start=start, out=str(output or "")[-500:])
+    _timeline_event("route", f"路线规划 {seq}".strip(),
+                    route=seq, option=option, floor=_run_meta(state)[0])
+    return plan
+
+
 def _choose_map(sts2, state: dict) -> str:
     nodes, avail = _map_nodes(state)
     if not avail:
         return "MAP_NO_AVAILABLE"
-    # 首次进图 / 计划过期：让兼容层选一条 brps 最高的路线并落盘。
-    try:
-        _, _ = _call(sts2, sts2.cmd_route, commit=0)
-    except Exception as exc:  # noqa: BLE001
-        _log("route_failed", error=f"{type(exc).__name__}: {exc}")
+
     plan = _route_plan(sts2)
-    path = [p for p in (plan.get("path") or []) if isinstance(p, list) and len(p) >= 2]
-    target = None
-    if path:
-        cur = next((n for n in nodes if n.get("is_current")), None)
-        if cur:
-            idx = next((i for i, p in enumerate(path)
-                        if int(p[0]) == int(cur.get("row", -1))
-                        and int(p[1]) == int(cur.get("col", -1))), None)
-            if idx is not None and idx + 1 < len(path):
-                target = (int(path[idx + 1][0]), int(path[idx + 1][1]))
-        if target is None:
-            target = (int(path[0][0]), int(path[0][1]))
-    chosen = None
-    if target:
-        chosen = next((n for n in avail
-                       if (int(n.get("row", -1)), int(n.get("col", -1))) == target), None)
+    target = _route_target(plan, nodes, avail) if _route_current(plan, state) else None
+    if target is not None and not _state.get("route_seq"):
+        # 计划是上一局/启动前生成的，只要身份和下一格仍有效就直接接着走，
+        # 同时把路线代号补到控制台，避免“明明有计划但界面空着”。
+        _publish_route(sts2, state, reason="reuse")
+    if target is None:
+        # 开局/换幕/换图/路线断了：只在这里规划一次并 commit，后面按计划走。
+        output = ""
+        try:
+            _, output = _call(sts2, sts2.cmd_route, commit=0)
+        except Exception as exc:  # noqa: BLE001
+            _log("route_failed", error=f"{type(exc).__name__}: {exc}")
+        plan = _publish_route(sts2, state, output, reason="auto")
+        target = _route_target(plan, nodes, avail) if _route_current(plan, state) else None
+
+    chosen = target
     if chosen is None:
-        # 保守优先级：血少先营火，钱多先商店，普通怪优先，精英最后。
+        # 规划器失败才退回保守优先级，不让自动玩停在地图。
         _, hp, mhp = _run_meta(state)
         pct = hp / mhp if mhp else 1.0
         priority = {"RestSite": 0 if pct < 0.70 else 4,
-                     "Shop": 1, "Monster": 2, "Event": 3, "Unknown": 3,
-                     "Treasure": 2, "Elite": 8, "Boss": 9}
+                    "Shop": 1, "Monster": 2, "Event": 3, "Unknown": 3,
+                    "Treasure": 2, "Elite": 8, "Boss": 9}
         chosen = min(avail, key=lambda n: priority.get(str(n.get("node_type")), 5))
+        _log("route_fallback", seq=plan.get("seq"), chosen=chosen.get("node_type"))
     idx = avail.index(chosen)
     act = "choose_map_node"
     if act not in _acts(state):
         return "MAP_ACTION_MISSING"
     sts2.act(act, option_index=idx)
     _log("map", idx=idx, row=chosen.get("row"), col=chosen.get("col"),
-         type=chosen.get("node_type"))
+         type=chosen.get("node_type"), route_seq=plan.get("seq"))
     return f"MAP {chosen.get('node_type')} ({chosen.get('row')},{chosen.get('col')})"
 
 
@@ -836,7 +890,8 @@ def _run(game: str, mode: str = "local") -> None:
             _set_from_state(state)
             if _screen(state) == "GAME_OVER":
                 _say("这局结束了，我回主菜单再来一局。")
-                _write_status(last="GAME_OVER，回主菜单")
+                _write_status(last="GAME_OVER，回主菜单", route_seq="",
+                              route_option=None, route_note="", route_floor=0)
                 _pace()
                 new_state = _ensure_run(sts2, state)
                 if new_state:
@@ -962,7 +1017,8 @@ def start_autoplay(game: str | None = None, *, mode: str | None = None,
                       started_at=time.time(), pid=os.getpid(),
                       tokens_in=0, tokens_out=0, tokens_total=0, llm_calls=0,
                       tokens_last=0, recording=False, record_path="", record_error="",
-                      stopping=False)
+                      stopping=False, route_seq="", route_option=None,
+                      route_note="", route_floor=0)
         _thread = threading.Thread(target=_run, args=(game, mode),
                                    name="dafeiyu-autoplay", daemon=True)
         _thread.start()
