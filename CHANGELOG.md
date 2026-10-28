@@ -45,6 +45,11 @@
   「只支持 local 模式」，用户以为 LLM 拉起的是《杀戮尖塔 2》。现在启动以
   `config.game` 为准，只有状态文件确实 `running` 时才按它停手/看状态；
   `AutoplayHost.status()` 也不再让上一局的 `game/mode/pace` 盖住当前宿主。
+- **B 站连接每 20 秒刷一屏 traceback**：B 站弹幕服务器不回 WebSocket 层 ping，
+  客户端默认 keepalive 每 20s 报 `sent 1011 keepalive ping timeout` 并打印三条
+  链式栈；重连又被指数退避拖到 60s。现在 `connect(..., ping_interval=None)`
+  只发 30s 一次的 JSON 心跳，兜底过滤器收掉 `keepalive ping failed`，连上后掉线
+  3s 重连（连不上才退避），并把「连接断开，正在重连」写进 `logs/bilibili.json`。
 
 ## [2.2.0] - 2026-10-28
 

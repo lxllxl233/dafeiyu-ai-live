@@ -7,6 +7,7 @@ import struct
 import zlib
 
 import pytest
+from websockets.exceptions import ConnectionClosedError
 
 import dafeiyu.live.bilibili as bili
 from dafeiyu.live.bilibili import (
@@ -218,3 +219,105 @@ def test_listener_records_everything_but_only_animates_gifts(tmp_path):
     assert status["counts"] == {"chat": 1, "like": 1, "gift": 1}
     assert status["gifts"] == 1 and status["events"] == 3
     assert "小花花" in status["last_event"]
+
+
+# ---------------------------------------------------------------- 断线重连
+def test_connect_disables_ws_level_pings(monkeypatch):
+    """B 站不回 WS ping：必须关掉客户端 keepalive，否则每 20s 打一整段 traceback。"""
+    import websockets.sync.client as wsc
+
+    seen: dict = {}
+
+    class _WS:
+        def send(self, data):
+            seen["auth"] = data
+            listener._stop.set()
+
+        def recv(self, timeout=None):
+            raise TimeoutError()
+
+    class _Ctx:
+        def __enter__(self):
+            return _WS()
+
+        def __exit__(self, *exc):
+            return False
+
+    def fake_connect(url, **kwargs):
+        seen.update(kwargs)
+        seen["url"] = url
+        return _Ctx()
+
+    monkeypatch.setattr(wsc, "connect", fake_connect)
+    listener = bili.BilibiliGiftListener(9, lambda e: None, logger=lambda t: None)
+    listener._connect_once({"hosts": [{"host": "h", "wss_port": 443}],
+                            "token": "tk"})
+
+    assert seen["ping_interval"] is None
+    assert seen["open_timeout"] == 10
+    assert seen["url"] == "wss://h:443/sub"
+    assert listener.status()["connected"] is False
+
+
+def test_listener_reconnects_quickly_after_a_drop(monkeypatch):
+    lines: list[str] = []
+    listener = bili.BilibiliGiftListener(9, lambda e: None, logger=lines.append)
+
+    def fake_connect_once(info):
+        listener._live = True
+        raise ConnectionClosedError(None, None)
+
+    monkeypatch.setattr(bili, "danmu_info", lambda *a, **k: {"hosts": [], "token": "t"})
+    monkeypatch.setattr(listener, "_connect_once", fake_connect_once)
+
+    waits: list[float] = []
+
+    def fake_wait(seconds):
+        waits.append(seconds)
+        listener._stop.set()
+        return True
+
+    monkeypatch.setattr(listener._stop, "wait", fake_wait)
+    listener._run()
+
+    assert waits == [3.0]                     # 掉线立刻重连，不退避到 60s
+    assert any("连接断开" in line for line in lines)
+    assert listener.status()["connected"] is False
+
+
+def test_connect_failure_still_backs_off(monkeypatch):
+    lines: list[str] = []
+    listener = bili.BilibiliGiftListener(9, lambda e: None, logger=lines.append)
+
+    def boom(*a, **k):
+        raise ConnectionRefusedError("danmu_info 挂了")
+
+    monkeypatch.setattr(bili, "danmu_info", boom)
+    waits: list[float] = []
+
+    def fake_wait(seconds):
+        waits.append(seconds)
+        if len(waits) >= 2:
+            listener._stop.set()
+        return True
+
+    monkeypatch.setattr(listener._stop, "wait", fake_wait)
+    listener._run()
+
+    assert len(waits) == 2
+    assert waits[0] == 3.0 and waits[1] > 3.0   # 连不上才退避
+    assert any("ConnectionRefusedError" in line for line in lines)
+
+
+def test_keepalive_traceback_is_filtered_out():
+    import logging
+
+    bili._quiet_websockets_logs()
+    logger = logging.getLogger("websockets.client")
+    noisy = logger.makeRecord("websockets.client", logging.ERROR, __file__, 1,
+                              "> keepalive ping failed", None, None)
+    quiet = logger.makeRecord("websockets.client", logging.ERROR, __file__, 1,
+                              "> connection closed", None, None)
+
+    assert logger.filter(noisy) is False
+    assert logger.filter(quiet) is not False   # Logger.filter 通过时返回 record 本身

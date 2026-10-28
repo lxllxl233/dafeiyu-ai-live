@@ -213,7 +213,9 @@ python main.py replay list
 勾选「开启 B 站礼物监听」，桌宠进程会：
 
 - 取 B 站 `getDanmuInfo`（带 WBI 签名）并连直播 WebSocket；
-- 心跳保持连接，断线自动重连；
+- 每 30s 发 JSON 心跳保活；B 站不回 WebSocket 层 ping，所以客户端那层 keepalive
+  关掉了（否则日志里每 20s 一段 `keepalive ping failed` traceback）；
+- 连上后掉线 **3 秒**重连，连不上才指数退避到 60s，并写进「直播间」页的状态；
 - 把 **进入 / 关注 / 分享 / 点赞 / 弹幕 / 礼物 / 醒目留言 / 上舰** 写进
   `logs/bilibili_events.jsonl`，只保留最近 **120 条**（文件超 200KB 自动压缩）；
 - 收到礼物类事件时，鱼身绕小圈转两圈 + 金色星星，并气泡道谢；

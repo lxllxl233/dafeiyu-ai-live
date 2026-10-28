@@ -575,6 +575,33 @@ def event_from_message(msg: dict, room_id: int) -> GiftEvent | None:
     )
 
 
+_WS_LOGS_QUIET = False
+
+
+def _quiet_websockets_logs() -> None:
+    """收掉 websockets keepalive 线程的整段 traceback。
+
+    B 站弹幕服务器不回 WebSocket 层 ping，旧代码没关 ``ping_interval``，每 20s
+    就会打一次 ``keepalive ping failed`` + 三条链式栈。现在已设
+    ``ping_interval=None``；这个过滤器只是兜底，别让将来的参数改动再把刷屏带回来。
+    我们自己的 ``status()["error"]`` 仍会记录断开原因。
+    """
+    global _WS_LOGS_QUIET
+    if _WS_LOGS_QUIET:
+        return
+    import logging
+
+    class _DropKeepalive(logging.Filter):
+        def filter(self, record: logging.LogRecord) -> bool:
+            return "keepalive ping failed" not in record.getMessage()
+
+    # 客户端协议实际用的是 websockets.client（protocol.logger），只给父级加过滤器
+    # 拦不住子 logger 发出的记录。
+    for name in ("websockets", "websockets.client"):
+        logging.getLogger(name).addFilter(_DropKeepalive())
+    _WS_LOGS_QUIET = True
+
+
 class BilibiliGiftListener:
     """后台线程监听一个直播间；断了自动重连，stop() 后退出。
 
@@ -602,6 +629,7 @@ class BilibiliGiftListener:
             "error": "", "updated_at": 0.0,
         }
         self._ws = None
+        self._live = False
 
     # ---------------------------------------------------------------- 状态
     def _set_status(self, **patch) -> None:
@@ -614,6 +642,7 @@ class BilibiliGiftListener:
             return dict(self._status)
 
     def start(self) -> dict:
+        _quiet_websockets_logs()
         if self._thread and self._thread.is_alive():
             return self.status()
         self._stop.clear()
@@ -638,12 +667,22 @@ class BilibiliGiftListener:
     def _run(self) -> None:
         delay = 3.0
         while not self._stop.is_set():
+            self._live = False
             try:
                 info = danmu_info(self.room_id, self.cookie)
                 self._set_status(ok=True, error="", room_id=self.room_id)
                 self._connect_once(info)
                 delay = 3.0
             except Exception as exc:  # noqa: BLE001
+                if self._live:
+                    # 连上过又断（B 站会主动踢长连接）：立刻重连，不走指数退避——
+                    # 否则一场直播断一次就等 60 秒，弹幕/礼物全漏。
+                    self._set_status(ok=True, connected=False,
+                                     error="连接断开，正在重连")
+                    self.log("[bilibili] 连接断开，3s 后重连")
+                    self._stop.wait(3.0)
+                    delay = 3.0
+                    continue
                 msg = f"{type(exc).__name__}: {exc}"
                 self._set_status(ok=False, connected=False, error=msg)
                 self.log(f"[bilibili] {msg}，{delay:.0f}s 后重连")
@@ -661,11 +700,15 @@ class BilibiliGiftListener:
             "uid": 0, "roomid": self.room_id, "protover": 2,
             "platform": "web", "type": 2, "key": info.get("token") or "",
         }
+        # ping_interval=None：B 站弹幕服务器不回 WebSocket 层的 ping，客户端每 20s
+        # 一次 keepalive 会 1011 超时，然后 websockets 自己打一整段 traceback。保活
+        # 改由下面 30s 一次的 JSON 心跳（OP_HEARTBEAT）负责，和官方网页一致。
         with connect(url, open_timeout=10, close_timeout=3,
-                     max_size=8 * 1024 * 1024) as ws:
+                     ping_interval=None, max_size=8 * 1024 * 1024) as ws:
             self._ws = ws
             ws.send(encode_packet(OP_AUTH, json.dumps(
                 auth, ensure_ascii=False).encode("utf-8")))
+            self._live = True
             self._set_status(ok=True, connected=True, error="")
             last_ping = time.monotonic()
             while not self._stop.is_set():
