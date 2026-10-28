@@ -5,6 +5,7 @@
   "platform": "Steam · 2868840",
   "status": "ready",
   "adapter": "game-skill/adapter.py:Sts2Adapter",
+  "obs": "game-skill/obs.json",
   "links": {
     "db": "corpus/db",
     "tools/data": "corpus/data"

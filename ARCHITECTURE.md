@@ -155,6 +155,7 @@ recordings/<game-id>/run-NNNN/
 | 换默认语音/音量/间奏 | `config.json` 或 `DAFEIYU_*` 环境变量 |
 | 加游戏 | `games/<id>/` + `game-skill/adapter.py` + `games/registry.json` |
 | 加 UI 面板 | `ui/studio/index.html` + `/api/studio` 字段 |
+| 换 OBS 场景/采集源名 | `games/<id>/game-skill/obs.json` |
 | 换桌宠精灵 | `src/dafeiyu/ui/assets/pet/`（正面/侧面/背面） |
 | 换 OBS 气泡样式 | `ui/overlay/index.html` 的 `#main` |
 | 改录像目录规则 | `src/dafeiyu/recording/replay.py` |

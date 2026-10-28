@@ -1,0 +1,12 @@
+{
+  "scene": "StS2",
+  "game_source": "StS2 Game",
+  "window_source": "StS2 Window",
+  "monitor_source": "StS2 Monitor",
+  "audio_source": "StS2 Audio",
+  "overlay_source": "AI Commentary",
+  "ticker_source": "AI Ticker",
+  "ticker_text": "AI 实况 · 铁甲战士 A10",
+  "window_match": ["Slay the Spire 2", "SlayTheSpire2"],
+  "window_fallback": "Slay the Spire 2:Engine:SlayTheSpire2.exe"
+}

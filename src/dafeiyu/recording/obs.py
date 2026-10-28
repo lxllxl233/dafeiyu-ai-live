@@ -20,6 +20,7 @@ import os
 import sys
 import time
 import uuid
+from dataclasses import dataclass
 
 from websockets.sync.client import connect
 
@@ -55,13 +56,53 @@ class ObsError(RuntimeError):
     pass
 
 
+@dataclass(frozen=True)
+class ObsProfile:
+    """OBS 场景/采集源命名。游戏专属值放 ``games/<id>/game-skill/obs.json``。"""
+
+    scene: str = "Game"
+    game_source: str = "Game Capture"
+    window_source: str = "Game Window"
+    monitor_source: str = "Game Monitor"
+    audio_source: str = "Game Audio"
+    overlay_source: str = "AI Commentary"
+    ticker_source: str = "AI Ticker"
+    ticker_text: str = "AI 实况"
+    window_match: tuple[str, ...] = ()
+    window_fallback: str = ""
+
+    @classmethod
+    def from_dict(cls, raw: dict) -> "ObsProfile":
+        values = {}
+        for key in cls.__dataclass_fields__:
+            if key in raw:
+                values[key] = tuple(raw[key]) if key == "window_match" else str(raw[key])
+        return cls(**values)
+
+
+def load_profile(game: str | None = None) -> ObsProfile:
+    """读当前游戏的 ``game-skill/obs.json``；没有就返回通用命名。"""
+    if not game:
+        from ..core.config import LiveConfig
+
+        game = LiveConfig.load().game
+    path = paths.GAMES / str(game) / "game-skill" / "obs.json"
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return ObsProfile()
+    return ObsProfile.from_dict(raw) if isinstance(raw, dict) else ObsProfile()
+
+
 class Obs:
-    def __init__(self, url: str, password: str, timeout: float = 10.0):
+    def __init__(self, url: str, password: str, timeout: float = 10.0,
+                 profile: ObsProfile | None = None):
         self.url = url
         self.password = password or ""
         self.timeout = timeout
         self.ws = None
         self._rid = 0
+        self.p = profile or load_profile()
 
     def connect(self):
         self.ws = connect(
@@ -147,7 +188,7 @@ class Obs:
 
     def ensure_game_capture(self, scene: str) -> dict:
         """Try game_capture; fall back to monitor/window capture. Returns chosen source info."""
-        source = "StS2 Game"
+        source = self.p.game_source
         existing = {i["inputName"] for i in self.list_inputs()}
         if source not in existing:
             try:
@@ -167,7 +208,7 @@ class Obs:
         if source in {i["inputName"] for i in self.list_inputs()}:
             win = self.window_item(source)
             settings = {"capture_mode": "window"}
-            settings["window"] = win["itemValue"] if win else WINDOW_FALLBACK
+            settings["window"] = win["itemValue"] if win else self.p.window_fallback
             try:
                 self.request(
                     "SetInputSettings",
@@ -195,7 +236,7 @@ class Obs:
             return {"kind": "game_capture", "source": source}
 
         # Fallback: monitor capture (prefer the 1920x1080 secondary display)
-        msource = "StS2 Monitor"
+        msource = self.p.monitor_source
         if msource not in existing:
             self.request(
                 "CreateInput",
@@ -228,7 +269,7 @@ class Obs:
 
     def ensure_audio(self, scene: str) -> dict:
         # Prefer application audio capture for the game process.
-        source = "StS2 Audio"
+        source = self.p.audio_source
         existing = {i["inputName"] for i in self.list_inputs()}
         if source not in existing:
             try:
@@ -252,9 +293,8 @@ class Obs:
                 ).get("propertyItems", [])
                 chosen = None
                 for item in props:
-                    if "Slay the Spire 2" in str(item.get("itemName", "")) or "SlayTheSpire2" in str(
-                        item.get("itemName", "")
-                    ):
+                    name = str(item.get("itemName", ""))
+                    if any(key in name for key in self.p.window_match):
                         chosen = item
                         break
                 if chosen:
@@ -283,7 +323,7 @@ class Obs:
 
     def ensure_overlay_audio(self) -> dict:
         """让 OBS 接管浏览器源（AI Commentary）的音频，这样动物语音效会进录像。"""
-        name = "AI Commentary"
+        name = self.p.overlay_source
         if name not in {i["inputName"] for i in self.list_inputs()}:
             return {"kind": "missing"}
         try:
@@ -299,7 +339,7 @@ class Obs:
             return {"error": str(e)}
 
     def ensure_ticker(self, scene: str):
-        name = "AI Ticker"
+        name = self.p.ticker_source
         existing = {i["inputName"] for i in self.list_inputs()}
         if name not in existing:
             self.request(
@@ -309,7 +349,7 @@ class Obs:
                     "inputName": name,
                     "inputKind": "text_gdiplus_v3",
                     "inputSettings": {
-                        "text": "AI 实况 · 铁甲战士 A10",
+                        "text": self.p.ticker_text,
                         "font": {"face": "Microsoft YaHei", "size": 28, "flags": 0},
                         "color1": 0xFFFFFFFF,
                         "outline": True,
@@ -331,7 +371,7 @@ class Obs:
         return {"source": name, "item_id": item_id}
 
     def set_ticker(self, text: str):
-        self.request("SetInputSettings", {"inputName": "AI Ticker", "inputSettings": {"text": text}})
+        self.request("SetInputSettings", {"inputName": self.p.ticker_source, "inputSettings": {"text": text}})
 
     # ---- capture mode helpers (录游戏窗口，而不是录整个屏幕) ----
     def scene_items(self, scene: str):
@@ -372,7 +412,7 @@ class Obs:
         return {"sourceWidth": sw, "sourceHeight": sh, "scale": round(scale, 4)}
 
     def window_item(self, source: str):
-        """当前打开的 StS2 窗口（title:class:exe）——按 exe 名匹配，标题变了也能找到。"""
+        """当前打开的游戏窗口（title:class:exe）——按 profile 的 window_match 匹配。"""
         try:
             props = self.request(
                 "GetInputPropertiesListPropertyItems",
@@ -382,7 +422,7 @@ class Obs:
             return None
         for item in props:
             name = str(item.get("itemName", ""))
-            if "Slay the Spire 2" in name or "SlayTheSpire2" in name:
+            if any(key in name for key in self.p.window_match):
                 return item
         return None
 
@@ -391,21 +431,21 @@ class Obs:
 
         mode: game = game_capture（hook，无标题栏）｜window = window_capture(WGC)｜monitor = 旧的显示器采集
         """
-        scene = "StS2"
+        scene = self.p.scene
         self.ensure_scene(scene)
         existing = {i["inputName"] for i in self.list_inputs()}
         out = {"mode": mode, "scene": scene}
 
         if mode == "monitor":
-            target = "StS2 Monitor"
-            for name in ("StS2 Game", "StS2 Window"):
+            target = self.p.monitor_source
+            for name in (self.p.game_source, self.p.window_source):
                 if name in existing:
                     self.set_item_enabled(scene, name, False)
             self.set_item_enabled(scene, target, True)
             out["source"] = target
         else:
-            target = "StS2 Game" if mode == "game" else "StS2 Window"
-            other = "StS2 Window" if mode == "game" else "StS2 Game"
+            target = self.p.game_source if mode == "game" else self.p.window_source
+            other = self.p.window_source if mode == "game" else self.p.game_source
             if target not in existing:
                 self.request(
                     "CreateInput",
@@ -423,14 +463,14 @@ class Obs:
                 settings["capture_mode"] = "window"
             else:
                 settings["method"] = 2  # Windows 10/11 WGC，被遮挡也能抓
-            settings["window"] = win["itemValue"] if win else WINDOW_FALLBACK
+            settings["window"] = win["itemValue"] if win else self.p.window_fallback
             self.request(
                 "SetInputSettings",
                 {"inputName": target, "inputSettings": settings, "overlay": True},
             )
             self.set_item_enabled(scene, other, False)
-            if "StS2 Monitor" in existing:
-                self.set_item_enabled(scene, "StS2 Monitor", False)
+            if self.p.monitor_source in existing:
+                self.set_item_enabled(scene, self.p.monitor_source, False)
             self.set_item_enabled(scene, target, True)
             out["fit"] = self.fit_item(scene, target)
             out["source"] = target
@@ -509,22 +549,22 @@ class Obs:
         except ObsError:
             pass
         out["sources"] = sources
-        out["window"] = game_window_state()
+        out["window"] = game_window_state(self.p)
         out["mute_in_background"] = game_mute_in_background()
         try:
-            ov = self.request("GetInputSettings", {"inputName": "AI Commentary"}).get("inputSettings", {})
+            ov = self.request("GetInputSettings", {"inputName": self.p.overlay_source}).get("inputSettings", {})
             out["overlay_audio"] = {
                 "reroute_audio": bool(ov.get("reroute_audio")),
-                "muted": self.request("GetInputMute", {"inputName": "AI Commentary"}).get("inputMuted"),
-                "volume": self.request("GetInputVolume", {"inputName": "AI Commentary"}).get("inputVolumeMul"),
+                "muted": self.request("GetInputMute", {"inputName": self.p.overlay_source}).get("inputMuted"),
+                "volume": self.request("GetInputVolume", {"inputName": self.p.overlay_source}).get("inputVolumeMul"),
             }
         except ObsError as e:
             out["overlay_audio"] = {"error": str(e)}
         try:
             out["audio"] = {
-                "muted": self.request("GetInputMute", {"inputName": "StS2 Audio"}).get("inputMuted"),
-                "volume": self.request("GetInputVolume", {"inputName": "StS2 Audio"}).get("inputVolumeMul"),
-                "settings": self.request("GetInputSettings", {"inputName": "StS2 Audio"}).get("inputSettings"),
+                "muted": self.request("GetInputMute", {"inputName": self.p.audio_source}).get("inputMuted"),
+                "volume": self.request("GetInputVolume", {"inputName": self.p.audio_source}).get("inputVolumeMul"),
+                "settings": self.request("GetInputSettings", {"inputName": self.p.audio_source}).get("inputSettings"),
             }
         except ObsError as e:
             out["audio"] = {"error": str(e)}
@@ -543,29 +583,29 @@ class Obs:
         ov = out.get("overlay_audio") or {}
         if "error" not in ov:
             if not ov.get("reroute_audio"):
-                warns.append("评论音效没被 OBS 接管（reroute_audio=false），动物语不会进录像 → 跑 `python obsctl.py free`")
+                warns.append("评论音效没被 OBS 接管（reroute_audio=false），动物语不会进录像 → 跑 `python main.py obs free`")
             elif ov.get("muted"):
-                warns.append("AI Commentary 被静音了，动物语音效听不到 → `python obsctl.py mute` 反了？先看 OBS 混音器")
+                warns.append("评论音效被静音了，动物语音效听不到 → `python main.py obs mute` 反了？先看 OBS 混音器")
         active_video = [s for s in sources if s["enabled"] and s["kind"] in
                         ("monitor_capture", "window_capture", "game_capture", "browser_source")]
         for s in active_video:
             if s["kind"] == "monitor_capture":
                 warns.append(
                     "画面源是「显示器采集」：你切到 B 站或别的游戏，录到的就是那个画面 → 跑 "
-                    "`python obsctl.py free` 换成窗口采集"
+                    "`python main.py obs free` 换成窗口采集"
                 )
             elif s["kind"] in ("window_capture", "game_capture"):
                 frame = s.get("frame") or {}
                 if not frame:
                     if not win:
-                        warns.append(f"「{s['name']}」没有画面：游戏没开（开游戏后跑 `python obsctl.py free`）")
+                        warns.append(f"「{s['name']}」没有画面：游戏没开（开游戏后跑 `python main.py obs free`）")
                 elif frame.get("mean") is not None and frame["mean"] < 3 and frame.get("stddev", 0) < 3:
                     warns.append(f"「{s['name']}」画面全黑：采集没命中窗口")
         if out["audio"].get("muted"):
-            warns.append("StS2 Audio 被静音了 → `python obsctl.py mute 0`")
+            warns.append(f"{self.p.audio_source} 被静音了 → `python main.py obs mute 0`")
         rec = out["record"] or {}
         if not rec.get("outputActive"):
-            warns.append("当前没有在录制 → `python obsctl.py start`")
+            warns.append("当前没有在录制 → `python main.py obs start`")
         out["warnings"] = warns
         out["log"] = obs_log_tail()
         return out
@@ -579,7 +619,8 @@ class Obs:
     def status(self):
         return self.request("GetRecordStatus")
 
-    def screenshot(self, path: str, source: str = "StS2", width: int = 1920):
+    def screenshot(self, path: str, source: str | None = None, width: int = 1920):
+        source = source or self.p.game_source
         d = self.request(
             "GetSourceScreenshot",
             {
@@ -596,9 +637,6 @@ class Obs:
         with open(path, "wb") as f:
             f.write(base64.b64decode(data))
         return path
-
-
-WINDOW_FALLBACK = "Slay the Spire 2:Engine:SlayTheSpire2.exe"
 
 
 def obs_log_tail(limit: int = 400) -> dict:
@@ -707,8 +745,9 @@ def fix_mute_in_background() -> list:
     return changed
 
 
-def game_window_state() -> dict:
-    """找 StS2 窗口，报告标题/是否最小化（最小化会让采集和音频一起断）。"""
+def game_window_state(profile: ObsProfile | None = None) -> dict:
+    """找游戏窗口，报告标题/是否最小化（最小化会让采集和音频一起断）。"""
+    p = profile or load_profile()
     try:
         import ctypes
         from ctypes import wintypes
@@ -724,7 +763,7 @@ def game_window_state() -> dict:
             buf = ctypes.create_unicode_buffer(n + 1)
             user32.GetWindowTextW(hwnd, buf, n + 1)
             title = buf.value
-            if "Slay the Spire 2" in title or "SlayTheSpire2" in title:
+            if any(key in title for key in p.window_match):
                 found.update(
                     title=title,
                     minimized=bool(user32.IsIconic(hwnd)),
@@ -790,17 +829,18 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("arg", nargs="?")
     args = ap.parse_args(argv)
     cfg = load_ws_config()
-    obs = Obs(cfg.get("url", DEFAULT_WS), cfg.get("password", ""))
+    profile = load_profile()
+    obs = Obs(cfg.get("url", DEFAULT_WS), cfg.get("password", ""), profile=profile)
     try:
         obs.connect()
         if args.cmd == "status":
             print(json.dumps(obs.status(), ensure_ascii=False, indent=2))
         elif args.cmd == "setup":
-            obs.ensure_scene("StS2")
-            cap = obs.ensure_game_capture("StS2")
-            audio = obs.ensure_audio("StS2")
+            obs.ensure_scene(profile.scene)
+            cap = obs.ensure_game_capture(profile.scene)
+            audio = obs.ensure_audio(profile.scene)
             overlay_audio = obs.ensure_overlay_audio()
-            ticker = obs.ensure_ticker("StS2")
+            ticker = obs.ensure_ticker(profile.scene)
             free = obs.free_mode("game")
             print(
                 json.dumps(
@@ -840,7 +880,7 @@ def main(argv: list[str] | None = None) -> int:
             obs.set_ticker(args.arg or "")
             print("ok")
         elif args.cmd == "mute":
-            name = "StS2 Audio"
+            name = profile.audio_source
             obs.request("SetInputMute", {"inputName": name, "inputMuted": args.arg == "1"})
             print("ok")
     finally:

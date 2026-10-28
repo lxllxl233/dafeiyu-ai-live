@@ -5,6 +5,7 @@
 ```text
 game-skill/
 ├── adapter.py          # GameAdapter 实现：读 mod 本地 HTTP :8080 → GameState
+├── obs.json            # OBS 场景/采集源命名（StS2 Game / StS2 Audio / …）
 ├── NEXT_PROMPT.txt     # 铁甲战士 A10 实况 runbook
 └── README.md
 ```
