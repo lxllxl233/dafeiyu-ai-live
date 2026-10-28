@@ -1451,6 +1451,7 @@ class StreamerWindow:
         if not games:
             user32.AppendMenuW(game_menu, MF_STRING | MF_GRAYED, 0, "没有注册游戏")
         user32.AppendMenuW(hmenu, MF_POPUP, game_menu, "游戏")
+        user32.AppendMenuW(hmenu, MF_STRING, 43, "启动当前游戏")
         user32.AppendMenuW(hmenu, MF_SEPARATOR, 0, None)
         user32.AppendMenuW(hmenu, MF_STRING, 41, "配置 API…")
         user32.AppendMenuW(hmenu, MF_STRING, 42, "打开管理端")
@@ -1474,6 +1475,8 @@ class StreamerWindow:
             self.set_model(self._menu_models[cmd - 20])
         elif 50 <= cmd < 50 + len(self._menu_games):
             self.set_game(self._menu_games[cmd - 50][0])
+        elif cmd == 43:
+            self.launch_game()
         elif cmd == 40:
             self.open_studio("#settings")
         elif cmd == 41:
@@ -1538,6 +1541,18 @@ class StreamerWindow:
             print(f"游戏：{name}（{game_id}）")
         except Exception as exc:
             print(f"游戏配置保存失败：{exc}")
+
+    def launch_game(self) -> None:
+        """按 config.game 启动游戏；启动失败只打印，不打断桌宠。"""
+        try:
+            from ..core.config import LiveConfig
+            from ..games.launch import launch_game
+
+            cfg = LiveConfig.load()
+            result = launch_game(cfg.game)
+            print("游戏：" + str(result.get("message") or result.get("error") or result))
+        except Exception as exc:
+            print(f"启动游戏失败：{exc}")
 
     def set_model(self, model: str) -> None:
         """切换模型（只写本机 config.json；API Key 不进菜单）。"""

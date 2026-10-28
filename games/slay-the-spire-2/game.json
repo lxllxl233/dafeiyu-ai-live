@@ -5,6 +5,11 @@
   "platform": "Steam · 2868840",
   "status": "ready",
   "adapter": "game-skill/adapter.py:Sts2Adapter",
+  "launch": {
+    "type": "steam",
+    "app_id": "2868840",
+    "note": "Steam 库里的 Slay the Spire 2；启动选项建议 --windowed"
+  },
   "obs": "game-skill/obs.json",
   "links": {
     "db": "corpus/db",

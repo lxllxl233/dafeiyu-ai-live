@@ -26,10 +26,11 @@ python main.py               # 或直接跑；右键鱼身看菜单
 python main.py setup         # 建 db/、tools/data/ 兼容链接
 python main.py doctor        # 自检：人设卡 / 两种语音 / overlay / 语料库 / 录像
 python main.py demo          # 离线跑「游戏 → 性格 → 语音 → UI」
+python main.py agent run --demo  # 可选：离线跑 Agent 图（observe → plan → validate → execute）
 python main.py studio        # 控制台 http://127.0.0.1:8730/studio
 ```
 
-控制台左侧导航：基础配置 / 游戏 / 人设配置 / 互动 / 决策与日志。能发台词（先「只算 lint」再「送到直播」）、
+控制台左侧导航：基础配置 / 游戏 / 人设配置 / 互动 / Agent 流程 / 决策与日志。能发台词（先「只算 lint」再「送到直播」）、
 看决策/日志/Token、切语音/模型/游戏、配置 API Key、试听曼波/动物语。曼波离线时点「启动」或「试听」
 会自动拉起本地 MamboTTS；目录不同在「基础配置 → MamboTTS 目录」填，或设 `DAFEIYU_MAMBO_DIR`。
 
@@ -37,6 +38,18 @@ python main.py studio        # 控制台 http://127.0.0.1:8730/studio
 
 只想要 OBS 桌宠弹幕：`python main.py studio` 起服务（不用打开 `/studio` 即可），
 OBS 浏览器源指向 `http://127.0.0.1:8730/`，宽 560 高 470，背景透明（气泡 + 大肥鱼 + 名字）。
+
+### 2.1 看 Agent 流程（可选）
+
+```powershell
+python -m pip install -e .[agent]   # 只装一次 LangGraph
+python main.py agent run --demo     # 不碰游戏，验证图
+python main.py agent trace          # 节点耗时/重试
+python main.py agent graph          # Mermaid
+```
+
+控制台「Agent 流程」会显示最近运行；真实局面默认只 dry-run，确认后再加 `--execute`。
+外部 DSH Agent 可用 `--plan plan.json` 注入计划，继续复用 `.dsh/skills` 的决策。
 
 桌面桌宠：
 
@@ -46,9 +59,9 @@ python main.py               # 默认桌宠；加 --panel 回旧版横幅
 # 左键拖（左右/上下换朝向）· 滚轮缩放 · 右键菜单 · Ctrl+Alt+D 穿透 · Ctrl+Alt+S 声音
 ```
 
-右键菜单：置顶 / 点击穿透 / 声音 / 录屏里隐藏 / 语音 / 模型 / 游戏 / 配置 API / 打开管理端 /
-示例 / 关闭。空闲气泡「吃饭ing」，决策「思考ing」，说话显示台词。游戏子菜单直接切换当前游戏，
-写入 `config.game`。
+右键菜单：置顶 / 点击穿透 / 声音 / 录屏里隐藏 / 语音 / 模型 / 游戏 / **启动当前游戏** / 配置 API /
+打开管理端 / 示例 / 关闭。空闲气泡「吃饭ing」，决策「思考ing」，说话显示台词。游戏子菜单只切换
+当前游戏（写入 `config.game`）；「启动当前游戏」会按 `game.json` 的 `launch` 拉起 Steam / exe。
 
 `python main.py` 默认在后台顺带起 overlay 服务；端口被占用会复用，不想起服务加
 `--no-server`。
@@ -67,9 +80,10 @@ Copy-Item .\games\slay-the-spire-2\compat\mod\* $mods -Force
 
 ### 3.2 启动游戏并验证
 
-Steam 启动选项加 `--windowed`（全屏独占 OBS 会黑屏）。进主菜单后：
+Steam 启动选项加 `--windowed`（全屏独占 OBS 会黑屏）。右键「启动当前游戏」或：
 
 ```powershell
+python main.py game launch  # 按 config.game 启动（STS2 = Steam 2868840）
 python tools/sts2.py state  # 兼容老命令
 python main.py game state   # 走游戏注册表读状态
 # SCREEN MAIN_MENU | IRONCLAD A? | act ? floor ? | HP ?/? gold ? deck 0

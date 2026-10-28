@@ -19,7 +19,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0"]
+agent = ["langgraph>=1.0"]
+dev = ["pytest>=8.0", "langgraph>=1.0"]
 
 [project.scripts]
 dafeiyu = "dafeiyu.cli:main"

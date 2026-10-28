@@ -8,6 +8,8 @@
     python main.py status            各层体检（JSON）
     python main.py games             游戏列表
     python main.py game state        读当前游戏状态（默认取 config.json 的 game）
+    python main.py game launch       启动当前游戏（Steam / exe）
+    python main.py agent run --demo  LangGraph 回合流程（观察/规划/验算/执行）
     python main.py voice test "..."  合成一句试听
     python main.py doctor            环境自检
     python main.py setup             建兼容链接（db/、tools/data/）
@@ -200,9 +202,19 @@ def cmd_games(args) -> int:
 
 
 def cmd_game(args) -> int:
-    """读游戏适配器状态；默认取 config 的 game，离线也返回非 0，方便脚本判断。"""
+    """读游戏适配器状态 / 启动游戏；默认取 config 的 game。"""
     registry = GameRegistry()
     game_id = args.game or LiveConfig.load().game
+    if args.action == "launch":
+        from dafeiyu.games.launch import launch_game
+
+        result = launch_game(game_id, registry)
+        if args.json:
+            _print_json(result)
+        else:
+            print(("OK  " if result.get("ok") else "ERR ")
+                  + str(result.get("message") or result.get("error") or ""))
+        return 0 if result.get("ok") else 1
     pack = registry.get(game_id)
     if not pack:
         print(f"ERR 没有这个游戏包：{game_id}")
@@ -219,6 +231,77 @@ def cmd_game(args) -> int:
         print(_game_status_line(state))
         print(f"screen={state.get('screen') or '—'} available={bool(status.get('available'))}")
     return 0 if status.get("available") else 1
+
+
+def cmd_agent(args) -> int:
+    """LangGraph 回合流程：观察 → 规划 → 验算 → 执行 → 反思。"""
+    from dafeiyu.agent import (DemoPlanner, DemoTools, LLMPlanner, Sts2Tools,
+                               graph_mermaid, read_runs, run_turn)
+    from dafeiyu.core.config import LiveConfig
+
+    action = getattr(args, "action", "run")
+    if action == "graph":
+        try:
+            print(graph_mermaid())
+        except Exception as exc:  # noqa: BLE001
+            print(f"ERR {exc}；运行 pip install -e .[agent]")
+            return 2
+        return 0
+    if action == "trace":
+        rows = read_runs(limit=int(getattr(args, "limit", 10) or 10))
+        if getattr(args, "json", False):
+            _print_json(rows)
+            return 0
+        if not rows:
+            print("还没有 Agent 轨迹；先跑 python main.py agent run --demo")
+            return 0
+        for run in rows:
+            print(f"{run['id']}  {run['status']:<6s} {run['duration_ms']:>5d}ms  "
+                  f"{run['tokens'].get('total', 0):>5d} tok  {run['goal'][:50]}")
+            for step in run.get("steps", []):
+                print(f"  {step['node']:<9s} {step['status']:<5s} "
+                      f"{step.get('duration_ms', 0):>5d}ms  {step.get('summary', '')}")
+        return 0
+
+    cfg = LiveConfig.load()
+    game = getattr(args, "game", None) or cfg.game
+    plan = None
+    plan_file = str(getattr(args, "plan", "") or "").strip()
+    if plan_file:
+        try:
+            plan = json.loads(Path(plan_file).read_text(encoding="utf-8-sig"))
+        except (OSError, ValueError) as exc:
+            print(f"ERR 读计划失败：{exc}")
+            return 2
+        if not isinstance(plan, dict):
+            print("ERR 计划必须是 JSON 对象")
+            return 2
+    demo = bool(getattr(args, "demo", False))
+    if demo:
+        tools, planner, mode = DemoTools(), (None if plan else DemoPlanner()), "demo"
+    else:
+        tools = Sts2Tools(game=game)
+        planner = None if plan else LLMPlanner(cfg)
+        mode = "live"
+        if not plan and not planner.available()[0]:
+            print(f"ERR {planner.available()[1]}；也可以 --plan plan.json 或 --demo")
+            return 2
+    result = run_turn(
+        str(getattr(args, "goal", "") or "打一回合：先看局面，再决定打谁"),
+        tools=tools, planner=planner, plan=plan, game=game,
+        dry_run=not bool(getattr(args, "execute", False)),
+        max_attempts=int(getattr(args, "max_attempts", 2) or 2), mode=mode,
+    )
+    if getattr(args, "json", False):
+        _print_json({k: v for k, v in result.items() if k != "context"})
+    else:
+        print(f"{'OK' if result.get('ok') else 'ERR'} {result.get('run_id')} "
+              f"{result.get('status')} · {result.get('error') or '流程完成'}")
+        for step in result.get("steps", []):
+            print(f"  {step['node']:<9s} {step['status']:<5s} "
+                  f"{step.get('duration_ms', 0):>5d}ms  {step.get('summary', '')}")
+        print(f"  trace {result.get('trace')}")
+    return 0 if result.get("ok") else 1
 
 
 def cmd_obs(args) -> int:
@@ -479,11 +562,29 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_games)
 
-    p = sub.add_parser("game", help="读游戏状态（默认取 config.json 的 game）")
-    p.add_argument("action", nargs="?", default="state", choices=["state", "status"])
+    p = sub.add_parser("game", help="读游戏状态 / 启动（默认取 config.json 的 game）")
+    p.add_argument("action", nargs="?", default="state", choices=["state", "status", "launch"])
     p.add_argument("--game", default=None)
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_game)
+
+    p = sub.add_parser("agent", help="LangGraph Agent 流程（观察/规划/验算/执行）")
+    ag = p.add_subparsers(dest="action", required=True)
+    ar = ag.add_parser("run", help="跑一轮图")
+    ar.add_argument("--goal", default="打一回合：先看局面，再决定打谁")
+    ar.add_argument("--plan", default="", help="外部计划 JSON 文件（不调用 LLM）")
+    ar.add_argument("--demo", action="store_true", help="离线演示图，不碰游戏")
+    ar.add_argument("--execute", action="store_true", help="真的出牌（默认 dry-run）")
+    ar.add_argument("--game", default=None)
+    ar.add_argument("--max-attempts", type=int, default=2)
+    ar.add_argument("--json", action="store_true")
+    ar.set_defaults(func=cmd_agent)
+    at = ag.add_parser("trace", help="看最近轨迹")
+    at.add_argument("--limit", type=int, default=10)
+    at.add_argument("--json", action="store_true")
+    at.set_defaults(func=cmd_agent)
+    agg = ag.add_parser("graph", help="打印图的 Mermaid")
+    agg.set_defaults(func=cmd_agent)
 
     p = sub.add_parser("obs", help="OBS WebSocket 控制")
     p.add_argument("action", choices=["status", "setup", "start", "stop", "shot",

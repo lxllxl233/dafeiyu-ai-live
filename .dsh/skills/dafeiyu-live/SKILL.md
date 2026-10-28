@@ -1,0 +1,37 @@
+---
+name: dafeiyu-live
+description: 操作《大肥鱼直播姬》这套 Python 直播工具：起桌宠/控制台、切语音与游戏、启动游戏、跑 LangGraph Agent 流程、看本机轨迹。游戏内决策仍加载 sts2-ironclad-ironclad，说话仍加载 sts2-caster。
+---
+
+# 大肥鱼直播姬 · Harness 操作卡
+
+这个仓库是 **DeepSeek Harness 驱动的 Python 应用**：外层 Agent 负责决策/说话，
+内核只做规则、节奏、TTS、overlay 和游戏适配。不要在内核里再写一个隐藏 LLM 循环。
+
+## 起服务
+
+```powershell
+python main.py                 # 桌宠
+python main.py studio          # overlay + 控制台 http://127.0.0.1:8730/studio
+python main.py game launch     # 按 config.game 启动（STS2 = Steam 2868840）
+python main.py doctor          # 环境自检
+```
+
+## Agent 流程
+
+```powershell
+python main.py agent run --demo    # 离线图，不碰游戏
+python main.py agent run           # 真实 ctx + LLM，只 dry-run
+python main.py agent run --plan p.json  # 外部计划（保留技能决策）
+python main.py agent trace --limit 5
+```
+
+图：`observe → plan → validate → execute → reflect`；验算失败回 `plan`。
+轨迹在 `logs/agent_trace.jsonl`，控制台「Agent 流程」可看；不存 API Key。
+
+## 边界
+
+- 游戏内决策：加载 `sts2-ironclad-ironclad`；说话：`sts2-caster`。
+- 出牌只走 `tools/act.py`；读局面只走 `tools/ctx.py`。
+- API Key 只在本机 `config.json`，绝不回显/提交/写日志。
+- 右键菜单是 Win32 弹窗，新增项要保留已有 ID。

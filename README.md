@@ -25,19 +25,25 @@ v1 把四样东西焊在一个「打杀戮尖塔」的工程里；v2 把它们�
 能做的事：
 
 - **一键启动**：双击根目录 `start.bat`，或 `python main.py`。
-- **桌宠右键菜单**：置顶 / 点击穿透 / 声音 / 录屏里隐藏 / **语音** / **模型** / **游戏** / **配置 API** / **打开管理端** / 示例 / 关闭。
-- **直播姬控制台** `http://127.0.0.1:8730/studio`：左侧经典管理端导航（基础配置 / 游戏 / 人设配置 / 互动 / 决策与日志），含语音、模型、游戏切换、决策日志和 Token 估算。
+- **桌宠右键菜单**：置顶 / 点击穿透 / 声音 / 录屏里隐藏 / **语音** / **模型** / **游戏** / **启动当前游戏** / **配置 API** / **打开管理端** / 示例 / 关闭。
+- **直播姬控制台** `http://127.0.0.1:8730/studio`：左侧经典管理端导航（基础配置 / 游戏 / 人设配置 / 互动 / Agent 流程 / 决策与日志），含语音、模型、游戏切换、决策日志、Token 估算和 Agent 节点轨迹。
 - **OBS 桌宠弹幕**：浏览器源 `/`，大肥鱼精灵 + 漫画气泡，带逐像素 alpha，直接进录像。
 - **桌面桌宠**：Win32 分层窗口，三视图精灵可拖；空闲气泡「吃饭ing」，决策「思考ing」，说话显示台词；默认能被录屏拍到（「录屏里隐藏」默认不勾）。
 - **性格层**：改 `persona/dafeiyu/card.json` 就能换语气/禁语/招牌；通用梗放 `persona/memes/`。
 - **语音层**：曼波语（MamboTTS）为主，引擎不在线时点「启动」/「试听」会自动拉起本地引擎，仍失败才回退动物语。
 - **游戏切换**：桌宠右键「游戏 ▸」或管理端「游戏」页切换，写入 `config.game`，游戏适配器和 Agent 下一轮读取。
+- **游戏启动**：右键「启动当前游戏」、管理端按钮或 `python main.py game launch`，按 `game.json` 的 `launch` 拉起 Steam / exe。
+- **Agent 流程**：LangGraph 把一回合拆成观察 → 规划 → 验算 → 执行 → 反思，节点耗时/token/重试写本机轨迹，控制台「Agent 流程」可看。
 - **录像回放**：`recordings/<游戏>/run-NNNN/run.mp4`，一局一个录像，`meta.json` 记角色/进阶/结果。
 - **离线演示**：`python main.py demo` 不需要游戏，跑通「游戏 → 性格 → 语音 → UI」。
 
 ![直播姬控制台](docs/studio.png)
 
-*控制台：左侧管理导航（基础配置 / 游戏 / 人设配置 / 互动 / 决策与日志），决策、日志、Token 和语音启动都在这里。*
+*控制台：左侧管理导航（基础配置 / 游戏 / 人设配置 / 互动 / Agent 流程 / 决策与日志），决策、日志、Token 和语音启动都在这里。*
+
+![Agent 流程](docs/agent.png)
+
+*Agent 流程：observe → plan → validate → execute → reflect，节点耗时、状态和 token 都在本机轨迹里。*
 
 ![桌宠与气泡](docs/overlay_pet.png)
 
@@ -45,7 +51,7 @@ v1 把四样东西焊在一个「打杀戮尖塔」的工程里；v2 把它们�
 
 ![桌宠右键菜单](docs/pet_menu.png)
 
-*桌面桌宠：右键鱼身直接出菜单（置顶 / 点击穿透 / 声音 / 录屏里隐藏 / 语音 / 模型 / 游戏 / 配置 API / 打开管理端 / 示例 / 关闭）。*
+*桌面桌宠：右键鱼身直接出菜单（置顶 / 点击穿透 / 声音 / 录屏里隐藏 / 语音 / 模型 / 游戏 / 启动当前游戏 / 配置 API / 打开管理端 / 示例 / 关闭）。*
 
 ---
 
@@ -74,7 +80,13 @@ dafeiyu-ai-live/
 │   ├── games/                   # 游戏无关协议 + 注册表 + 演示源
 │   │   ├── base.py
 │   │   ├── registry.py
+│   │   ├── launch.py            # Steam / exe / url 启动
 │   │   └── demo.py
+│   ├── agent/                   # LangGraph 回合流程 + 本机轨迹
+│   │   ├── graph.py             # observe → plan → validate → execute → reflect
+│   │   ├── tools.py             # ctx.py / act.py 适配 + 离线 DemoTools
+│   │   ├── planner.py           # 外部 plan / OpenAI 兼容 LLM
+│   │   └── trace.py             # logs/agent_trace.jsonl
 │   └── cli.py                   # dafeiyu 命令
 ├── persona/                     # 性格层资产
 │   ├── dafeiyu/                 # 人设卡 + 说话系统说明 + 19 句招牌
@@ -107,6 +119,7 @@ dafeiyu-ai-live/
 | 性格层 | `persona/` + `src/dafeiyu/persona/` | 人设卡与 meme 是数据，lint/节奏是代码 |
 | 语音层 | `voice/` + `src/dafeiyu/voice/` | 动物语 / 曼波语，路由负责回退 |
 | 游戏列表 | `games/registry.json` | 每个游戏 = 一个包 |
+| Agent 层 | `src/dafeiyu/agent/` | LangGraph 图 + 本机轨迹；工具仍走 `tools/ctx.py` / `tools/act.py` |
 | 杀戮尖塔 2 | `games/slay-the-spire-2/` | `game-skill/` + `compat/` + `corpus/` |
 | 录制 | `src/dafeiyu/recording/` + `recordings/` | 代码在 src，成品按游戏分目录 |
 | 录像回放 | `recordings/<游戏>/run-NNNN/` | 一局一个 `run.mp4` + `meta.json` |
@@ -121,12 +134,15 @@ dafeiyu-ai-live/
 ```powershell
 cd <克隆目录>
 python -m pip install -r requirements.txt
+# 可选：Agent 流程（LangGraph）
+python -m pip install -e .[agent]
 
 start.bat                    # 一键启动桌宠（pythonw，无控制台）
 python main.py              # 或直接跑；右键鱼身打开菜单
 python main.py studio       # 控制台 http://127.0.0.1:8730/studio
 python main.py doctor       # 环境自检：人设卡 / 语音 / overlay / 语料库 / 游戏
 python main.py demo         # 不需要游戏，跑一遍完整链路
+python main.py agent run --demo  # 可选：离线跑一遍 Agent 图
 ```
 
 `python main.py` 默认会在后台顺带起 overlay 服务（端口被占用就复用）；
@@ -148,11 +164,13 @@ python main.py replay stop --result win_a10
 python main.py replay list
 ```
 
-控制台左侧是经典管理端导航：**基础配置 / 游戏 / 人设配置 / 互动 / 决策与日志**。可以直接：
+控制台左侧是经典管理端导航：**基础配置 / 游戏 / 人设配置 / 互动 / Agent 流程 / 决策与日志**。可以直接：
 
 - 写 `thought` + `meme` → 「只算 lint」看规则 / 「送到直播」推给 OBS 和桌面窗；
 - 看 **决策记录**（thought / 实际台词 / token 估算）和 **运行日志**；
+- 看 **Agent 流程**：最近运行的节点耗时、重试次数、token 和轨迹；
 - 切 **语音**、**模型**、**当前游戏**，配置 **API 提供方 / Base URL / API Key**；
+- 点「启动当前游戏」直接拉起 Steam / exe（按 `game.json` 的 `launch` 配置）；
 - 曼波离线时点「启动」或「试听」自动拉起本地 MamboTTS；
 - 看游戏包是否在线、语料库多大、overlay 当前几路连接。
 
@@ -175,7 +193,7 @@ python main.py replay list
 - 说话是漫画气泡：奶白底 + 金边 + 尾巴，出现淡入上浮，说完 1.6 秒淡出；
   思考中显示「思考ing」，不会一直挂着上一句。
 - 窗口空白像素不吃鼠标：只有鱼身和气泡可点，其余点击直接落到游戏里。
-- **右键鱼身**：置顶 / 点击穿透 / 声音 / 录屏里隐藏 / **语音**（曼波 / 动物语 / 静音）/ **模型** / **游戏** / **配置 API…** / **打开管理端** / 重新显示示例 / 关闭。
+- **右键鱼身**：置顶 / 点击穿透 / 声音 / 录屏里隐藏 / **语音**（曼波 / 动物语 / 静音）/ **模型** / **游戏** / **启动当前游戏** / **配置 API…** / **打开管理端** / 重新显示示例 / 关闭。
 - **语音未就绪**：点「曼波语」或语音子菜单的「启动曼波引擎」会后台拉起 `run_engine.py`；控制台语音行的「启动」/「试听」也会自动启动。
 - **三态气泡**：空闲「吃饭ing」，决策「思考ing」，说话显示这一句台词。
 - **录屏可见性**：「录屏里隐藏」默认不勾，桌宠默认会进录像；勾上后用 `WDA_EXCLUDEFROMCAPTURE` 排除。要启动即隐藏可加 `--exclude-capture`。
@@ -225,6 +243,33 @@ from dafeiyu.core.session import LiveSession
 session = LiveSession(LiveConfig.load()).start()
 session.say("它 21，我最多挡 15", "差 6，嗨呀。")
 ```
+
+---
+
+## Agent 流程（LangGraph）
+
+内核仍然只做规则、节奏和分发；Agent 层只接在**一回合的边界**上：
+
+```
+observe ──► plan ──► validate ──► execute ──► reflect
+              ▲          │            │
+              └──────────┴────────────┘   验算/执行失败 → 回 plan 重试
+```
+
+- `observe` 复用 `tools/ctx.py` 的紧凑局面；`validate` 复用 `tools/act.py --dry` 的硬护栏；
+- `plan` 可以来自外部 DSH Agent（`--plan`，继续用 `.dsh/skills`）或内置 LLM；
+- 默认 dry-run，只有 `python main.py agent run --execute` 才真的出牌；
+- 每个节点的耗时/状态/token/重试写 `logs/agent_trace.jsonl`，控制台左侧「Agent 流程」直接看；
+- 不走 LangSmith 云端，轨迹只存摘要，不存完整局面和 API Key。
+
+```powershell
+python main.py agent run --demo          # 离线验证图
+python main.py agent run                 # 真实局面 + LLM，只验算
+python main.py agent run --plan plan.json  # 外部 Agent 出计划
+python main.py agent trace --limit 5
+```
+
+完整取舍、状态字段和优化方法见 [`docs/AGENT_LANGGRAPH.md`](docs/AGENT_LANGGRAPH.md)。
 
 ---
 
@@ -289,7 +334,17 @@ python main.py games
 ```
 
 当前游戏用桌宠右键「游戏 ▸」或管理端「游戏」页切换，写到 `config.game`；不会重启游戏或 Agent。
-游戏专属代码仍放各自 `game-skill/`，注册表在 `games/registry.json`。
+右键「启动当前游戏」、管理端「启动当前游戏」或 `python main.py game launch` 会按 `game.json` 的
+`launch` 启动；切游戏只改配置，不自动拉起游戏。
+
+```json
+{"launch": {"type": "steam", "app_id": "2868840"}}
+{"launch": {"type": "exe", "path": "bin/game.exe", "args": ["--windowed"]}}
+```
+
+支持 `steam`（Steam App ID）、`exe`（相对游戏包目录或绝对路径）、`url`；没写 `launch` 的游戏
+（例如内置演示）会明确报「未配置启动方式」。游戏专属代码仍放各自 `game-skill/`，注册表在
+`games/registry.json`。
 
 以《杀戮尖塔 2》为例，一个游戏包只有三份东西：
 
@@ -353,6 +408,8 @@ OBS 场景仍叫 `StS2`：`StS2 Game`（game_capture）+ `AI Commentary`（浏�
 | GET | `/api/config` | 语音/模型/游戏/API 配置（Key 只返回是否已配置） |
 | POST | `/api/config` | 保存语音/模型/游戏/API；Key 只写本机 `config.json` |
 | GET | `/api/games` | 游戏列表（强制刷新在线状态） |
+| POST | `/api/game/launch` | `{game}` 启动游戏；默认当前 `config.game` |
+| POST | `/api/agent/run` | 跑一轮离线 Agent 演示（不碰游戏） |
 | POST | `/api/say` | `{thought, meme}` 或 `{text}`；`dry_run: true` 只 lint |
 | POST | `/api/voice` | `{text, voice}` 返回 WAV；曼波离线会自动启动并返回 202 |
 | POST | `/api/voice/start` | `{voice: "mambo"}` 启动本地曼波引擎 |
@@ -371,7 +428,7 @@ OBS 场景仍叫 `StS2`：`StS2 Game`（game_capture）+ `AI Commentary`（浏�
 ## 测试
 
 ```powershell
-python -m pytest -q tests          # 直播姬：总线/性格/语音/游戏/会话/配置/启动器/录像（37 项）
+python -m pytest -q tests          # 直播姬：总线/性格/语音/游戏/启动/配置/Agent/录像（48 项）
 python tools/test_ctx_act.py       # 决策层：ctx + act（离线）
 python tools/test_streamer.py      # 桌宠渲染/透明/换行/配音
 python tools/test_overlay_playback.py

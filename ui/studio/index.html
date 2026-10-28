@@ -175,6 +175,18 @@
   .layer i{width:7px;height:7px;border-radius:2px;margin-top:5px;flex:none;background:var(--fish)}
   .layer b{font-weight:600;color:#dfe6f5}
   .layer code{font-family:Consolas,monospace;font-size:10.8px;color:var(--muted)}
+  /* agent flow */
+  .agent-map{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:10px 0 12px}
+  .agent-node{border:1px solid var(--line);border-radius:8px;padding:5px 8px;font-size:11px;
+    color:#cfd7ea;background:rgba(255,255,255,.025)}
+  .agent-node.hot{border-color:rgba(244,201,104,.55);color:var(--gold);background:rgba(244,201,104,.08)}
+  .agent-arrow{color:var(--muted);font-size:10px}
+  .agent-step-ok{color:#8fe0ad}.agent-step-error{color:#ff9b9b}
+  .agent-run{display:flex;gap:8px;align-items:baseline;font-size:11.5px;padding:7px 0;
+    border-top:1px dashed var(--line)}
+  .agent-run:first-child{border-top:0}
+  .agent-run .id{font-family:Consolas,monospace;font-size:10.5px;color:var(--muted)}
+  .agent-run .goal{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   footer{position:relative;z-index:1;padding:10px 26px 22px;color:var(--muted);font-size:11.5px;
     max-width:1680px;margin:0 auto;display:flex;gap:16px;flex-wrap:wrap}
   footer code{background:rgba(255,255,255,.04);border:1px solid var(--line);border-radius:6px;
@@ -229,6 +241,8 @@
       <div class="nav-group">直播</div>
       <button class="nav-item" type="button" data-view="interaction">
         <i>✉</i><span>互动</span><b id="navSaid">0</b></button>
+      <button class="nav-item" type="button" data-view="agent">
+        <i>⌁</i><span>Agent 流程</span><b id="navAgent">—</b></button>
       <button class="nav-item" type="button" data-view="telemetry">
         <i>◷</i><span>决策与日志</span><b id="navTokens">0</b></button>
     </nav>
@@ -312,12 +326,13 @@
           <h2>当前游戏 <span>config.game</span></h2>
           <div class="field"><label for="cfgGame">切换游戏</label>
             <select id="cfgGame"></select></div>
-          <div class="row" style="display:flex;gap:9px;align-items:center">
+          <div class="row" style="display:flex;gap:9px;align-items:center;flex-wrap:wrap">
             <button class="btn" id="gameSave">保存切换</button>
+            <button class="btn ghost" id="gameLaunch">启动当前游戏</button>
             <span class="hint" id="gameHint" style="color:var(--muted);font-size:11px">—</span>
           </div>
           <div class="hint" style="margin-top:12px;line-height:1.8;color:var(--muted)">
-            切换不会重启游戏或 Agent；只改变当前配置。游戏是否在线看右侧连接状态。
+            切换不会重启游戏或 Agent；只改变当前配置。启动走 game.json 的 launch（Steam / exe）。游戏是否在线看右侧连接状态。
           </div>
         </div>
         <div class="card">
@@ -390,6 +405,58 @@
         <div class="card feed">
           <h2>最近台词 <span id="seq">seq —</span></h2>
           <ul id="feed"><li class="empty">还没有台词。先发一句试试。</li></ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="view" data-view="agent" id="view-agent">
+      <div class="view-head">
+        <div>
+          <span class="eyebrow">AGENT / LANGGRAPH FLOW</span>
+          <h2>Agent 流程</h2>
+          <p>一次决策拆成观察 / 规划 / 验算 / 执行 / 反思；节点耗时、状态和 token 都写本机 JSONL。</p>
+        </div>
+        <div class="head-actions">
+          <button class="btn" id="agentRun" type="button">跑一轮演示</button>
+          <a href="#telemetry">看决策日志 →</a>
+        </div>
+      </div>
+      <div class="grid two">
+        <div class="card">
+          <h2>图 <span>LangGraph</span></h2>
+          <div class="agent-map">
+            <span class="agent-node">observe</span><span class="agent-arrow">→</span>
+            <span class="agent-node">plan</span><span class="agent-arrow">→</span>
+            <span class="agent-node">validate</span><span class="agent-arrow">→</span>
+            <span class="agent-node">execute</span><span class="agent-arrow">→</span>
+            <span class="agent-node">reflect</span>
+          </div>
+          <div class="hint" style="line-height:1.8;color:var(--muted)">
+            验算失败会回到 plan 重试，最多 <code>max_attempts</code> 次；执行失败也回到 plan。
+            出牌仍走 <code>tools/act.py</code>，人设和语音仍走原内核。
+          </div>
+          <div class="kv" style="margin-top:12px"><span>最近一次</span><b id="agentStatus">—</b></div>
+          <div class="kv"><span>耗时</span><b id="agentDuration">—</b></div>
+          <div class="kv"><span>Token</span><b id="agentTokens">—</b></div>
+          <div class="kv"><span>轨迹文件</span><b id="agentTracePath">—</b></div>
+        </div>
+        <div class="card">
+          <h2>本次节点 <span id="agentRunId">—</span></h2>
+          <ul class="mini-list" id="agentSteps" style="max-height:300px"><li>还没有 Agent 运行。点右上「跑一轮演示」。</li></ul>
+        </div>
+        <div class="card">
+          <h2>最近运行 <span id="agentCount">—</span></h2>
+          <div id="agentRuns"><div class="empty">还没有轨迹。</div></div>
+        </div>
+        <div class="card">
+          <h2>观察与优化 <span>本机</span></h2>
+          <div class="hint" style="line-height:1.9;color:var(--muted)">
+            看三件事：哪个节点最慢、validate 重试几次、每次 token 多少。改 prompt / 加规则 / 换模型前后，
+            跑同一局面比这三项。轨迹只存摘要，不存完整局面和 API Key。
+          </div>
+          <div class="kv" style="margin-top:12px"><span>轨迹条数</span><b id="agentTraceCount">—</b></div>
+          <div class="kv"><span>运行命令</span><b><code>python main.py agent run --demo</code></b></div>
+          <div class="kv"><span>真实 dry-run</span><b><code>python main.py agent run</code></b></div>
         </div>
       </div>
     </section>
@@ -646,6 +713,55 @@ function renderTelemetry(){
   }).join("") : `<li>还没有日志。</li>`;
 }
 
+function renderAgent(){
+  const a = DATA?.agent || {};
+  const latest = a.latest || {};
+  const steps = latest.steps || [];
+  const status = latest.status || "";
+  const cls = status === "ok" ? "agent-step-ok" : (status === "error" ? "agent-step-error" : "");
+  $("#agentStatus").innerHTML = status ? `<span class="${cls}">${esc(status)}</span>` : "—";
+  $("#agentDuration").textContent = latest.duration_ms != null ? `${latest.duration_ms} ms` : "—";
+  $("#agentTokens").textContent = latest.tokens ? `${latest.tokens.total || 0} tok` : "—";
+  $("#agentTracePath").textContent = a.trace || "logs/agent_trace.jsonl";
+  $("#agentRunId").textContent = latest.id || "—";
+  $("#agentCount").textContent = `${a.count || 0} 次`;
+  $("#agentTraceCount").textContent = `${a.count || 0} 条（最近 ${(a.runs || []).length} 次）`;
+  $("#agentSteps").innerHTML = steps.length ? steps.map(s => {
+    const ok = s.status === "ok";
+    return `<li><div><span class="${ok ? "agent-step-ok" : "agent-step-error"}">${esc(s.node)}</span>
+      <span class="t"> · ${s.duration_ms || 0} ms · 第 ${s.attempt || 1} 次</span></div>
+      <div>${esc(s.summary || s.error || "")}</div></li>`;
+  }).join("") : `<li>还没有 Agent 运行。点右上「跑一轮演示」。</li>`;
+  const runs = a.runs || [];
+  $("#agentRuns").innerHTML = runs.length ? runs.slice(0, 10).map(r => {
+    const ok = r.status === "ok";
+    const t = new Date((r.started_at || 0) * 1000).toLocaleTimeString("zh-CN", {hour12:false});
+    return `<div class="agent-run">
+      <span class="id">${esc(r.id)}</span>
+      <span class="goal">${esc(r.goal || "")}</span>
+      <span class="${ok ? "agent-step-ok" : "agent-step-error"}">${esc(r.status)}</span>
+      <span class="t">${r.duration_ms || 0}ms · ${t}</span></div>`;
+  }).join("") : `<div class="empty">还没有轨迹。</div>`;
+  $("#navAgent").textContent = status ? `${latest.duration_ms || 0}ms` : "—";
+}
+
+async function runAgent(){
+  const btn = $("#agentRun");
+  btn.disabled = true;
+  toast("正在跑一轮演示流程…");
+  try{
+    const r = await fetch("/api/agent/run", {
+      method:"POST", headers:{"content-type":"application/json"},
+      body: JSON.stringify({goal:"控制台演示：观察 → 规划 → 验算 → 执行"}),
+    });
+    const res = await r.json();
+    if(!res.ok) throw new Error(res.error || "HTTP " + r.status);
+    toast("演示流程完成，看节点耗时");
+    await refresh();
+  }catch(e){ toast("Agent 运行失败：" + e.message, true); }
+  finally{ btn.disabled = false; }
+}
+
 async function saveConfig(){
   const body = {
     voice: $("#cfgVoice").value,
@@ -685,6 +801,25 @@ async function saveGame(){
     toast("当前游戏已切换");
     await refresh();
   }catch(e){ toast("切换失败：" + e.message, true); }
+}
+
+async function launchGame(){
+  const game = $("#cfgGame").value || DATA?.config?.game || "";
+  if(!game){ toast("先选一个游戏"); return; }
+  const btn = $("#gameLaunch");
+  btn.disabled = true;
+  toast("正在请求启动游戏…");
+  try{
+    const r = await fetch("/api/game/launch", {
+      method:"POST", headers:{"content-type":"application/json"},
+      body: JSON.stringify({game}),
+    });
+    const res = await r.json();
+    if(!res.ok) throw new Error(res.error || res.message || "HTTP " + r.status);
+    toast(res.message || "已请求启动游戏");
+    setTimeout(refresh, 1200);
+  }catch(e){ toast("启动失败：" + e.message, true); }
+  finally{ btn.disabled = false; }
 }
 
 async function startVoice(voice){
@@ -735,7 +870,7 @@ function renderSamples(){
 
 function render(){
   renderPills(); renderPersona(); renderVoice(); renderGames(); renderRight(); renderFeed(); renderSamples();
-  renderConfig(); renderTelemetry(); renderNav();
+  renderConfig(); renderTelemetry(); renderAgent(); renderNav();
   $("#rootHint").textContent = DATA?.root ? `仓库：${DATA.root}` : "";
 }
 
@@ -825,7 +960,7 @@ async function preview(voice){
 }
 
 const VIEW_ALIASES = {settings:"basic", basic:"basic", games:"games", persona:"persona",
-  interaction:"interaction", telemetry:"telemetry"};
+  interaction:"interaction", agent:"agent", telemetry:"telemetry"};
 function setView(name, updateHash){
   const target = VIEW_ALIASES[name] || "basic";
   document.querySelectorAll(".view").forEach(v => v.classList.toggle("active", v.dataset.view === target));
@@ -858,6 +993,8 @@ $("#send").addEventListener("click", () => send(false));
 $("#lintOnly").addEventListener("click", () => send(true));
 $("#cfgSave").addEventListener("click", saveConfig);
 $("#gameSave").addEventListener("click", saveGame);
+$("#gameLaunch").addEventListener("click", launchGame);
+$("#agentRun").addEventListener("click", runAgent);
 $("#cfgClearKey").addEventListener("click", clearApiKey);
 $("#reload").addEventListener("click", (e) => { e.preventDefault(); refresh(); });
 ["thought","meme"].forEach(id => $("#" + id).addEventListener("input", setCounter));

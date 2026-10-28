@@ -112,6 +112,19 @@ class GameAdapter:
 - `GameState.digest()` 决定去重：只有字段变化才发事件。
 - 适配器挂掉 = 游戏离线，不是直播故障；`LiveSession.status()` 会带上错误。
 
+### 启动游戏
+
+`game.json` 的 `launch` 是唯一启动配置，`src/dafeiyu/games/launch.py` 负责执行：
+
+| type | 字段 | 行为 |
+|---|---|---|
+| `steam` | `app_id` | 打开 `steam://rungameid/<app_id>` |
+| `exe` | `path` / `args` / `cwd` | 相对游戏包目录或绝对路径启动 |
+| `url` | `url` | 默认浏览器打开 |
+
+右键「启动当前游戏」、控制台按钮、`POST /api/game/launch` 和
+`python main.py game launch` 共用这个入口；没配置 `launch` 的游戏明确报错，不会悄悄失败。
+
 ## 6. UI 服务
 
 只起一个 HTTP 服务（默认 `127.0.0.1:8730`），因为 OBS 浏览器源和控制台必须看同一份状态：
@@ -122,6 +135,8 @@ class GameAdapter:
 | `/studio` | 控制台单页 |
 | `/api/studio` | 四层状态聚合 + 决策/日志/Token 遥测（人设/语音/游戏/overlay/最近台词） |
 | `/api/config` | GET 配置（Key 只报是否已配置）/ POST 保存语音、模型、游戏、API |
+| `/api/game/launch` | 按 `config.game` 或 `{game}` 启动游戏 |
+| `/api/agent/run` | 跑一轮离线 Agent 演示（不碰游戏） |
 | `/api/voice/start` | 启动本地曼波引擎（MamboTTS `run_engine.py`） |
 | `/api/say` | 拼句 + lint + `add_comment`；`dry_run` 只算 lint |
 | `/api/voice` | 同步合成返回 WAV（试听） |
@@ -151,6 +166,30 @@ recordings/<game-id>/run-NNNN/
 - `stop` 读 `StopRecord.outputPath`，`os.replace` 成 `run.mp4`（同盘瞬间），再写 meta。
 - 目标 `run.mp4` 已存在默认报错，不静默覆盖；多出的段进 `_extra/`。
 - `recordings/INDEX.md` 由 `scan()` 生成；视频被 `.gitignore` 排除，只提交说明和索引。
+
+## 6.5 Agent 层（LangGraph）
+
+Agent 层是**可选**的、接在一回合边界上的状态机，不替换内核：
+
+```
+observe ──► plan ──► validate ──► execute ──► reflect
+              ▲          │            │
+              └──────────┴────────────┘
+```
+
+| 节点 | 实现 | 边界 |
+|---|---|---|
+| `observe` | `Sts2Tools.observe` → `tools/ctx.py` | 只读局面 |
+| `plan` | `ProvidedPlanner` / `LLMPlanner` | 输出 `{say, seq}`，不直接操作游戏 |
+| `validate` | `tools/act.py --dry` | 费用/目标/斩杀/硬护栏 |
+| `execute` | `tools/act.py`（默认 dry-run） | 唯一出牌路径 |
+| `reflect` | `TraceRecorder` | 写轨迹，状态回给下一轮 |
+
+- `src/dafeiyu/agent/` 只做编排、重试和轨迹；不复制 `ctx.py` / `act.py` 的逻辑。
+- 外部 DSH Agent 用 `--plan` 注入计划；内置 LLM 用 OpenAI 兼容接口，Key 仍只在本机。
+- 轨迹写入 `logs/agent_trace.jsonl`（只存摘要），`/api/studio` 的 `agent` 字段供
+  控制台「Agent 流程」展示；不依赖 LangSmith。
+- `langgraph` 是可选依赖（`pip install -e .[agent]`）；不装时桌宠、语音、游戏启动照常。
 
 ## 7. 扩展点
 
@@ -193,6 +232,8 @@ recordings/<game-id>/run-NNNN/
 
 - **不做截图识别**：状态来自 mod 的结构化 JSON，稳定、便宜、可回放。
 - **不在内核里跑 LLM**：说什么由 Agent/人设决定；内核只做规则、节奏和分发。
+- **Agent 层只接一回合边界**：图负责观察/验算/重试/轨迹，不接管人设、TTS 和 OBS；
+  这样换模型或换编排不用重写游戏兼容层。
 - **不并发合成曼波**：引擎是单实例，并发只会互相拖死；串行 + 缓存更稳。
 - **控制台不另起服务**：同一端口避免 OBS 源和控制台状态分叉。
 - **Windows 优先**：透明分层窗和 OBS 音频路由是 Windows 实现；其他平台仍有 overlay/控制台。

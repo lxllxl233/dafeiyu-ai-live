@@ -117,6 +117,8 @@ class StudioRuntime:
             pushed = self._pushed
             last = dict(self._last)
             voice_state = dict(self._voice_state)
+        from ..agent.trace import agent_summary
+
         return {
             "ok": True,
             "product": {"name": __product__, "version": __version__, "codename": __codename__},
@@ -136,6 +138,7 @@ class StudioRuntime:
                 "usage": overlay.get("usage", {}),
             },
             "studio": {"said": said, "pushed": pushed, "last": last, "voice": voice_state},
+            "agent": agent_summary(),
             "samples": list(card.openers[:2]) + list(card.quips[:4]),
             "links": {
                 "overlay": "/",
@@ -195,6 +198,13 @@ class StudioRuntime:
         from ..voice.startup import start_from_config
 
         return {"voice": "mambo", **start_from_config(self.cfg)}
+
+    def launch_game(self, game_id: str | None = None) -> dict:
+        """启动当前 / 指定游戏；桌面菜单和控制台按钮共用。"""
+        self._sync_config()
+        from ..games.launch import launch_game
+
+        return launch_game(game_id or self.cfg.game, self.registry)
 
     def update_config(self, body: dict) -> dict:
         """从控制台/桌宠菜单保存语音、模型、API 配置。"""

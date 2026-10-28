@@ -714,6 +714,41 @@ class Handler(BaseHTTPRequestHandler):
                                            ensure_ascii=False).encode("utf-8"),
                            "application/json; charset=utf-8")
             return
+        if self.path == "/api/agent/run":
+            try:
+                n = int(self.headers.get("Content-Length", "0"))
+                payload = json.loads(self.rfile.read(n) or b"{}")
+                from dafeiyu.agent.graph import run_turn
+                from dafeiyu.agent.tools import DemoPlanner, DemoTools
+
+                result = run_turn(
+                    str(payload.get("goal") or "控制台演示：观察 → 规划 → 验算 → 执行"),
+                    tools=DemoTools(), planner=DemoPlanner(), mode="studio",
+                    trace_path=None,
+                )
+                body = {k: v for k, v in result.items() if k not in ("context", "plan")}
+                self._send(200, json.dumps(body, ensure_ascii=False).encode("utf-8"),
+                           "application/json; charset=utf-8")
+            except Exception as exc:
+                self._send(500, json.dumps({"ok": False, "error": str(exc)},
+                                           ensure_ascii=False).encode("utf-8"),
+                           "application/json; charset=utf-8")
+            return
+        if self.path == "/api/game/launch":
+            try:
+                n = int(self.headers.get("Content-Length", "0"))
+                payload = json.loads(self.rfile.read(n) or b"{}")
+                from dafeiyu.ui.studio import get_runtime
+
+                result = get_runtime().launch_game(
+                    str(payload.get("game") or "").strip() or None)
+                code = 200 if result.get("ok") else 503
+                self._send(code, json.dumps(result, ensure_ascii=False).encode("utf-8"),
+                           "application/json; charset=utf-8")
+            except Exception as exc:
+                self._send(500, json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False)
+                           .encode("utf-8"), "application/json; charset=utf-8")
+            return
         if self.path == "/api/voice/start":
             try:
                 n = int(self.headers.get("Content-Length", "0"))
