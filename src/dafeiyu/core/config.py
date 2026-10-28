@@ -89,6 +89,10 @@ class LiveConfig:
     autoplay_mode: str = "local"
     # 自动玩法的 LLM 模型；默认用非推理模型，避免长局面把 content 挤空
     autoplay_llm_model: str = "deepseek-chat"
+    # 思维链开关：off = 都关（默认，界面和战斗都 1–2s 回）；auto = 界面关、
+    # 战斗跟模型默认；on = 都开。实测 deepseek-flash 开着 thinking 时一次战斗
+    # 决策要 24s、4096 reasoning token、content 还是空的；关掉同一局面 1.7s 出计划。
+    autoplay_llm_thinking: str = "off"
     # voice = 每步等语音/留出发音时间；normal = 旧版快节奏
     autoplay_pace: str = "voice"
 

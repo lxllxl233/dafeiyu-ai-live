@@ -932,13 +932,22 @@ def _run(game: str, mode: str = "local") -> None:
 
             cfg = LiveConfig.load()
             llm_tools = Sts2Tools(game)
+            # 界面决策（地图/事件/营火/商店/宝箱/选牌）是简单选择，关掉思维链：
+            # deepseek-flash 开着 thinking 时实测一次 24s、4096 reasoning token、
+            # 最终 content 为空；关掉后同一局面 0.8s 就回 JSON。
+            think_pref = str(getattr(cfg, "autoplay_llm_thinking", "off") or "off")
+            think_pref = think_pref.strip().lower()
+            combat_thinking = {"off": False, "on": True}.get(think_pref)  # auto → 模型默认
+            screen_thinking = True if think_pref == "on" else False
             llm_planner = LLMPlanner(
                 cfg, model=cfg.autoplay_llm_model or cfg.llm_model,
                 timeout=25.0, system_prompt=SYSTEM_PROMPT,
+                thinking=combat_thinking,
             )
             screen_planner = LLMPlanner(
                 cfg, model=cfg.autoplay_llm_model or cfg.llm_model,
                 timeout=40.0, system_prompt=NONCOMBAT_PROMPT,
+                thinking=screen_thinking,
             )
             ok, why = screen_planner.available()
             if not ok:

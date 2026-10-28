@@ -29,10 +29,10 @@ class _Resp:
                           "total_tokens": 15}}
 
 
-def _planner(system: str = "SYSTEM") -> LLMPlanner:
+def _planner(system: str = "SYSTEM", *, thinking=None) -> LLMPlanner:
     cfg = LiveConfig.load()
     cfg.llm_api_key = "test-key"       # 只在内存里替换，不写回 config.json
-    return LLMPlanner(cfg, system_prompt=system)
+    return LLMPlanner(cfg, system_prompt=system, thinking=thinking)
 
 
 def _capture(monkeypatch, replies: list[str]) -> list[dict]:
@@ -120,3 +120,24 @@ def test_cross_run_shared_inputs_are_capped():
     assert len(brief.get("rules") or []) == 5
     assert len(brief.get("lessons") or []) <= 3
     assert "journal" not in json.dumps(brief)      # 没有整局历史/日记注入
+
+
+def test_thinking_switch_only_changes_the_request_flag(monkeypatch):
+    """界面决策默认关 thinking（快），战斗默认不传（跟模型）；只动 payload 一个字段。"""
+    sent = _capture(monkeypatch, ['{"act":"proceed"}'] * 3)
+    _planner(thinking=False).plan({"screen": "SHOP"}, goal="g")
+    _planner(thinking=True).plan({"screen": "SHOP"}, goal="g")
+    _planner().plan({"screen": "SHOP"}, goal="g")
+
+    assert sent[0]["thinking"] == {"type": "disabled"}
+    assert sent[1]["thinking"] == {"type": "enabled"}
+    assert "thinking" not in sent[2]
+    # 其余请求形状不变：仍是 system + 一条 user，仍然没有历史
+    for body in sent:
+        assert [m["role"] for m in body["messages"]] == ["system", "user"]
+        assert body["max_tokens"] == 4096
+
+
+def test_autoplay_thinking_default_is_off():
+    """默认关思维链：开着时一次决策 24s 还可能 content 为空，关掉 1–2s。"""
+    assert LiveConfig().autoplay_llm_thinking == "off"

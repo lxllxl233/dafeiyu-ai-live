@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **LLM 决策提速：默认关思维链**。实测 `deepseek-flash` 开着 thinking 时一次
+  战斗决策要 24s、`completion_tokens=4096` 全是 reasoning、`content` 为空，
+  正好撞上 4096 预算和 25s 超时；界面决策 10–12s/步也主要是它在耗。新增
+  `autoplay_llm_thinking`（默认 `off`）→ 请求带 `thinking:{"type":"disabled"}`，
+  同一局面 1.7s 出计划；`on` 恢复思维链，`auto` 只让战斗跟模型默认。provider
+  不认这个字段时自动去掉重试。`llm_usage` 行和 Token 面板每一步都多一个耗时 `ms`。
+
 ### Added
 
 - **界面决策也走 LLM**：新增 `games/slay-the-spire-2/decision/actions.py`——把

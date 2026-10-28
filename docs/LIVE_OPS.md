@@ -38,6 +38,21 @@ python main.py agent trace --limit 5
 数据源：`logs/autoplay.jsonl` 的 `llm_usage` 行（`AutoplayHost.add_usage` 写），
 控制台跨进程读同一份文件；3 秒轮询用 `(mtime, size)` 缓存，不会反复解析。
 
+### 为什么有时候「思考」很久
+
+先排除上下文：一次决策的输入只有 1.3–2.9k token（system 约 1k 字 + 当前局面），
+离模型上限很远。慢在三处：
+
+1. **思维链**：`deepseek-flash` 这类推理模型会把 `max_tokens` 预算先花在
+   reasoning 上。实测同一局面：开 thinking 24s、reasoning 4096 token、
+   `content` 为空（直接判失败）；关掉 thinking 1.7s 就回 JSON。
+   配置 `autoplay_llm_thinking`：`off`（默认，都关）/ `auto`（界面关、战斗跟模型）/
+   `on`（都开）。请求里对应 `thinking: {"type": "disabled"}`。
+2. **超时与重试**：战斗 25s、界面 40s；超时后按设计落本地兜底，并记
+   `llm_failed`/`llm_fallback`。日志里 `llm_usage` 的 `ms` 字段是单次真实耗时。
+3. **语音节奏**：`voice` 每步要等台词播完（`0.22s/字`，上限 10s），这不算思考，
+   但体感是「一步好久」。右键「让她玩 → 普通节奏」固定 0.7s。
+
 ### 连续玩会不会带上一局上下文
 
 **不会。** `LLMPlanner.plan()` 每次只发两条消息：`system` + 一条 `user`

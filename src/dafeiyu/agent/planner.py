@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import time
 from pathlib import Path
 
 import requests
@@ -46,11 +47,16 @@ class LLMPlanner:
     name = "llm"
 
     def __init__(self, cfg: LiveConfig | None = None, *, timeout: float = 60.0,
-                 model: str | None = None, system_prompt: str = "") -> None:
+                 model: str | None = None, system_prompt: str = "",
+                 thinking: bool | None = None) -> None:
         self.cfg = cfg or LiveConfig.load()
         self.timeout = timeout
         self.model = str(model or self.cfg.llm_model or "deepseek-chat")
         self.system_prompt = str(system_prompt or "").strip()
+        # None = 不传，跟模型默认；False = thinking: disabled（快）；True = enabled。
+        # deepseek 的推理模型会把 completion 预算全花在思维链上（实测 24s / 4096
+        # reasoning token / content 为空），界面决策这种简单选择没必要付这个钱。
+        self.thinking = thinking
 
     def _url(self) -> str:
         base = (self.cfg.llm_base_url or "https://api.deepseek.com/v1").rstrip("/")
@@ -85,6 +91,9 @@ class LLMPlanner:
             "max_tokens": 4096,
             "stream": False,
         }
+        if self.thinking is not None:
+            payload["thinking"] = {"type": "enabled" if self.thinking else "disabled"}
+        t0 = time.perf_counter()
         try:
             resp = requests.post(
                 self._url(),
@@ -92,8 +101,20 @@ class LLMPlanner:
                          "Content-Type": "application/json"},
                 json=payload, timeout=self.timeout,
             )
+            if resp.status_code >= 400 and "thinking" in payload:
+                # 换 provider / 换模型后可能不认 thinking 字段：去掉再试一次，
+                # 记住这个实例以后都不带，别让一个可选优化把规划打死。
+                payload.pop("thinking", None)
+                self.thinking = None
+                resp = requests.post(
+                    self._url(),
+                    headers={"Authorization": f"Bearer {self.cfg.llm_api_key}",
+                             "Content-Type": "application/json"},
+                    json=payload, timeout=self.timeout,
+                )
         except Exception as exc:  # noqa: BLE001
             return {"ok": False, "error": f"{type(exc).__name__}: {exc}", "planner": self.name}
+        elapsed_ms = int((time.perf_counter() - t0) * 1000)
         if resp.status_code >= 400:
             return {"ok": False, "planner": self.name,
                     "error": f"HTTP {resp.status_code}: {resp.text[:240]}"}
@@ -136,6 +157,7 @@ class LLMPlanner:
                 "input": int(usage.get("prompt_tokens") or 0),
                 "output": int(usage.get("completion_tokens") or 0),
                 "total": int(usage.get("total_tokens") or 0),
+                "ms": elapsed_ms,
             },
         }
 

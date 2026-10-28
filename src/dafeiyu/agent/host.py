@@ -73,6 +73,7 @@ def _usage_from_log(path) -> dict:
                     "input": tin,
                     "output": tout,
                     "total": total,
+                    "ms": int(row.get("ms") or 0),
                     "cumulative": running,
                 })
     except OSError:
@@ -245,6 +246,7 @@ class AutoplayHost:
             self._write_locked()
         self.log("llm_usage", run_id=run_id, input=tin, output=tout, total=total,
                  note=str(note or ""), step=step,
+                 ms=int(usage.get("ms") or 0),
                  cumulative=int(self.state.get("tokens_total") or 0))
         self.event("llm_turn", f"LLM 回合 · {total} tok", run_id=run_id,
                    tokens=total, tokens_in=tin, tokens_out=tout)

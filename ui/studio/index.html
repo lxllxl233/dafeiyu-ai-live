@@ -1048,8 +1048,9 @@ function renderTokens(){
   }
   $("#tokSteps").innerHTML = steps.length ? steps.slice().reverse().map(s => {
     const time = new Date((s.at || 0) * 1000).toLocaleTimeString("zh-CN", {hour12:false});
+    const cost = s.ms > 0 ? ` · ${(s.ms / 1000).toFixed(1)}s` : "";
     return `<li><div>${esc(s.note || s.kind || "LLM")}</div>
-      <div class="t">${time} · 入 ${fmtTok(s.input)} / 出 ${fmtTok(s.output)} ·
+      <div class="t">${time}${cost} · 入 ${fmtTok(s.input)} / 出 ${fmtTok(s.output)} ·
       <b>${fmtTok(s.total)} tok</b> · 累计 ${fmtTok(s.cumulative)}</div></li>`;
   }).join("") : `<li>还没有 LLM 调用。</li>`;
 }
