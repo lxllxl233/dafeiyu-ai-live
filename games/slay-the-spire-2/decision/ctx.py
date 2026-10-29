@@ -1035,6 +1035,11 @@ def build(state: dict) -> dict:
     deck = _deck(state)
     if deck:
         out["deck"] = deck
+    # 路线/精英/营火不只看血：给模型一个卡组强度（A/B/C/D + 缺口）。
+    try:
+        out["deck_pw"] = noncombat.deck_power(run.get("deck") or [])
+    except Exception:  # noqa: BLE001
+        pass
     # run85 P9：营养汤把打击附成「永恒」= 不能被移除 → 商店删牌这条路被自己堵死。
     # 这不是 bug，但模型必须知道「删打击」已不可行，否则会一直按老路线瘦身。
     if any(str((r or {}).get("relic_id") or (r or {}).get("id") or "") == "NUTRITIOUS_SOUP"

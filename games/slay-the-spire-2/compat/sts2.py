@@ -855,12 +855,21 @@ def _hp_gate_line(s):
             return (f"BOSS_GATE HP {hp}/{mx}（{pct:.0f}%）< 70%：先回血再进 Boss —— "
                     f"57 局就是这么死的（48 血打 183 血）")
     if "elite" in kinds:
-        if pct < 60:
-            return f"ELITE_GATE HP {hp}/{mx}（{pct:.0f}%）< 60%：这个精英会把你打死，绕或先睡"
+        # 血闸×卡组强度：55% 以下一律绕；55–60% 只有卡组 B（sc≥55）才可试。
+        sc, g = 50, "?"
+        try:
+            import noncombat
+            pw = noncombat.deck_power(run.get("deck") or [])
+            sc, g = _int(pw.get("sc"), 50), pw.get("g") or "?"
+        except Exception:  # noqa: BLE001
+            pass
+        if pct < 55 or (pct < 60 and sc < 55):
+            return (f"ELITE_GATE HP {hp}/{mx}（{pct:.0f}%）、卡组 {g}({sc})："
+                    f"这个精英会把你打死，绕或先睡")
         eg = brps.elite_gate(s, CARD_DB, MONSTER_DB, ENCOUNTER_DB, asc)
         if eg.get("loss", 0) >= max(12, int(0.35 * hp)):
             return (f"ELITE_TTK 预计 {eg.get('ttk')} 回合、掉 {eg.get('loss')} 血"
-                    f"（HP {hp}/{mx}）：收益不够就绕开")
+                    f"（HP {hp}/{mx}，卡组 {g}/{sc}）：收益不够就绕开")
     return None
 
 

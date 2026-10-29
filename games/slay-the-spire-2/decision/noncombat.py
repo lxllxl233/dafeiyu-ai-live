@@ -165,6 +165,47 @@ def needs(st):
     return out
 
 
+NEED_LABEL = {
+    "aoe": "缺AOE", "block": "缺防", "draw": "缺抽牌",
+    "energy": "缺能量", "attack": "缺输出", "trim": "牌太厚",
+}
+
+
+def deck_power(deck):
+    """牌组强度 0–100（A/B/C/D）：最强 8 张 + 结构缺口 + 升级率。
+
+    只看牌面，不预测遗物/能力；给路线、精英、营火一个可比较的数，
+    避免「只看血量」——血够但卡组C 时进精英也是负收益。
+    """
+    cards = [c for c in (deck or []) if isinstance(c, dict)]
+    st = deck_stats(cards)
+    vals = sorted((card_eval(c, st, i)["sc"] for i, c in enumerate(cards)), reverse=True)
+    if not vals:
+        return {"sc": 0, "g": "D", "need": ["无牌"], "why": "空牌组"}
+    core = sum(vals[:8]) / len(vals[:8])
+    avg = sum(vals) / len(vals)
+    bonus = 0.0
+    if st["aoe"] >= 2:
+        bonus += 5
+    if st["blk"] >= 6:
+        bonus += 5
+    if st["draw"] >= 2:
+        bonus += 3
+    if st["en"] >= 1:
+        bonus += 3
+    if st["size"] > 18:
+        bonus -= 1.5 * (st["size"] - 18)
+    bonus -= 4 * st["curse"]
+    bonus += min(8.0, st["up"] * 1.2)
+    sc = _clamp(core * 0.58 + avg * 0.22 + bonus + 4)
+    g = "A" if sc >= 62 else "B" if sc >= 50 else "C" if sc >= 38 else "D"
+    gaps = needs(st)
+    need = [NEED_LABEL[k] for k in gaps]
+    tail = ("缺口：" + "、".join(need)) if need else "结构完整"
+    return {"sc": sc, "g": g, "need": need,
+            "why": f"核心8张均{core:.0f}/整组{avg:.0f}，{tail}"}
+
+
 def _why_parts(parts):
     return "；".join([p for p in parts if p][:4])
 
@@ -374,7 +415,7 @@ def rest_eval(choice, state, st):
     pct = hp / mhp if mhp else 0.0
     heal = min(mhp - hp, int(round(0.30 * mhp)))
     up = upgrade_target(run.get("deck") or [], st)
-    has_up = st["upg"] > 0
+    pw = deck_power(run.get("deck") or [])
     opts = []
     for j, o in enumerate(choice.get("opts") or []):
         idx = _int(o.get("i"), j)
@@ -383,22 +424,33 @@ def rest_eval(choice, state, st):
             opts.append({"i": idx, "sc": 0, "why": "选项不可用"})
             continue
         if "休息" in name or "sleep" in name or "rest" in name or "回复" in name:
-            sc = 40 + 60 * (1 - pct) + (15 if pct < 0.70 else 0)
-            why = f"回复约{heal}血（{pct:.0%}）"
+            sc = 40 + 60 * (1 - pct) + (15 if pct < 0.50 else 0)
+            sc += 8 if pw["sc"] < 48 else 0      # 卡组弱，多睡一会也合理
+            why = f"回复约{heal}血（{pct:.0%}，卡组{pw['g']}）"
         elif "锻造" in name or "smith" in name or "升级" in name or "upgrade" in name:
-            sc = 55 + (20 if pct >= 0.70 else 0) - (25 if pct < 0.50 else 0)
-            sc += 8 if has_up else -40
-            why = f"升级{up['n']}（{up['sc']}分）" if up else "没有可升级牌"
+            # 用户口径：血 50% 以上就可以按形势升级强力牌/关键牌，不是一律睡。
+            sc = 52 + (pw["sc"] - 45) * 0.7
+            sc += 9 if pw["g"] in ("A", "B") else 0
+            if up:
+                sc += (up["sc"] - 45) * 0.6      # 升级目标越强越值得
+            else:
+                sc = 0
+                why = "没有可升级牌"
+            if pct < 0.50:
+                sc -= 30
+            elif pct < 0.60:
+                sc -= 6
+            why = why if not up else f"升级{up['n']}（{up['sc']}分）；血{pct:.0%}、卡组{pw['g']}"
         else:
             sc = 40
             why = "未知选项"
         opts.append({"i": idx, "sc": _clamp(sc), "why": why})
     if not opts:
         return {"mode": "rest", "opts": [], "best": None, "heal": heal,
-                "up": up, "why": "没有选项"}
+                "up": up, "pw": pw, "why": "没有选项"}
     best = max(opts, key=lambda x: (x["sc"], -x["i"]))
     return {"mode": "rest", "opts": opts, "best": best["i"], "heal": heal,
-            "up": up, "why": f"{best['why']}；{best['sc']}分"}
+            "up": up, "pw": pw, "why": f"{best['why']}；{best['sc']}分"}
 
 
 def _price_eff(price):
@@ -460,13 +512,67 @@ def shop_eval(choice, st):
             "why": f"预算{gold}金；按缺口/价格排序"}
 
 
+def map_eval(choice, state, st, pw):
+    """选路提示：血量 × 卡组强度 × 节点类型。
+
+    不是替模型做决定，只把「血够但卡组弱」这种负收益选项压下去；
+    精英分随卡组强度走，营火/商店在低血或弱卡组时加权。
+    """
+    run = state.get("run") or {}
+    hp = _int(run.get("current_hp", run.get("hp")), 0)
+    mhp = max(1, _int(run.get("max_hp"), hp or 1))
+    pct = hp / mhp if mhp else 0.0
+    gold = _int(run.get("gold"), 0)
+    sc_pw = _int(pw.get("sc"), 50)
+    opts = []
+    for j, o in enumerate(choice.get("opts") or []):
+        t = str(o.get("t") or "").lower()
+        idx = _int(o.get("i"), j)
+        if t == "elite":
+            sc = 44 + (sc_pw - 50) * 0.8
+            if pct < 0.55:
+                sc -= 32
+            elif pct < 0.60:
+                sc -= 16
+            sc += 7 if pw.get("g") in ("A", "B") else 0
+            why = f"精英：血{pct:.0%}、卡组{pw.get('g')}（{sc_pw}）"
+        elif t in ("restsite", "rest"):
+            sc = 46 + (14 if pct < 0.65 else 0) + (10 if sc_pw < 50 else 0)
+            why = f"营火：血{pct:.0%}，可回血/升级"
+        elif t == "shop":
+            sc = 42 + (10 if gold >= 120 else 0) + (8 if sc_pw < 50 else 0)
+            why = f"商店：{gold}金、卡组{pw.get('g')}"
+        elif t == "treasure":
+            sc = 50
+            why = "宝箱：遗物"
+        elif t in ("event", "unknown"):
+            sc = 48 + (6 if pct >= 0.60 else 0)
+            why = "事件：可能补牌/回血"
+        elif t == "monster":
+            sc = 45 - (12 if pct < 0.45 else 0) + max(0, sc_pw - 50) * 0.2
+            why = f"小怪：血{pct:.0%}"
+        elif t in ("boss", "ancient"):
+            sc, why = 90, "Boss/出口"
+        else:
+            sc, why = 44, f"{o.get('t')}"
+        opts.append({"i": idx, "t": t, "sc": _clamp(sc), "why": why})
+    if not opts:
+        return {"mode": "map", "opts": [], "best": None, "why": "没有可选节点"}
+    best = max(opts, key=lambda x: (x["sc"], -x["i"]))
+    return {"mode": "map", "opts": opts, "best": best["i"], "pw": pw,
+            "why": f"推荐 {best['why']}"}
+
+
 def evaluate(state, choice):
     kind = str(choice.get("kind") or "")
-    if kind not in ("reward", "shop", "rest", "select"):
+    if kind not in ("reward", "shop", "rest", "select", "map"):
         return None
     st = deck_stats((state.get("run") or {}).get("deck") or [])
-    out = {"deck": st, "need": needs(st)}
-    if kind == "reward":
+    pw = deck_power((state.get("run") or {}).get("deck") or [])
+    out = {"deck": st, "need": needs(st), "pw": pw}
+    if kind == "map":
+        out.update(map_eval(choice, state, st, pw))
+    elif kind == "reward":
         out.update(reward_eval(choice, st))
     elif kind == "shop":
         out.update(shop_eval(choice, st))
