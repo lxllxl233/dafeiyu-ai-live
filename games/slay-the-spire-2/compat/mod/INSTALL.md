@@ -73,6 +73,9 @@ JSON，并接受动作指令（出牌、结束回合、选节点、选牌……�
    - 点确认前用游戏自己的 `CheckIfSelectionComplete` 把关（实测选 1/2 就点确认，
      游戏会只移除 1 张并结束事件）；
    - `select_deck_card` 只点牌、不自动确认，`confirm_selection` 单独驱动。
+3. **不再刷爆游戏日志**：原版对每张牌每次 `/state` 都会因为缺动态变量触发
+   `Localization formatting error` 堆栈（实测一次会话 `godot.log` 涨到 14 GB）。
+   现在先走游戏自己的 `GetDescriptionForPile`（带正确数值），原始文本只作兜底。
 
 **升级注意**：游戏更新到 v0.111+ 后这个 DLL 会不兼容，需要换上游 v0.16.x，并重新验证
 `/state`、`/actions/available`、`/action` 三个端点。

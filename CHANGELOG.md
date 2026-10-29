@@ -39,6 +39,11 @@
   ⑤ `select_deck_card` 不再自动确认，交给 `confirm_selection`。
   实测（2026-10-29，游戏 v0.107.1）：涅奥「松动羊毛剪」（移除 2 张）`min/max=2`，
   点 1 张时 `confirm_selection` 不出现、点满 2 张才出现，确认后回到事件、牌组 11→9。
+- **日志一天能写十几 GB（mod 每张牌每帧都报 Localization 错误）**：`GetCardRulesText`
+  直接读 `Description`/`RulesText` 再调 `GetFormattedText()`，缺动态变量时游戏会给
+  **每张牌每条 /state** 打一条 `Localization formatting error` 堆栈；实测一次会话
+  `godot.log` 涨到 14 GB（磁盘会被写满）。现在先走游戏自己的
+  `GetDescriptionForPile`（带正确数值，`打击` → `造成6点伤害。`），原始文本只作兜底。
 - **删牌多选屏空转一晚上（run-0113）**：涅奥「移除 2 张牌」把游戏带进
   `CARD_SELECTION`，mod 的 `select_deck_card` 只回 `pending`、`selected_count`
   永远 0；LLM 每 13 秒回一次「选牌 select_deck_card 0」，从 03:51 卡到 09:58，
