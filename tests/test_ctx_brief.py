@@ -44,7 +44,12 @@ def _combat(hp=60, energy=3):
     }
 
 
-def test_combat_brief_has_one_line_account():
+def test_combat_brief_has_one_line_account(monkeypatch):
+    # 下轮意图来自 logs/intent_memory.json 的历史；测试不能依赖真实对局留下的记忆
+    # （key 里的 run_id 是 "?" 时条目会随测试运行累积，断言就会时好时坏）。
+    mem = {"?|4|JAW_WORM|0": {"h": ["A11", "A11"], "t": 2}}
+    monkeypatch.setattr(ctx, "_load_mem", lambda: {k: dict(v) for k, v in mem.items()})
+    monkeypatch.setattr(ctx, "_save_mem", lambda m: None)
     brief = ctx.build(_combat())
     line = (brief.get("calc") or {}).get("line")
     assert isinstance(line, str) and line, "calc.line 缺失"

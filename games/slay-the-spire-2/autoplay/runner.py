@@ -72,8 +72,27 @@ def bind_host(host: AutoplayHost) -> AutoplayHost:
     return host
 
 
+def _with_liveness(updates: dict) -> dict:
+    """给状态补上 running/pid（只补缺省，显式传的不改）。
+
+    `AutoplayHost.status()` 会把磁盘上的快照并回内存（文件说 false 就跟着 false），
+    于是一次「半写」的 running=false/pid=0 快照会被后续每次 status() 采纳，
+    之后所有写入都不带 running，直播看板一直显示已停手、CLI 等 600 秒退出。
+    这里每次写都兜底补上，任何一次 clobber 都会在下一步自动修回来。
+    """
+    out = dict(updates or {})
+    try:
+        alive = _thread is not None and _thread.is_alive()
+    except Exception:  # noqa: BLE001
+        alive = False
+    if alive and "running" not in out and not _stopping():
+        out["running"] = True
+        out.setdefault("pid", os.getpid())
+    return out
+
+
 def _write_status(**updates) -> dict:
-    return _host.set_status(**updates)
+    return _host.set_status(**_with_liveness(updates))
 
 
 def _log(msg: str, **data) -> None:

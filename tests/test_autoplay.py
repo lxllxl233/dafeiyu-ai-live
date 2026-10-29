@@ -1332,3 +1332,19 @@ def test_bind_host_is_ignored_while_a_run_is_live(monkeypatch):
     monkeypatch.setattr(play, "_thread", _Live())
     assert play.bind_host(AutoplayHost("slay-the-spire-2")) is live
     assert play._host is live
+
+def test_status_updates_keep_running_while_thread_alive(monkeypatch):
+    """半写快照（running=False/pid=0）被 status() 采纳后，下一步要能自动修回来。"""
+
+    class _Live:
+        def is_alive(self):
+            return True
+
+    monkeypatch.setattr(play, "_thread", _Live())
+    monkeypatch.setattr(play, "_stopping", lambda: False)
+    out = play._with_liveness({"last": "MAP choose_map_node 0", "step": 75})
+    assert out["running"] is True
+    assert out["pid"] == os.getpid()
+    # 真正收尾时必须尊重显式 running=False
+    out = play._with_liveness({"running": False, "stopping": False, "last": "已停手"})
+    assert out["running"] is False
