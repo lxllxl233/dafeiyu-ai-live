@@ -314,6 +314,19 @@ def _menu_names(menu: list[dict], limit: int = 8) -> str:
     return "、".join(names) or "（空）"
 
 
+def _chest_guard(state: dict, entry: dict) -> str:
+    """宝箱里还有没拿的遗物时，不许 proceed/跑路（实机反馈：老是忘了捡）。"""
+    if str(state.get("screen") or "").upper() != "CHEST":
+        return ""
+    ch = state.get("chest") or {}
+    acts = _acts(state)
+    if "choose_treasure_relic" not in acts or ch.get("has_relic_been_claimed"):
+        return ""
+    if entry.get("a") in ("choose_treasure_relic", "open_chest"):
+        return ""
+    return "宝箱里还有遗物没拿：先 choose_treasure_relic（i=0）拿完再继续"
+
+
 def check(plan: dict, state: dict) -> tuple[dict | None, str]:
     """把模型的 plan 对到菜单项；返回 (entry, err)。err 非空表示不可执行。"""
     if not isinstance(plan, dict):
@@ -328,7 +341,8 @@ def check(plan: dict, state: dict) -> tuple[dict | None, str]:
     if raw is None:
         for entry in menu:
             if entry["a"] == act and entry["i"] is None:
-                return entry, ""
+                err = _chest_guard(state, entry)
+                return (None, err) if err else (entry, "")
         return None, f"{act} 不能这么点；可选：{_menu_names(menu)}"
     try:
         idx = int(raw)
@@ -336,7 +350,8 @@ def check(plan: dict, state: dict) -> tuple[dict | None, str]:
         return None, "i 必须是整数下标"
     for entry in menu:
         if entry["a"] == act and entry["i"] == idx:
-            return entry, ""
+            err = _chest_guard(state, entry)
+            return (None, err) if err else (entry, "")
     return None, f"{act}[{idx}] 不在菜单里；可选：{_menu_names(menu)}"
 
 

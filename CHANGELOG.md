@@ -27,6 +27,12 @@
 - **台词别再刷「卡组还是 X 级」**：非战斗台词老拿卡组等级/卡组状态开场（商店、选牌、
   路线、营火连着刷）。提示词明令别报这类状态；`decision/speech.py` 播出去前整句摘掉
   「卡组还是 C 级」「卡组状态不错」这类小句（只留真正的取舍），同一开场 2 分钟内不重复说。
+- **台词每回合只说一句**：`say` 数组只允许 1 个元素——提示词写死「say 只放 1 句」，
+  `decision/act.py` 的 `normalize` 只保留第一条（战斗回合），界面决策也只播第一条，
+  多余的记 `say_truncated` 日志。
+- **宝箱遗物必须拿走**：宝箱里 `has_relic_been_claimed=false` 时，`proceed` /
+  `collect_rewards_and_proceed` / 领金币这类动作会被 `actions.check` 拒绝并提示
+  「先 choose_treasure_relic」；拿完才放行。
 - **OBS 残留录制导致新一局开录失败**：上一段录制没停（手工开的、或 current 指针已清），
   `StartRecord` 一直报 `code=500`，状态显示没在录、文件却越录越长。现在开新一局前先
   `stop_recording_now()` 收掉残留段并记 `record_preempt`，再建本局目录开录。

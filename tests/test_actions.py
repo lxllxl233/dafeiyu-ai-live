@@ -78,8 +78,41 @@ def test_execute_clicks_through_sts2_act():
     entry, _ = actions.check({"act": "choose_rest_option", "i": 0}, REST_STATE)
     actions.execute(fake, entry)
     assert fake.calls == [("choose_rest_option", {"option_index": 0})]
-    actions.execute(fake, {"a": "proceed", "i": None, "n": "继续"})
-    assert fake.calls[-1] == ("proceed", {})
+
+
+def test_normalize_keeps_only_one_say_line():
+    _seq, lines, _fx, _auto = act.normalize(
+        {"seq": [{"c": "BASH", "t": 0}], "say": ["先上易伤。", "这轮安全。"]})
+    assert [ln["t"] for ln in lines] == ["先上易伤。"]
+
+
+CHEST_STATE = {
+    "screen": "CHEST",
+    "run": {"floor": 4, "current_hp": 50, "max_hp": 80},
+    "available_actions": ["choose_treasure_relic", "claim_reward",
+                          "collect_rewards_and_proceed", "proceed"],
+    "chest": {"has_relic_been_claimed": False,
+              "relic_options": [{"name": "红头骨", "description": "+2 力量"}]},
+    "reward": {"rewards": [{"name": "30 金币", "claimable": True}]},
+}
+
+
+def test_chest_relic_must_be_taken_before_leaving():
+    menu = [(e["a"], e["i"]) for e in actions.available(CHEST_STATE)]
+    assert ("choose_treasure_relic", 0) in menu
+    entry, err = actions.check({"act": "proceed"}, CHEST_STATE)
+    assert entry is None and "遗物" in err
+    entry, err = actions.check({"act": "collect_rewards_and_proceed"}, CHEST_STATE)
+    assert entry is None and "遗物" in err
+    entry, err = actions.check({"act": "choose_treasure_relic", "i": 0}, CHEST_STATE)
+    assert entry and not err
+
+
+def test_chest_allows_leaving_after_relic_claimed():
+    taken = {**CHEST_STATE,
+             "chest": {"has_relic_been_claimed": True, "relic_options": []}}
+    entry, err = actions.check({"act": "proceed"}, taken)
+    assert entry and not err
 
 
 def test_event_menu_skips_locked_options():

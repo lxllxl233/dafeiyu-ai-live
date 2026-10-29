@@ -69,6 +69,8 @@ def test_system_prompt_bans_hp_recital_and_allows_sighs():
     assert "1–2 句" in prompts.SYSTEM_PROMPT
     assert "别念 HP/金币/卡组等级流水账" in prompts.NONCOMBAT_PROMPT
     assert "卡组还是C级" in prompts.NONCOMBAT_PROMPT
+    assert "say 只放 1 句" in prompts.NONCOMBAT_PROMPT
+    assert "say 只放 1 句" in prompts.SYSTEM_PROMPT
 
 
 def test_lint_flags_hp_recital_and_accepts_emotional_line():

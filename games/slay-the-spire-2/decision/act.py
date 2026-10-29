@@ -4,7 +4,7 @@
 模型输出（写 tmp_plan.json，UTF-8）
 ----------------------------------
 {
-  "say": ["它 16，痛击加一刀刚好带走。", "另一只吃尸体，这回合没人打我。"],
+  "say": ["它 16，痛击加一刀刚好带走。"],
   "seq": [
     {"c": "BASH", "t": 0},
     {"c": "STRIKE_IRONCLAD", "t": 0},
@@ -21,7 +21,7 @@
 · end 必须是最后一步；不写 end = 只打到一半就停（等抽牌/Buff 落地时用）
 · 抽牌后手牌未知：只发抽牌牌本身（不写 end），读返回的新 ctx 再排下一手；
   若在同一 seq 里写“抽牌牌 + 不在当前手里的牌”，整手拒绝并提示 split_at_draw
-· say 1–3 句：第一句随本回合播，其余排队；写法看 sts2-caster
+· say 只写 1 句（数组长度 1）：随本回合播；写法看 sts2-caster
 · fx 可选：只支持 e/hp/take（通常硬校验；抽牌+end 的 hp/take 只作近似）、draw/exh/self（软提醒）
 
 输出（stdout 最后一行）
@@ -87,6 +87,7 @@ def normalize(spec: dict) -> tuple[list, list, dict, dict]:
         elif isinstance(x, dict):
             lines.append({"t": _tidy_say(str(x.get("t") or x.get("thought") or "")),
                           "m": _tidy_say(str(x.get("m") or x.get("meme") or ""))})
+    lines = [ln for ln in lines if ln["t"] or ln["m"]][:1]   # 每回合只说 1 句
     fx = spec.get("fx") or {}
     # 旧提示词写过「药水写 fx.p」，但执行器只认 seq 里的 {"p": 槽位}；fx 只验
     # e/hp/take。为兼容旧习惯，fx 里带 p/potion 时把它挪成一步药水放到最前面，

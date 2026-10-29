@@ -942,8 +942,11 @@ def _screen_llm(sts2, planner, state: dict, screen: str) -> str:
             _log("screen_plan_invalid", screen=screen, attempt=attempt, error=err[:160])
             continue
         say = plan.get("say")
-        text = (" ".join(str(x) for x in say if str(x).strip())
-                if isinstance(say, list) else str(say or ""))
+        items = ([str(x) for x in say if str(x).strip()] if isinstance(say, list)
+                 else ([str(say)] if say else []))
+        text = items[0] if items else ""
+        if len(items) > 1:
+            _log("say_truncated", screen=screen, dropped=len(items) - 1, say=text[:80])
         # 模型偶尔还是会把 ctx 里的「HP 64/80」抄进 say：播出去前统一摘掉血条。
         tidy = _tidy_say(text)
         if tidy != text:
