@@ -458,7 +458,7 @@ LLM 模式的每个玩家决策都会问模型（战斗一回合一次、界面�
 | `decision/` + `autoplay/` | 控制层 | 局面包、动作协议、本地决策和整局循环；只有需要自动玩的游戏才有 |
 
 适配器 `games/slay-the-spire-2/game-skill/adapter.py` 只做「读状态 → GAME_STATE 事件」，
-不替玩家出牌。出牌/决策仍走兼容层 CLI + 决策手册（`games/slay-the-spire-2/decision/knowledge/ironclad`，v22）。
+不替玩家出牌。出牌/决策仍走兼容层 CLI + 决策手册（`games/slay-the-spire-2/decision/knowledge/ironclad`，v23）。
 `src/dafeiyu/games/` 里只有游戏无关的协议、注册表和演示源。
 
 内置 `games/toy-duel/` 是**第二个完整插件**，专门用来验收「核心不是 STS2 专属」：

@@ -2,7 +2,7 @@
 
 一套给 AI agent 用的《杀戮尖塔 2》（Slay the Spire 2）**铁甲战士 A10 实况决策 skill**：不是攻略文章，是一份可执行的「结构化局面 → 结构化牌序 + 数值公式 + 反模式」。
 
-- 版本：**v22**（2026-10-28）
+- 版本：**v23**（2026-10-29）
 - 适用：v0.107.1 主线（beta v0.111.0 同为参考），A10 双 Boss
 - 配套：`sts2.py`（本地 mod HTTP API 客户端）、`tools/sim.py`（单回合模拟器）、`tools/ctx.py`（局面包）、`tools/act.py`（校验并执行牌序）、OBS 录屏 + 弹幕 overlay；说话系统见 `games/slay-the-spire-2/persona/speech.md`
 

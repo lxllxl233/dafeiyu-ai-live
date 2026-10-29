@@ -6,7 +6,7 @@
 当前状态：**别信这张便条**——开局先 `python tools/sts2.py state` 确认（mod 没起会 ConnectionRefused，不是故障，先把游戏/引擎拉起来）。已知上一局 run106 在 act1 f7 战斗胜利后被中断（非死亡、非主动放弃，见 `logs/run106_review.md`）；中断/放弃的局不要恢复，直接新开。
 
 开始前只需要读两样（别再把 docs/ 全读一遍）：
-1. skill `sts2-ironclad-ironclad`（决策 OS v22，ctx 局面包 + act 牌序 + 动作回执，一次加载）
+1. skill `sts2-ironclad-ironclad`（决策 OS v23，ctx 局面包 + act 牌序 + 动作回执，一次加载）
 2. README.md 的「常用命令」一节
 其余细节按需 `grep` 关键词再 `read` 带 offset/limit 取 20–40 行：LESSONS.md / ACT1_PLAYBOOK.md / COMBAT_TURN.md / NEOW_DECISIONS.md。
 
