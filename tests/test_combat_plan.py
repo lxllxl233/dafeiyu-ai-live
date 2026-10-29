@@ -126,3 +126,23 @@ def test_validate_rejects_tail_after_clear():
                                             {"c": "STRIKE_IRONCLAD"}])
     assert not ok and "已经清场" in err
     assert len(steps) == 1
+
+STOKE = card("STOKE", 1, text="消耗所有手牌。每消耗一张牌，将1张随机牌加入你的手牌。",
+             ctype="Skill")
+
+
+def test_stoke_must_be_played_alone_then_reread_hand():
+    """添柴随机生成手牌：打完后不能按旧手牌续排，必须停手读新 ctx。"""
+    st = state([STOKE, STRIKE], energy=3)
+    ok, err, sm, steps = sim.validate(st, [{"c": "STOKE"}])
+    assert ok, err
+    assert len(steps) == 1
+    assert sm.gen_unknown == 1 and sm.hand == []
+
+    ok2, err2, _sm, _steps = sim.validate(
+        st, [{"c": "STOKE"}, {"c": "STRIKE_IRONCLAD"}])
+    assert not ok2 and "生成边界" in err2
+
+    # 连 end 都不许接：先读完新 ctx，再决定要不要结束回合。
+    ok3, err3, _sm, _steps = sim.validate(st, [{"c": "STOKE"}, {"end": 1}])
+    assert not ok3 and "生成边界" in err3

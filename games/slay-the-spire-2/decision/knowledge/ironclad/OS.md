@@ -21,7 +21,7 @@ python tools/act.py --file tmp_plan.json    # 执行seq，回下回合ctx
 ```
 
 - `c`：`card_id`，不写下标；升级写STRIKE_IRONCLAD+；同名多张默认最便宜/最强。`t`：敌下标，可省（默认最威胁活怪）。`p`：药水槽，targeted必须给t。
-- `end`：最后一步；不写 `end` =打到一半就停，回mid:1，抽牌后读ctx。
+- `end`：最后一步；不写=打到一半，回mid:1，抽牌后读ctx。
 - `say`：1–2句，第一句随本回合播；**别念血条**，数字只给伤害/价格/斩杀线，写法见 `games/slay-the-spire-2/persona/speech.md`。`fx`：可选自报账，e/hp/take硬校验，不符整手不打；报错时err给实际值，照抄重发。
 - 省请求：杂怪（非精英/Boss、血安全）加{"auto":{"turns":3,"stop_hp":40}}本地连打，血线到/战斗结束/进选牌停；一场1请求。
 - {"ok":false,...}：一张没打或打一半STOP；用返回 `ctx` 改 `seq` 重发，绝不自补 `end_turn`。
@@ -29,7 +29,7 @@ python tools/act.py --file tmp_plan.json    # 执行seq，回下回合ctx
 - 换血线（提示不拦）：净挨≥6、有甲牌可顶但费已花光=攻击换防御，非漏甲；`logstats.py cases --kind miss_block` 可查。只报一行「净挨X、能顶Y、少打一张」；换血在say说理由，不换重排；真「有费不起甲」归漏费拦。
 - `hand_n`=真实手牌数（`hand[]` 同名牌合并，只看条数以为牌少）；`stale_ctx`=新回合未抽完牌，必须重读 `ctx.py`。
 - 遗言告警：敌人带「蒸汽喷发/爆炸/亡语」时斩杀≠安全——死后按层数结算一发（可格挡/缓冲）。`act` 在「清场且0甲」给 `warn:遗言警告`，看到就查有无甲或缓冲。
-- SL不改抽牌顺序（`save_and_quit`→continue后手牌一样），只救操作失误，每幕≤2次；商店每店只删1张；药水栏满时 `claim_reward` 静默成功不给药水（先看 `potions` 槽，满则 `discard_potion`）。
+- SL不改抽牌顺序（回档手牌不变），只救操作失误，每幕≤2次；商店每店只删1张；药水栏满时 `claim_reward` 静默成功不给药水（先看 `potions` 槽，满则 `discard_potion`）。
 - 「从牌组移除N张」多选已修（mod 重编，见 `docs/TODO_mod_deck_remove.md`）：`min/max` 会按提示读出来，逐张点不同牌后 `confirm_selection` 才可用；脚本自动挑牌——删/变化先打击、防御，升级先核心牌（BASH/耸肩/恶魔之焰 +36），别再因为怕卡跳过送牌的选项。
 - 诅咒两种：进阶之灾（虚无）每回合手牌−1；贪婪（永恒）删不掉，商店删牌列表不出现；别把「删诅咒」写进计划。
 - 只堆甲死于消耗战：甲牌≥45%必须配「非基础高伤攻击≥2张」，python tools/gates.py同查。
@@ -70,7 +70,7 @@ python tools/logstats.py replay暴露的四类算错已进代码+回归（tools/
 
 1. 变费：UNRELENTING后最大攻击0费；STOMP最后；CORRUPTION技能全0费；BLOODLETTING/OFFERING先打再付大牌。
 2. 药水：补能在攻击前，斩杀药最后补刀，格挡/回血在end前；targeted写t，否则invalid_target。
-3. 抽牌/烧牌：POMMEL_STRIKE/BATTLE_TRANCE/OFFERING先打，斩杀线别建在随机抽牌上；POWER_THROUGH先算2张伤口税；FEEL_NO_PAIN/DARK_EMBRACE烧牌前打。
+3. 抽牌/烧牌：POMMEL_STRIKE/BATTLE_TRANCE/OFFERING先打，斩杀线别建在随机抽牌上；POWER_THROUGH算2张伤口税；FEEL_NO_PAIN/DARK_EMBRACE烧牌前打。添柴单独打不写end、读ctx。
 4. 能量纪律：结束e=0或写明「不可打/零收益」；0费攻击必打；同id打最便宜/最强。
 5. 铺下一轮：hand[].nxt/can.buff是「这回合铺、下回合收」入口；斩杀回合不铺。
 

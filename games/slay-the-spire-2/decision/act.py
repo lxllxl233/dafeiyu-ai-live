@@ -222,6 +222,9 @@ def forecast(st: dict, sm: sim.Sim, steps: list, ended: bool) -> dict:
     if ended and sm.draws:
         # 抽到的牌不在本地 sim 手里；end_turn 的状态税/掉血只能按旧手牌估。
         fx["draw_unknown"] = sm.draws
+    if sm.gen_unknown:
+        # 添柴这类随机补牌：新手牌未知，回合末血量/掉血同样不可硬校验。
+        fx["gen_unknown"] = 1
     if take is not None:
         fx["take"] = take
     if not sm.alive() and not any(e.get("revive") for e in sm.enemies):
@@ -244,7 +247,7 @@ def fx_error(got: dict, want: dict) -> str | None:
     手牌估，不能当作硬账本；此时只验能量，hp/take 由下一回合 ctx 复核。
     """
     keys = [("e", "回合末能量")]
-    if not want.get("draw_unknown"):
+    if not (want.get("draw_unknown") or want.get("gen_unknown")):
         keys += [("hp", "回合末血量"), ("take", "本回合净掉血")]
     if want.get("clear"):
         # 清场：战后回血（燃烧之血 6 点）与死亡结算不在本地 sim 里，血量不可硬校验。
@@ -630,6 +633,10 @@ def _execute(st: dict, seq: list, lines: list, fx: dict,
         if err.startswith("抽牌边界"):
             out["next"] = "split_at_draw"
             out["hint"] = "抽牌后手牌未知：先只打抽牌牌（不写 end），先读 ctx 再出下一手"
+        elif err.startswith("生成边界"):
+            out["next"] = "split_at_gen"
+            out["hint"] = ("添柴这类牌打完后手牌会被随机换掉：先只打这张（不写 end），"
+                           "读 ctx 看完新手牌再出下一手")
         _log_decision(st, seq, lines, fx, outcome="rejected_validate", err=err, allow=allow,
                       steps=steps, plans=plans, retargets=getattr(sm, "retargets", None))
         return out

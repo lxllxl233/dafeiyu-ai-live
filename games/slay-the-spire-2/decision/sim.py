@@ -232,6 +232,11 @@ def parse_card(card: dict, idx: int | None = None) -> dict:
             m = re.search(r"将(\d+)张", text)
             n = int(m.group(1)) if m else n
         out["add"] = max(1, n)
+    # 添柴/Stoke：消耗所有手牌，再按消耗张数随机生成 —— 生成什么是随机的，
+    # 本地账本不能拿旧手牌继续排（实机：打完添柴还按原计划出牌，新牌白瞎）。
+    if "消耗所有手牌" in text or ("消耗" in text and "随机" in text
+                                 and "加入你的手牌" in text):
+        out["gen"] = 1
     if out["t"] == "P":
         out["pw"] = cid
     # ---- 跨回合收益（下一轮出牌能不能吃到）：留着不散的才写 ----
@@ -531,6 +536,7 @@ class Sim:
         self.played = 0
         self.exhausts = 0
         self.draws = 0
+        self.gen_unknown = 0
         self.selfhp = 0
         self.lost_hp_turn = 0
         self.maxhp_gain = 0
@@ -932,6 +938,12 @@ class Sim:
                 step["jugg"] = jd
         if card.get("add"):
             step["add"] = card["add"]
+        if card.get("gen"):
+            # 添柴：手牌整把消耗并随机补牌 —— 生成结果本地不可知，hand 清空，
+            # 后续只能等下一次 ctx 再排（validate 会拦住后面还预排的牌）。
+            self.hand = []
+            self.gen_unknown = 1
+            step["gen"] = 1
         if card.get("pact") and self.exhaust_pile + self.exhausts >= 3 and not card.get("dmg"):
             card["dmg"] = 18
 
@@ -1514,6 +1526,11 @@ def validate(state: dict, seq: list) -> tuple[bool, str, Sim, list]:
         used.add(card["i"])
         steps.append(step)
         sim._mark_cleared(n)
+        if card.get("gen") and n != len(seq) - 1:
+            # 生成边界：打完添柴手牌已经换成随机的，后面预排的牌不一定还在手里。
+            return (False, (f"生成边界：第{n + 1}步 {card['id']} 会消耗所有手牌并随机生成新牌，"
+                            "后面预排的牌不一定还在。只打这张（不要写 end），"
+                            "读新 ctx 看完新手牌再出下一手"), sim, steps)
         if not sim.alive() and n != len(seq) - 1:
             # 清场后多写的动作会落到结算/新回合，前置拒绝比打到一半报错干净。
             return (False, (f"第{n + 1}步已经清场，后面还有 {len(seq) - n - 1} 步；"
