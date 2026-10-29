@@ -28,6 +28,16 @@
 
 ### Fixed
 
+- **BOSS 眩晕卡死（run-0114）**：眩晕回合手牌全部 `playable=false`，模型还在排
+  「COLOSSUS」「STRIKE」等牌，执行层 `sts2.py` 用 `sys.exit(3)` 拒绝，`SystemExit`
+  绕过主循环的 `except Exception` → 记成 `ERROR SystemExit: 3`、三次后判卡住停播。
+  ① 战斗里 `play_card` 不在可用动作、`end_turn` 在时直接结束回合（`COMBAT pass`，
+  不进模型、不烧 token）；② `_call` 把 CLI 的 `SystemExit` 转成 `RuntimeError`，
+  不再逃出主循环；③ 校验文案从「要 999 费，只剩 2」改成「本回合不能打（眩晕/不可用）」，
+  并提示「整手都不能打就只写 end」；④ `combat_goal` 补一句同样提示。
+- **血量以战斗中的真实值为准**：`_run_meta` 在 COMBAT 下优先用
+  `combat.player.current_hp`（`run.current_hp` 偶尔慢一拍，overlay/字幕会显示旧血量），
+  两者不一致时记 `hp_mismatch`；战斗目标文本也改用这份 HP。
 - **「从牌组移除 N 张」终于能确认（mod 重编）**：根因在 mod，不在客户端。
   `NDeckCardSelectScreen` 的确认按钮是私有字段 `_confirmButton` /
   `_previewConfirmButton`，v0.8.0 的 `ConfirmDeckSelectionAsync` 只找

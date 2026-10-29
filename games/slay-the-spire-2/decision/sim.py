@@ -1467,6 +1467,12 @@ def validate(state: dict, seq: list) -> tuple[bool, str, Sim, list]:
                         sim, steps)
             return False, f"第{n + 1}步：手里没有可打的 {cid}", sim, steps
         cost = sim.cost_of(card)
+        if cost >= 999 or not card.get("play", True):
+            # 999 是「本回合不可打」的哨兵（BOSS 眩晕时整手牌都不可打），
+            # 旧文案说「要 999 费，只剩 2」会让模型以为补能量就能打。
+            reason = str(card.get("why") or "眩晕/本回合不可用")[:20]
+            return False, (f"第{n + 1}步：{card['id']} 本回合不能打（{reason}）；"
+                           "整手都不能打就只写 end"), sim, steps
         if cost > sim.energy:
             return False, (f"第{n + 1}步：{card['id']} 现在要 {cost} 费，只剩 {sim.energy}"
                            "（回能/变费牌要先打）"), sim, steps

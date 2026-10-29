@@ -72,6 +72,7 @@ def combat_goal(run: dict | None) -> str:
         f"第 {run.get('floor', '?')} 层，HP {run.get('current_hp', '?')}/"
         f"{run.get('max_hp', '?')}。打完整回合：先看局面，能斩杀就斩杀，"
         "不能斩杀先挡满，最后 end；抽牌后手牌变了就先停（不写 end），读新 ctx 再续。"
+        "若手牌都不能打（眩晕/费用不够），只写 end。"
     )
 
 

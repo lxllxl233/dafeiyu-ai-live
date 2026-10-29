@@ -253,6 +253,81 @@ def test_upgrade_prefers_core_card(monkeypatch):
     assert fake.calls[-1] == ("select_deck_card", {"option_index": 0})  # 痛击
 
 
+def _decision_module(name):
+    import importlib
+    import sys
+    from pathlib import Path
+
+    dec = Path(play.__file__).resolve().parent.parent / "decision"
+    if str(dec) not in sys.path:
+        sys.path.insert(0, str(dec))
+    return importlib.import_module(name)
+
+
+def test_stunned_turn_just_ends():
+    """BOSS 眩晕：手牌全不可打，只 end_turn，别去问模型（run-0114 卡死）。"""
+    state = {
+        "screen": "COMBAT",
+        "available_actions": ["end_turn", "use_potion", "discard_potion"],
+        "run": {"floor": 17, "current_hp": 76, "max_hp": 85},
+        "combat": {
+            "player": {"current_hp": 76, "max_hp": 85, "energy": 2},
+            "hand": [{"name": "打击", "card_id": "STRIKE_IRONCLAD", "playable": False},
+                     {"name": "巨像", "card_id": "COLOSSUS", "playable": False}],
+        },
+    }
+    fake = _FakeSts2([state])
+    out = play._combat(fake, None, state, mode="llm", llm_tools=object(),
+                       llm_planner=object(), game=play.GAME_ID)
+    assert out == "COMBAT pass"
+    assert fake.calls == [("end_turn", {})]
+
+
+def test_cli_system_exit_becomes_runtime_error():
+    """sts2.py 的 CLI 用 sys.exit(3) 拒绝动作；不能让 BaseException 逃出主循环。"""
+
+    def boom():
+        raise SystemExit(3)
+
+    with pytest.raises(RuntimeError):
+        play._call(None, boom)
+
+
+def test_run_meta_prefers_combat_hp():
+    state = {
+        "screen": "COMBAT",
+        "run": {"floor": 17, "current_hp": 76, "max_hp": 85},
+        "combat": {"player": {"current_hp": 64, "max_hp": 85}},
+    }
+    assert play._run_meta(state) == (17, 64, 85)
+
+
+def test_run_meta_matches_when_in_sync():
+    state = {
+        "screen": "COMBAT",
+        "run": {"floor": 17, "current_hp": 64, "max_hp": 85},
+        "combat": {"player": {"current_hp": 64, "max_hp": 85}},
+    }
+    assert play._run_meta(state) == (17, 64, 85)
+
+
+def test_validate_says_unplayable_not_999():
+    """眩晕时整手牌不可打；报错别写「要 999 费」，否则模型以为补能量就行。"""
+    sim = _decision_module("sim")
+    state = {
+        "screen": "COMBAT",
+        "run": {"floor": 17, "current_hp": 64, "max_hp": 85},
+        "combat": {
+            "player": {"current_hp": 64, "max_hp": 85, "energy": 2},
+            "hand": [{"name": "打击", "card_id": "STRIKE_IRONCLAD",
+                      "energy_cost": 1, "card_type": "Attack", "playable": False}],
+        },
+    }
+    ok, err, _sim, _steps = sim.validate(state, [{"c": "STRIKE_IRONCLAD"}])
+    assert ok is False
+    assert "本回合不能打" in err
+
+
 def test_llm_usage_accumulates():
     with play._lock:
         for key, value in (("tokens_in", 0), ("tokens_out", 0),

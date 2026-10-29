@@ -168,10 +168,20 @@ def _pace() -> None:
 
 
 def _call(sts2, fn, *args, **kwargs):
-    """跑会打印的 sts2 函数，吞掉 stdout，保留结果。"""
+    """跑会打印的 sts2 函数，吞掉 stdout，保留结果。
+
+    CLI 层用 ``sys.exit(2/3)`` 表示「这批动作不能发」（例如牌不可打、目标已死）。
+    它抛的是 ``SystemExit``（BaseException），不接住会绕过主循环的异常兜底、
+    直接记成 ``ERROR SystemExit: 3`` 然后被判卡住——run-0114 的 BOSS 眩晕就死在这。
+    这里统一转成 ``RuntimeError``，让上层按普通错误处理。
+    """
     buf = io.StringIO()
-    with contextlib.redirect_stdout(buf):
-        result = fn(*args, **kwargs)
+    try:
+        with contextlib.redirect_stdout(buf):
+            result = fn(*args, **kwargs)
+    except SystemExit as exc:
+        _log("cli_exit", code=getattr(exc, "code", 0), fn=getattr(fn, "__name__", "?"))
+        raise RuntimeError(f"{getattr(fn, '__name__', 'cli')} exit {getattr(exc, 'code', 0)}") from None
     return result, buf.getvalue()
 
 
@@ -192,9 +202,24 @@ def _screen(state: dict) -> str:
 
 
 def _run_meta(state: dict) -> tuple[int, int, int]:
+    """(楼层, 当前 HP, 最大 HP)。
+
+    战斗中以 ``combat.player`` 为准：mod 的 ``run.current_hp`` 在战斗内偶尔会慢
+    一拍（BOSS 眩晕那局 overlay 显示 76、实际已经 64），有偏差时记一条
+    ``hp_mismatch`` 方便以后回查。
+    """
     run = state.get("run") or {}
-    return (int(run.get("floor") or 0), int(run.get("current_hp") or run.get("hp") or 0),
-            int(run.get("max_hp") or 0))
+    hp = int(run.get("current_hp") or run.get("hp") or 0)
+    max_hp = int(run.get("max_hp") or 0)
+    if _screen(state) == "COMBAT":
+        player = (state.get("combat") or {}).get("player") or {}
+        combat_hp = player.get("current_hp")
+        if combat_hp is not None and int(combat_hp) != hp:
+            _log("hp_mismatch", run=hp, combat=int(combat_hp),
+                 run_max=max_hp, combat_max=int(player.get("max_hp") or 0))
+            hp = int(combat_hp)
+            max_hp = int(player.get("max_hp") or max_hp)
+    return (int(run.get("floor") or 0), hp, max_hp)
 
 
 def _timeline_event(kind: str, label: str = "", **extra) -> None:
@@ -430,8 +455,10 @@ def _combat_llm(tools, planner, state: dict, game: str) -> str:
 
     _sync_llm_planner(planner)
 
-    run = state.get("run") or {}
-    goal = combat_goal(run)
+    floor, hp, max_hp = _run_meta(state)
+    # 战斗中以 combat.player 的 HP 为准（run.current_hp 偶尔慢一拍），保证
+    # 提示词/字幕里的血量与画面上的一致。
+    goal = combat_goal({"floor": floor, "current_hp": hp, "max_hp": max_hp})
     _write_status(last="LLM 思考…")
     try:
         result = run_turn(
@@ -474,8 +501,19 @@ def _combat_llm(tools, planner, state: dict, game: str) -> str:
     return f"LLM {len(seq or [])}步"
 
 
+def _combat_pass_required(state: dict) -> bool:
+    """本回合不能出牌（BOSS 的眩晕/跳过回合）：只有 end_turn 是合法动作。"""
+    acts = set(_acts(state))
+    return "play_card" not in acts and "end_turn" in acts
+
+
 def _combat_local(sts2, advisor, state: dict) -> str:
     acts = set(_acts(state))
+    if _combat_pass_required(state):
+        # 眩晕/被跳过：所有手牌都是 playable=false，问模型只会让它排 999 费的牌，
+        # 执行层再 exit 3 → 整步报错 → 三次后被判卡住（run-0114）。
+        sts2.act("end_turn")
+        return "COMBAT pass"
     if not ({"play_card", "end_turn"} & acts):
         return "WAIT_COMBAT"
     plan = None
@@ -506,6 +544,12 @@ def _combat_local(sts2, advisor, state: dict) -> str:
 
 def _combat(sts2, advisor, state: dict, *, mode: str = "local",
             llm_tools=None, llm_planner=None, game: str = "") -> str:
+    if _combat_pass_required(state):
+        # 眩晕/跳过回合：手牌全是 playable=false，问模型只会得到不可执行的 seq
+        # （还烧 token）。直接结束回合。
+        sts2.act("end_turn")
+        _log("stunned_pass")
+        return "COMBAT pass"
     if mode == "llm" and llm_tools is not None and llm_planner is not None:
         out = _combat_llm(llm_tools, llm_planner, state, game)
         if out == "STOPPED" or _stopping():
