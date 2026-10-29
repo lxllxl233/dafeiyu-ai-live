@@ -1,5 +1,26 @@
 # Changelog
 
+## [2.4.0] - 2026-10-29
+
+### Added
+
+- **控制台直接编辑人设 / 梗**：「人设配置」页新增编辑器，可选并保存
+  `persona/dafeiyu/card.json`（名字 / 性格 / 招牌 / 禁语）、`style.md`（说话风格）、
+  `persona/memes/*.json`（通用梗）、`db/memes.json`（118 条梗列表）和主播台词文档
+  （`games/<game>/persona/speech.md`、`lines.md`、`quips.md`）。
+  - 服务端只认白名单文件名（不传路径），JSON 先校验，写坏自动回滚；
+  - 梗列表保存后自动重建 `db/sts2.db` 的 `memes` 表（和 `tools/memedb.py` 同一张表）；
+  - 人设卡保存后立即重载 `Persona`，下一条台词生效；页面提供「还原 / 重载人设」。
+- **自动玩恢复 SL（时间回溯）**：当本回合穷举所有牌序都会死、且不是第 1 回合时，
+  runner 自动 `save_and_quit` → 主菜单 `continue_run`，把整场战斗还原到第 1 回合重打。
+  一局最多 6 次、同一场战斗只回档一次，回档时播报「时间回溯」。
+  （以前只有人工在对话里跑 `tools/sts2.py do save_and_quit` 才能用。）
+
+### Fixed
+
+- 战斗 / 宝箱结算后的地图节点晚加载不再被卡住守卫当成无进展收尾：
+  `MAP_NO_AVAILABLE` 会先重读最多 4 秒，必要时点 `proceed`，仍无节点才 `WAIT_MAP`。
+
 ## [2.3.0] - 2026-10-29
 
 ### Added

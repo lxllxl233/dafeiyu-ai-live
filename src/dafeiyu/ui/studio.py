@@ -11,9 +11,11 @@
 from __future__ import annotations
 
 import json
+import os
 import queue
 import threading
 import time
+from pathlib import Path
 from typing import Any, Callable
 
 from .. import __codename__, __product__, __version__, paths
@@ -25,6 +27,140 @@ from ..voice import build_router
 _GAME_CACHE_TTL = 6.0
 _VOICE_CACHE_TTL = 5.0
 _ROOM_MAX = 120
+_PERSONA_MAX_BYTES = 200_000
+
+# 控制台「人设/梗」可编辑的文件：只认白名单，页面传名字不传路径，避免任意文件读写。
+_PERSONA_TEXT_FILES = (
+    ("style.md", "说话风格（三拍/五件武器/梗纪律）"),
+)
+_CASTER_FILES = (
+    ("speech.md", "主播台词规则"),
+    ("lines.md", "分节点台词库"),
+    ("quips.md", "招牌梗（tools/caster_quips.py 生成）"),
+)
+
+
+def persona_files(persona_id: str, game: str) -> list[dict]:
+    """可编辑文件清单（不返回绝对路径）。"""
+    pid = str(persona_id or "dafeiyu")
+    out: list[dict] = []
+    card = paths.PERSONA / pid / "card.json"
+    if card.exists():
+        out.append({"name": "card.json", "label": "人设卡（名字/性格/招牌/禁语）",
+                    "kind": "json", "path": f"persona/{pid}/card.json"})
+    for fname, label in _PERSONA_TEXT_FILES:
+        p = paths.PERSONA / pid / fname
+        if p.exists():
+            out.append({"name": fname, "label": label, "kind": "text",
+                        "path": f"persona/{pid}/{fname}"})
+    for p in sorted((paths.PERSONA / "memes").glob("*.json")):
+        out.append({"name": f"memes/{p.name}", "label": f"通用梗 · {p.stem}",
+                    "kind": "json", "path": f"persona/memes/{p.name}"})
+    game_id = str(game or "")
+    if game_id:
+        game_dir = paths.ROOT / "games" / game_id / "persona"
+        for fname, label in _CASTER_FILES:
+            p = game_dir / fname
+            if p.exists():
+                out.append({"name": f"caster/{fname}", "label": label, "kind": "text",
+                            "path": f"games/{game_id}/persona/{fname}"})
+    memes = paths.ROOT / "db" / "memes.json"
+    if memes.exists():
+        out.append({"name": "db/memes.json", "label": "梗列表（同步到游戏梗库）",
+                    "kind": "json", "path": "db/memes.json"})
+    return out
+
+
+def persona_file_path(name: str, persona_id: str, game: str) -> Path:
+    """把控制台传的文件名解析成白名单里的绝对路径；越界直接拒绝。"""
+    for item in persona_files(persona_id, game):
+        if item["name"] == name:
+            rel = item["path"]
+            return paths.ROOT / rel
+    raise ValueError(f"不可编辑的文件：{name}")
+
+
+def validate_card(raw: Any) -> dict:
+    """人设卡最小校验：坏 JSON 之外，id/name 和各列表也不能写错类型。"""
+    if not isinstance(raw, dict):
+        raise ValueError("人设卡必须是 JSON 对象")
+    for key in ("id", "name"):
+        if not str(raw.get(key) or "").strip():
+            raise ValueError(f"人设卡缺少 {key}")
+    for key in ("traits", "quips", "openers", "closers", "banned_prefixes",
+                "banned_labels", "repeat_words"):
+        val = raw.get(key)
+        if val is not None and not (isinstance(val, list)
+                                    and all(isinstance(x, str) for x in val)):
+            raise ValueError(f"人设卡 {key} 必须是字符串数组")
+    style = raw.get("style")
+    if style is not None and not isinstance(style, dict):
+        raise ValueError("人设卡 style 必须是对象")
+    return raw
+
+
+def parse_memes(text: str) -> list[dict]:
+    """梗列表：JSON 数组，每条至少 id + text；tags 统一转成字符串数组。"""
+    try:
+        raw = json.loads(text)
+    except ValueError as exc:
+        raise ValueError(f"梗列表不是合法 JSON：{exc}") from exc
+    if not isinstance(raw, list) or not raw:
+        raise ValueError("梗列表必须是非空 JSON 数组")
+    out = []
+    for i, item in enumerate(raw):
+        if not isinstance(item, dict):
+            raise ValueError(f"第 {i + 1} 条不是对象")
+        entry = {k: item[k] for k in ("id", "text", "category", "game", "trigger",
+                                      "example", "intensity", "cooldown") if k in item}
+        if not str(entry.get("id") or "").strip():
+            raise ValueError(f"第 {i + 1} 条缺 id")
+        if not str(entry.get("text") or "").strip():
+            raise ValueError(f"第 {i + 1} 条缺 text")
+        tags = item.get("tags") or []
+        if isinstance(tags, str):
+            tags = [x.strip() for x in tags.split(",") if x.strip()]
+        if not isinstance(tags, list):
+            raise ValueError(f"第 {i + 1} 条 tags 必须是数组")
+        entry["tags"] = [str(x) for x in tags]
+        entry.setdefault("intensity", 1)
+        entry.setdefault("cooldown", 10)
+        out.append(entry)
+    return out
+
+
+def sync_memes_db(items: list[dict], db_path: Path) -> int:
+    """把梗列表写回游戏梗库 SQLite 的 memes 表（路径由游戏包提供）。"""
+    import sqlite3
+
+    db = Path(db_path)
+    con = sqlite3.connect(str(db))
+    try:
+        with con:
+            con.execute(
+                "CREATE TABLE IF NOT EXISTS memes (id TEXT PRIMARY KEY, text TEXT, "
+                "category TEXT, game TEXT, tags TEXT, trigger TEXT, example TEXT, "
+                "intensity INTEGER, cooldown INTEGER)"
+            )
+            con.execute("DELETE FROM memes")
+            con.executemany(
+                "INSERT INTO memes VALUES(?,?,?,?,?,?,?,?,?)",
+                [(str(m.get("id")), str(m.get("text")), str(m.get("category") or ""),
+                  str(m.get("game") or "both"), ",".join(m.get("tags") or []),
+                  str(m.get("trigger") or ""), str(m.get("example") or ""),
+                  int(m.get("intensity") or 1), int(m.get("cooldown") or 10))
+                 for m in items],
+            )
+    finally:
+        con.close()
+    return len(items)
+
+
+def _atomic_write(path: Path, text: str) -> None:
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(text, encoding="utf-8")
+    os.replace(tmp, path)
+
 
 
 class StudioRuntime:
@@ -326,6 +462,84 @@ class StudioRuntime:
         if patch.get("voice") == "mambo":
             voice_start = self.start_voice("mambo")
         return {"ok": True, "config": self.config_payload(), "voice_start": voice_start}
+
+    # ---------------------------------------------------------------- 人设 / 梗
+    def persona_payload(self) -> dict:
+        """控制台「人设/梗」编辑器：白名单文件 + 当前内容。"""
+        self._sync_config()
+        files = persona_files(self.cfg.persona, self.cfg.game)
+        texts: dict[str, str] = {}
+        for item in files:
+            try:
+                p = persona_file_path(item["name"], self.cfg.persona, self.cfg.game)
+                texts[item["name"]] = p.read_text(encoding="utf-8")
+            except OSError:
+                texts[item["name"]] = ""
+        return {"ok": True, "persona": self.persona.card.id, "files": files, "texts": texts}
+
+    def _game_memes_db(self) -> Path | None:
+        """梗库 DB 由游戏包声明（核心不硬编码具体游戏路径）。"""
+        try:
+            mod = self.registry.load_game_module(self.cfg.game, "memes")
+        except Exception:
+            return None
+        p = Path(str(getattr(mod, "DB", "") or ""))
+        return p if str(p) and p.exists() else None
+
+    def save_persona(self, name: str, text: str) -> dict:
+        """写人设/梗文件；JSON 先校验，写坏自动回滚。"""
+        self._sync_config()
+        body = str(text or "")
+        if len(body.encode("utf-8")) > _PERSONA_MAX_BYTES:
+            raise ValueError(f"文件超过 {_PERSONA_MAX_BYTES // 1000}KB，控制台不适合存这么大的文本")
+        path = persona_file_path(name, self.cfg.persona, self.cfg.game)
+        old = path.read_text(encoding="utf-8") if path.exists() else ""
+        saved_note = ""
+        if name == "card.json":
+            try:
+                validate_card(json.loads(body))
+            except ValueError as exc:
+                raise ValueError(f"人设卡校验失败：{exc}") from exc
+        elif name == "db/memes.json":
+            parse_memes(body)   # 先验一遍，别把坏数据写进库
+        elif name.startswith("memes/"):
+            try:
+                raw = json.loads(body)
+            except ValueError as exc:
+                raise ValueError(f"JSON 语法错误：{exc}") from exc
+            items = raw.get("items") if isinstance(raw, dict) else None
+            if not isinstance(items, list) or not items:
+                raise ValueError("梗文件需要 items 数组（至少一条）")
+            if any(not isinstance(x, dict) or not str(x.get("text") or "").strip()
+                   for x in items):
+                raise ValueError("两条梗里缺 text")
+        try:
+            _atomic_write(path, body)
+            if name == "card.json":
+                self.persona = Persona.load(self.cfg.persona)
+                saved_note = "人设卡已生效（下一条台词起）"
+            elif name == "db/memes.json":
+                db = self._game_memes_db()
+                if db is None:
+                    raise ValueError("当前游戏的梗库 DB 不可用（先确认游戏包里有 memes.py）")
+                n = sync_memes_db(parse_memes(body), db)
+                saved_note = f"梗列表已保存并重建 memes 表（{n} 条）"
+            elif name.startswith("memes/"):
+                saved_note = "通用梗已保存"
+            else:
+                saved_note = "已保存"
+        except Exception as exc:
+            _atomic_write(path, old)    # 写坏/加载失败：回滚到保存前
+            self.persona = Persona.load(self.cfg.persona)
+            raise ValueError(f"保存失败，已回滚：{exc}") from exc
+        return {"ok": True, "name": name, "bytes": len(body.encode("utf-8")),
+                "message": saved_note, "persona": self.persona.to_dict()}
+
+    def reload_persona(self) -> dict:
+        """手动重载 card.json（比如用别的编辑器改了文件）。"""
+        self._sync_config()
+        self.persona = Persona.load(self.cfg.persona)
+        return {"ok": True, "message": "人设已重载", "persona": self.persona.to_dict()}
 
     # ---------------------------------------------------------------- 说话
     def say(self, body: dict, add_comment: Callable[[dict], Any], *,

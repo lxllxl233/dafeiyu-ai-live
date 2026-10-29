@@ -1348,3 +1348,60 @@ def test_status_updates_keep_running_while_thread_alive(monkeypatch):
     # 真正收尾时必须尊重显式 running=False
     out = play._with_liveness({"running": False, "stopping": False, "last": "已停手"})
     assert out["running"] is False
+
+def _hopeless_combat(turn=3, hp=9):
+    return {
+        "screen": "COMBAT",
+        "run": {"current_hp": hp, "max_hp": 80, "max_energy": 3, "floor": 9,
+                "deck": [{"card_id": "STRIKE_IRONCLAD", "name": "打击", "energy_cost": 1}],
+                "relics": [], "potions": []},
+        "available_actions": ["play_card", "end_turn"],
+        "combat": {"turn": turn,
+                   "player": {"current_hp": hp, "max_hp": 80, "energy": 3,
+                              "block": 0, "powers": []},
+                   "hand": [{"card_id": "STRIKE_IRONCLAD", "name": "打击",
+                             "energy_cost": 1, "playable": True, "requires_target": True,
+                             "target_type": "AnyEnemy",
+                             "dynamic_values": [{"name": "Damage", "current_value": 6}],
+                             "resolved_rules_text": ""}],
+                   "enemies": [{"index": 0, "enemy_id": "JAW_WORM", "name": "JAW_WORM",
+                                "current_hp": 200, "max_hp": 200, "block": 0,
+                                "is_alive": True, "powers": [],
+                                "intents": [{"intent_type": "ATTACK", "damage": 14,
+                                             "hits": 1, "total_damage": 14}]}]},
+        "agent_view": {"combat": {"draw_cards": [], "discard_cards": [],
+                                  "exhaust_cards": []}},
+    }
+
+
+def test_sl_worth_it_only_for_hopeless_mid_combat():
+    state = _hopeless_combat()
+    dead = [{"k": "best", "hp": -2, "taken": 14}, {"k": "maxdmg", "hp": -5, "taken": 20}]
+    assert play._sl_worth_it(state, dead) is True
+    assert play._sl_worth_it(state, dead + [{"k": "guard", "hp": 3, "taken": 6}]) is False
+    assert play._sl_worth_it(state, []) is False
+    assert play._sl_worth_it(_hopeless_combat(turn=1), dead) is False
+    assert play._sl_worth_it(state, [{"k": "best", "hp": -2, "taken": 3}]) is False
+
+
+def test_try_sl_saves_and_quits_once_per_combat(monkeypatch):
+    class _Sts:
+        def __init__(self):
+            self.calls = []
+
+        def act(self, name, *a, **k):
+            self.calls.append(name)
+
+    sts = _Sts()
+    state = _hopeless_combat()
+    monkeypatch.setattr(play, "_log", lambda *a, **k: None)
+    monkeypatch.setattr(play, "_write_status", lambda **k: None)
+    monkeypatch.setattr(play, "_say_screen", lambda *a, **k: None)
+    monkeypatch.setattr(play, "_stopping", lambda: False)
+    monkeypatch.setattr(play, "_sl_used", 0)
+    monkeypatch.setattr(play, "_sl_last", 0.0)
+    monkeypatch.setattr(play, "_sl_done", set())
+    assert play._try_sl(sts, state) is True
+    assert sts.calls == ["save_and_quit"]
+    assert play._try_sl(sts, state) is False
+    assert sts.calls == ["save_and_quit"]

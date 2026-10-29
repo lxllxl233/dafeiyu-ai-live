@@ -426,7 +426,27 @@ def _publish_route(sts2, state: dict, output: str = "", reason: str = "") -> dic
 def _choose_map(sts2, state: dict) -> str:
     nodes, avail = _map_nodes(state)
     if not avail:
-        return "MAP_NO_AVAILABLE"
+        # 战斗/宝箱结算后的地图过场：节点表偶尔晚 1–2 秒才出现。直接报
+        # MAP_NO_AVAILABLE 会被卡住守卫当成连续无进展收尾（f13 就停在这里）。
+        for _ in range(10):
+            time.sleep(0.4)
+            try:
+                state = sts2.get_state()
+            except Exception:
+                continue
+            if _screen(state) != "MAP":
+                break
+            nodes, avail = _map_nodes(state)
+            if avail:
+                _write_status(screen=_screen(state))
+                break
+        if not avail:
+            acts = set(_acts(state))
+            for name in ("proceed", "continue", "embark"):
+                if name in acts:
+                    sts2.act(name)
+                    return f"MAP {name}"
+            return "WAIT_MAP"
 
     plan = _route_plan(sts2)
     target = _route_target(plan, nodes, avail) if _route_current(plan, state) else None
@@ -581,6 +601,83 @@ def _combat_pass_required(state: dict) -> bool:
     return "play_card" not in acts and "end_turn" in acts
 
 
+# ---------------------------------------------------------------- SL（时间回溯）
+# save_and_quit → 主菜单 → continue_run 会把整场战斗还原到第 1 回合。以前只有人工
+# 在对话里跑 `tools/sts2.py do save_and_quit` 才能用；自动玩的白名单菜单按设计
+# 不放 save_and_quit（AGENTS 不变式），所以「肥鱼不会 SL 了」——这里在 runner
+# 里做一次受控回档：只有「这回合怎么打都会死、且不是第 1 回合」才用。
+_SL_MAX = 6
+_sl_used = 0
+_sl_done: set[str] = set()
+_sl_last = 0.0
+
+
+def _combat_key(state: dict) -> str:
+    run = state.get("run") or {}
+    c = state.get("combat") or {}
+    ids = ",".join(str(e.get("enemy_id") or e.get("name") or "")
+                   for e in c.get("enemies") or [])
+    return f"{run.get('run_id') or '?'}|{_num(run.get('floor'), 0)}|{ids}"
+
+
+def _sl_worth_it(state: dict, plans: list[dict]) -> bool:
+    """第 1 回合回档=同一手牌重开，纯浪费；只有必死的中局才值得重打整场。"""
+    combat = state.get("combat") or {}
+    turn = _num(state.get("turn") or combat.get("turn"), 0)
+    if turn <= 1 or not plans:
+        return False
+    hp = _num((combat.get("player") or {}).get("current_hp"), 0)
+    if hp <= 0:
+        return False
+    for p in plans:
+        if _num(p.get("hp"), 0) > 0:
+            return False        # 有活下来的线：不 SL
+        if _num(p.get("taken"), 0) < hp:
+            return False        # 计划没吃到致死伤害，别误判
+    return True
+
+
+def _try_sl(sts2, state: dict) -> bool:
+    """必死时回档一次；成功返回 True（主循环会从主菜单 continue_run）。"""
+    global _sl_used, _sl_last
+    if _sl_used >= _SL_MAX or _stopping():
+        return False
+    if time.time() - _sl_last < 20:
+        return False
+    key = _combat_key(state)
+    if key in _sl_done:
+        return False
+    try:
+        from ..decision import sim as _sim  # noqa: PLC0415
+
+        base = _sim.Sim.from_state(state)
+        if not base.alive() or base.incoming() < base.hp:
+            return False        # 先做便宜判断，别每回合都跑 1 秒 DFS
+        plans = _sim.search(state, max_cards=8, max_plans=6)
+    except Exception as exc:  # noqa: BLE001
+        _log("sl_failed", error=f"{type(exc).__name__}: {exc}")
+        return False
+    if not _sl_worth_it(state, plans):
+        return False
+    hp = _num((state.get("combat") or {}).get("player", {}).get("current_hp"), 0)
+    turn = _num(state.get("turn") or (state.get("combat") or {}).get("turn"), 0)
+    floor = _num((state.get("run") or {}).get("floor"), 0)
+    try:
+        sts2.act("save_and_quit")
+    except Exception as exc:  # noqa: BLE001
+        _log("sl_failed", error=f"{type(exc).__name__}: {exc}")
+        return False
+    _sl_used += 1
+    _sl_done.add(key)
+    _sl_last = time.time()
+    _log("sl", floor=floor, turn=turn, hp=hp, used=_sl_used,
+         plans=[{"k": p.get("k"), "hp": p.get("hp"), "taken": p.get("taken")}
+                for p in plans[:3]])
+    _write_status(last="时间回溯…", route_seq="")
+    _say_screen(sts2, "时间回溯。这局不算，重打。", "COMBAT", state)
+    return True
+
+
 _COMBAT_BARKS = (
     ("先算账，再摸牌。", "数学爬塔。"),
     ("这波我算过了。", "稳一点稳一点。"),
@@ -671,6 +768,8 @@ def _combat(sts2, advisor, state: dict, *, mode: str = "local",
         sts2.act("end_turn")
         _log("stunned_pass")
         return "COMBAT pass"
+    if mode == "llm" and _try_sl(sts2, state):
+        return "COMBAT sl"
     if mode == "llm" and llm_tools is not None and llm_planner is not None:
         out = _combat_llm(llm_tools, llm_planner, state, game)
         if out == "STOPPED" or _stopping():
@@ -1268,8 +1367,11 @@ def _wait_game(sts2, timeout: float = 120.0) -> dict | None:
 
 
 def _run(game: str, mode: str = "local") -> None:
-    global _thread, _speech_until, _rollback_tried
+    global _thread, _speech_until, _rollback_tried, _sl_used, _sl_last
     _rollback_tried = False
+    _sl_used = 0
+    _sl_last = 0.0
+    _sl_done.clear()
     _deck_clicks.clear()
     sts2 = advisor = llm_tools = llm_planner = screen_planner = None
     try:
@@ -1379,6 +1481,10 @@ def _run(game: str, mode: str = "local") -> None:
                 continue
             _set_from_state(state)
             if _screen(state) == "GAME_OVER":
+                # 新一局重新给 SL 额度（一局最多 6 次）。
+                _sl_used = 0
+                _sl_last = 0.0
+                _sl_done.clear()
                 _say("这局结束了，我回主菜单再来一局。")
                 _write_status(last="GAME_OVER，回主菜单", route_seq="",
                               route_option=None, route_note="", route_floor=0)

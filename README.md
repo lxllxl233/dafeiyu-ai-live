@@ -3,7 +3,7 @@
 > 一个可换游戏、可换性格、可换声音的 **AI 直播工具**。
 > 第一视角是《杀戮尖塔 2》铁甲战士 A10——但它只是「游戏列表」里的第一个包。
 
-`v2.3` · Python 3.10+ · Windows（桌宠 / OBS） · 中文
+`v2.4` · Python 3.10+ · Windows（桌宠 / OBS） · 中文
 
 ---
 
@@ -186,6 +186,10 @@ python main.py replay list
 - 切 **语音**、**模型**、**当前游戏**，配置 **API 提供方 / Base URL / API Key**；
 - 点「只启动游戏」直接拉起 Steam / exe（按 `game.json` 的 `launch` 配置）；点「让她玩」启动后自动跑一局；
 - 曼波离线时点「启动」或「试听」自动拉起本地 MamboTTS；
+- 在 **人设配置** 页直接改 `persona/dafeiyu/card.json`（名字 / 性格 / 招牌 / 禁语）、
+  `persona/memes/*.json`（通用梗）、`db/memes.json`（梗列表，保存后重建 `db/sts2.db` 的
+  `memes` 表）和主播台词文档（`speech.md` / `lines.md` / `quips.md`）；JSON 先校验，
+  写坏自动回滚，保存即生效。
 - 看游戏包是否在线、语料库多大、overlay 当前几路连接。
 
 离线演示的输出长这样：
@@ -554,7 +558,8 @@ python tools/release_check.py      # 发布门禁：版本 + 单测 + 文档 + �
 - CI 在 `.github/workflows/ci.yml`，跑 `python tools/release_check.py --ci`；
 - `tools/` 的兼容 shim 还在观察期，映射和退役条件见 [tools/README.md](tools/README.md)。
 
-当前版本 **2.3.0**：新增第二游戏 `toy-duel`、跨游戏一致性门禁和发布门禁；
+当前版本 **2.4.0**：控制台可直接编辑人设卡 / 梗列表 / 主播台词；自动玩在必死回合会
+「时间回溯」（save_and_quit → continue_run）重打整场；地图节点晚加载不再导致停播。
 STS2 实机验收记录是 `recordings/slay-the-spire-2/run-0108/`。
 
 ---

@@ -34,6 +34,8 @@ REQUIRED = {
     # Agent / Token
     "tokApiTotal", "tokApiIO", "tokApiCalls", "tokApiLast", "tokSteps",
     "tokKinds", "tokApiHint",
+    # 人设/梗编辑
+    "pEditFile", "pEditText", "pEditHint", "pEditState",
 }
 
 
@@ -60,6 +62,13 @@ def test_room_send_hits_the_server_contract():
     assert "POST" in HTML
     # 发送框限长与后端一致（40 字）
     assert 'maxlength="40"' in HTML
+
+
+def test_persona_editor_is_wired():
+    assert "/api/persona" in HTML
+    assert "savePersonaFile" in HTML and "loadPersonaFile" in HTML
+    assert "reloadPersona" in HTML
+    assert "梗列表" in HTML
 
 
 def test_token_card_is_wired_to_api_payload():

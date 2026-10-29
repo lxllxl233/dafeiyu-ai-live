@@ -85,6 +85,15 @@
     font-size:12.5px;letter-spacing:1.6px;color:var(--muted);margin:0 0 13px;font-weight:600}
   .card h2 span{color:var(--gold);letter-spacing:0;font-weight:500}
   /* persona */
+  .editor{display:flex;flex-direction:column;gap:10px;margin-top:12px}
+  .editor select{width:100%;background:#0f121b;border:1px solid var(--line);color:var(--text);
+    border-radius:9px;padding:8px 10px;font-size:12px}
+  .editor textarea{width:100%;min-height:300px;background:#0b0d12;border:1px solid var(--line);
+    border-radius:10px;padding:11px 12px;color:#dbe2f2;font:12px/1.7 Consolas,"Cascadia Mono",monospace;
+    resize:vertical}
+  .editor textarea:focus{outline:none;border-color:rgba(244,201,104,.55)}
+  .editor .meta{font-size:11px;color:var(--muted);line-height:1.6}
+  .editor .meta b{color:var(--gold);font-weight:500}
   .who{display:flex;gap:13px;align-items:center}
   .who img{width:62px;height:62px;border-radius:16px;object-fit:cover;
     border:1.5px solid rgba(244,201,104,.5)}
@@ -394,15 +403,19 @@
           <div class="style-grid" id="pStyle"></div>
           <div class="chips" id="pQuips"></div>
         </div>
-        <div class="card">
-          <h2>编辑人设 <span>persona/</span></h2>
-          <div class="kv"><span>当前人设</span><b id="personaFileId">—</b></div>
-          <div class="kv"><span>卡片</span><b>persona/&lt;id&gt;/card.json</b></div>
-          <div class="kv"><span>通用梗</span><b>persona/memes/</b></div>
-          <div class="hint" style="margin-top:13px;line-height:1.85;color:var(--muted)">
-            改完 card.json 后刷新控制台即可看到新语气和招牌。点台词台里的样例可以快速填进 meme。
+        <div class="card" style="grid-column:1/-1">
+          <h2>编辑人设 / 梗 <span>保存即生效</span></h2>
+          <div class="editor">
+            <select id="pEditFile" onchange="loadPersonaFile()"></select>
+            <textarea id="pEditText" spellcheck="false" placeholder="选择一个文件开始编辑…"></textarea>
+            <div class="meta" id="pEditHint">JSON 会先校验，写坏自动回滚；梗列表保存后自动重建 <b>db/sts2.db</b> 的 memes 表。</div>
+            <div class="row" style="margin-top:0">
+              <button class="btn" type="button" onclick="savePersonaFile()">保存</button>
+              <button class="btn ghost" type="button" onclick="loadPersonaFile()">还原</button>
+              <button class="btn ghost" type="button" onclick="reloadPersona()">重载人设</button>
+              <span class="hint" id="pEditState"></span>
+            </div>
           </div>
-          <div class="row" style="margin-top:14px"><a class="btn ghost" href="#interaction">去互动台写一句 →</a></div>
         </div>
       </div>
     </section>
@@ -681,6 +694,78 @@ function renderPersona(){
   ].map(([v, k]) => `<div><b>${esc(v)}</b><small>${k}</small></div>`).join("");
   $("#pQuips").innerHTML = (p.quips || []).slice(0, 6)
     .map(q => `<span class="chip" data-quip="${esc(q)}">${esc(q)}</span>`).join("");
+}
+
+let PERSONA = null;
+
+async function loadPersona(){
+  try{
+    const r = await fetch("/api/persona", {cache:"no-store"});
+    if(!r.ok) throw new Error("HTTP " + r.status);
+    PERSONA = await r.json();
+    const sel = $("#pEditFile");
+    const cur = sel.value;
+    sel.innerHTML = (PERSONA.files || []).map(f =>
+      `<option value="${esc(f.name)}">${esc(f.label)} · ${esc(f.path)}</option>`).join("");
+    if(cur && (PERSONA.files || []).some(f => f.name === cur)) sel.value = cur;
+    loadPersonaFile();
+  }catch(e){
+    toast("读取人设失败：" + e.message, true);
+  }
+}
+
+function loadPersonaFile(){
+  const name = $("#pEditFile").value;
+  if(!PERSONA || !name) return;
+  const text = (PERSONA.texts || {})[name] || "";
+  $("#pEditText").value = text;
+  const f = (PERSONA.files || []).find(x => x.name === name) || {};
+  $("#pEditHint").innerHTML = `文件 <b>${esc(f.path || name)}</b> · `
+    + (f.kind === "json" ? "JSON 会校验" : "纯文本") + ` · ${text.length} 字`;
+  $("#pEditState").textContent = "";
+}
+
+async function savePersonaFile(){
+  const name = $("#pEditFile").value;
+  if(!name){ toast("先选一个文件"); return; }
+  const text = $("#pEditText").value;
+  $("#pEditState").textContent = "保存中…";
+  try{
+    const r = await fetch("/api/persona", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({name, text}),
+    });
+    const d = await r.json();
+    if(!r.ok || !d.ok) throw new Error(d.error || ("HTTP " + r.status));
+    toast(d.message || "已保存");
+    $("#pEditState").textContent = d.message || "已保存";
+    await loadPersona();
+    if(name === "card.json" && d.persona){
+      DATA.persona = d.persona;
+      renderPersona();
+    }
+  }catch(e){
+    $("#pEditState").textContent = "";
+    toast("保存失败：" + e.message, true);
+  }
+}
+
+async function reloadPersona(){
+  try{
+    const r = await fetch("/api/persona", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({reload: true}),
+    });
+    const d = await r.json();
+    if(!r.ok || !d.ok) throw new Error(d.error || ("HTTP " + r.status));
+    toast(d.message || "人设已重载");
+    await refresh();
+    await loadPersona();
+  }catch(e){
+    toast("重载失败：" + e.message, true);
+  }
 }
 
 function renderVoice(){
@@ -1384,6 +1469,7 @@ document.addEventListener("keydown", (e) => {
 setView(location.hash.replace(/^#/, ""), false);
 setCounter();
 refresh();
+loadPersona();
 setInterval(refresh, 3000);
 </script>
 </body>
