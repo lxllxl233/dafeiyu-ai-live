@@ -645,6 +645,42 @@ def _deck_select_key(state: dict, sel: dict, cards: list[dict]) -> str:
                      str(sel.get("prompt") or ""), ids[:200]))
 
 
+def _deck_order(state: dict, sel: dict, cards: list[dict]) -> list[int]:
+    """选牌顺序：删/变化先打击、防御，升级先核心牌。
+
+    复用 ``decision/noncombat.select_eval``（和奖励/商店同一套牌面评估）：
+    - 移除/变化：打击 +20、防御 +12、诅咒 +35，核心牌 −45（`_remove_score`）；
+    - 升级：打击只给 5 分、防御 12 分，BASH 等核心牌 +36（`_upgrade_score`）。
+    评估失败就退回原顺序（0、1、2…），至少不会卡住。
+    """
+    order = list(range(len(cards)))
+    try:
+        try:
+            from ..decision import noncombat
+        except Exception:  # 测试里 runner 可能不是按包导入
+            import importlib
+
+            _dec = Path(__file__).resolve().parent.parent / "decision"
+            if str(_dec) not in sys.path:
+                sys.path.insert(0, str(_dec))
+            noncombat = importlib.import_module("noncombat")
+
+        deck = (state.get("run") or {}).get("deck") or []
+        prompt = str(sel.get("prompt") or "")
+        if not prompt:
+            kind = str(sel.get("kind") or "")
+            prompt = {"deck_upgrade_select": "选择1张牌来升级",
+                      "deck_transform_select": "选择1张牌来变化"}.get(kind, "")
+        ev = noncombat.evaluate({"run": {"deck": deck}},
+                                {"kind": "select", "prompt": prompt, "cards": cards})
+        scores = {int(o["i"]): float(o["sc"]) for o in (ev or {}).get("opts") or []}
+        if scores:
+            order.sort(key=lambda i: (-scores.get(i, 0.0), i))
+    except Exception:
+        pass
+    return order
+
+
 def _card_selection(sts2, state: dict) -> str:
     acts = _acts(state)
     sel = state.get("selection") or {}
@@ -689,8 +725,10 @@ def _card_selection(sts2, state: dict) -> str:
         if len(_deck_clicks) > 40:
             _deck_clicks.clear()
         _deck_clicks[key] = done + 1
+        order = _deck_order(state, sel, cards)
+        idx = order[done] if done < len(order) else done
         try:
-            sts2.act("select_deck_card", option_index=int(done))
+            sts2.act("select_deck_card", option_index=int(idx))
             return f"CARD select {done + 1}/{need}"
         except Exception as exc:  # noqa: BLE001
             _log("deck_select_failed", i=done, error=f"{type(exc).__name__}: {exc}")

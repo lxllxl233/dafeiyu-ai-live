@@ -30,7 +30,7 @@ python tools/act.py --file tmp_plan.json    # 执行seq，回下回合ctx
 - `hand_n`=真实手牌数（`hand[]` 同名牌合并，只看条数以为牌少）；`stale_ctx`=新回合未抽完牌，必须重读 `ctx.py`。
 - 遗言告警：敌人带「蒸汽喷发/爆炸/亡语」时斩杀≠安全——死后按层数结算一发（可格挡/缓冲）。`act` 在「清场且0甲」给 `warn:遗言警告`，看到就查有无甲或缓冲。
 - SL不改抽牌顺序（`save_and_quit`→continue后手牌一样），只救操作失误，每幕≤2次；商店每店只删1张；药水栏满时 `claim_reward` 静默成功不给药水（先看 `potions` 槽，满则 `discard_potion`）。
-- 「从牌组移除N张」多选已修（mod 重编，见 `docs/TODO_mod_deck_remove.md`）：`min/max` 会按提示读出来，逐张点不同牌后 `confirm_selection` 才可用；脚本自动按 0、1… 点满，别再因为怕卡跳过送牌的选项。
+- 「从牌组移除N张」多选已修（mod 重编，见 `docs/TODO_mod_deck_remove.md`）：`min/max` 会按提示读出来，逐张点不同牌后 `confirm_selection` 才可用；脚本自动挑牌——删/变化先打击、防御，升级先核心牌（BASH/耸肩/恶魔之焰 +36），别再因为怕卡跳过送牌的选项。
 - 诅咒两种：进阶之灾（虚无）每回合手牌−1；贪婪（永恒）删不掉，商店删牌列表不出现；别把「删诅咒」写进计划。
 - 只堆甲死于消耗战：甲牌≥45%必须配「非基础高伤攻击≥2张」，python tools/gates.py同查。
 

@@ -26,9 +26,12 @@
 - 涅奥「松动羊毛剪」（移除 2 张）：选 1 张后确认**不可用**（门控生效），选满 2 张后才可用。
 
 客户端侧：
-- `runner._card_selection` 用 `_deck_clicks` 本地计数，按 0、1、2… 点不同牌，
-  `selected_count` 只在更大时同步；点满 `need` 后调 `confirm_selection`，
-  不推进再交给卡住守卫回滚。
+- `runner._card_selection` 用 `_deck_clicks` 本地计数，按**评估后的顺序**点不同的牌
+  （`runner._deck_order` → `decision/noncombat.select_eval`）：
+  - 移除/变化：打击 +20、防御 +12、诅咒 +35，核心牌 −45 → 先删打击、再防御；
+  - 升级：打击 5 分、防御 12 分，BASH/耸肩/恶魔之焰等核心牌 +36 → 先升核心牌；
+  - 评估失败才退回 0、1、2… 原顺序。
+  点满 `need` 后调 `confirm_selection`，不推进再交给卡住守卫回滚。
 - `--mode llm` 下牌组多选屏（有 `select_deck_card`）直接本地处理，不再问模型
   （模型看不见已选张数，只会重复点同一张；run-0113 一晚烧 530 万 token）。
 - 删掉 `ui_pick_cards` 鼠标坐标兜底（12+ 张牌组的网格坐标对不上）。

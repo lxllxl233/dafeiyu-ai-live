@@ -194,6 +194,65 @@ def test_blind_multi_select_clicks_then_confirms(monkeypatch):
     assert fake.calls[1][1] == {"option_index": 1}
 
 
+def _deck_cards():
+    return [
+        {"index": 0, "card_id": "BASH", "name": "痛击", "card_type": "Attack",
+         "rarity": "Basic", "energy_cost": 2},
+        {"index": 1, "card_id": "STRIKE_IRONCLAD", "name": "打击", "card_type": "Attack",
+         "rarity": "Basic", "energy_cost": 1},
+        {"index": 2, "card_id": "DEFEND_IRONCLAD", "name": "防御", "card_type": "Skill",
+         "rarity": "Basic", "energy_cost": 1},
+    ]
+
+
+def _deck_select_state(run_id, kind, prompt, need, cards):
+    return {
+        "run_id": run_id,
+        "screen": "CARD_SELECTION",
+        "available_actions": ["select_deck_card"],
+        "run": {"deck": cards},
+        "selection": {
+            "kind": kind,
+            "prompt": prompt,
+            "min_select": need,
+            "max_select": need,
+            "selected_count": 0,
+            "cards": cards,
+        },
+    }
+
+
+def test_removal_prefers_strikes_then_defends(monkeypatch):
+    """删牌别删核心：先打击、再防御，痛击留最后。"""
+    monkeypatch.setattr(play, "_deck_clicks", {})
+    cards = _deck_cards()
+    state = _deck_select_state("R1", "deck_card_select", "选择 2 张牌来移除", 2, cards)
+    fake = _FakeSts2([state])
+    assert play._card_selection(fake, state) == "CARD select 1/2"
+    assert fake.calls[-1] == ("select_deck_card", {"option_index": 1})  # 打击
+    assert play._card_selection(fake, state) == "CARD select 2/2"
+    assert fake.calls[-1] == ("select_deck_card", {"option_index": 2})  # 防御
+
+
+def test_transform_prefers_strike_over_core(monkeypatch):
+    monkeypatch.setattr(play, "_deck_clicks", {})
+    cards = _deck_cards()
+    state = _deck_select_state("R2", "deck_transform_select", "选择 1 张牌来变化", 1, cards)
+    fake = _FakeSts2([state])
+    assert play._card_selection(fake, state) == "CARD select 1/1"
+    assert fake.calls[-1] == ("select_deck_card", {"option_index": 1})  # 打击
+
+
+def test_upgrade_prefers_core_card(monkeypatch):
+    """升级先升核心牌（BASH），而不是打击/防御。"""
+    monkeypatch.setattr(play, "_deck_clicks", {})
+    cards = _deck_cards()
+    state = _deck_select_state("R3", "deck_upgrade_select", "选择 1 张牌来升级", 1, cards)
+    fake = _FakeSts2([state])
+    assert play._card_selection(fake, state) == "CARD select 1/1"
+    assert fake.calls[-1] == ("select_deck_card", {"option_index": 0})  # 痛击
+
+
 def test_llm_usage_accumulates():
     with play._lock:
         for key, value in (("tokens_in", 0), ("tokens_out", 0),
