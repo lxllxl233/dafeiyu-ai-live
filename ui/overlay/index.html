@@ -105,6 +105,20 @@
     white-space: nowrap;
     text-shadow: 0 2px 3px rgba(0,0,0,.9);
   }
+  /* 《人工智能生成合成内容标识办法》要求 AI 生成内容主动标识。
+     想隐藏可以在配置里关，但默认开着，避免直播被判「未标识」。 */
+  #aiBadge {
+    margin-top: 3px;
+    display: inline-block;
+    font-size: 9px;
+    line-height: 1.4;
+    padding: 0 5px;
+    border-radius: 6px;
+    color: rgba(255,255,255,.72);
+    border: 1px solid rgba(255,255,255,.22);
+    background: rgba(0,0,0,.28);
+    letter-spacing: .5px;
+  }
 
   /* 漫画气泡本体：圆角、金边、底部小尾巴；宽度跟着文字走，最长 540 */
   #main {
@@ -190,6 +204,7 @@
     </div>
     <div class="name">大肥鱼 · DeepSeek</div>
     <div class="tagline">正在替你爬塔</div>
+    <div id="aiBadge">AI 生成 · 虚拟形象</div>
   </div>
 </div>
 

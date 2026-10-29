@@ -392,6 +392,15 @@ def test_recover_does_not_trigger_on_unrelated_screens(monkeypatch):
     assert fake.calls == []
 
 
+def test_repeated_screen_speech_is_not_spoken_twice(monkeypatch):
+    """B 站把「长时间重复同一内容」算挂机；同一句台词别刷第二遍。"""
+    monkeypatch.setattr(play, "_recent_speech", {})
+    fake = _FakeSts2([{"screen": "REST"}])
+    play._say_screen(fake, "先睡一口，血太少了", "REST")
+    play._say_screen(fake, "先睡一口，血太少了", "REST")
+    assert len(fake.said) == 1
+
+
 def test_unknown_screen_does_not_guess_a_button():
     state = {"screen": "SOMETHING_NEW", "available_actions": ["proceed", "confirm"]}
     fake = _FakeSts2([state])

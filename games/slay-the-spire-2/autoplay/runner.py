@@ -42,6 +42,8 @@ _speech_until = 0.0
 _thread: threading.Thread | None = None
 _ui_picks: set[str] = set()
 _timeline_prev: dict = {"screen": "", "floor": 0, "run_id": ""}
+# 最近说过的台词（文本 → 时间）；同句 4 分钟内不再重复推给 overlay。
+_recent_speech: dict[str, float] = {}
 
 
 def bind_host(host: AutoplayHost) -> AutoplayHost:
@@ -131,6 +133,18 @@ def _say_screen(sts2, text: str, screen: str, state: dict | None = None) -> None
     text = " ".join(str(text or "").split())
     if not text:
         return
+    # 同一句话 4 分钟内不重复播：B 站把「长时间重复同一内容/挂机」算 B 类
+    # 无意义内容，卡屏时同一句台词刷上百遍是很明显的机器特征。
+    now = time.time()
+    last = _recent_speech.get(text)
+    if last is not None and now - last < 240:
+        _log("speech_repeat_skipped", screen=screen, text=text[:60])
+        return
+    _recent_speech[text] = now
+    if len(_recent_speech) > 200:
+        for line, ts in list(_recent_speech.items()):
+            if now - ts > 900:
+                _recent_speech.pop(line, None)
     _remember_speech(text)
     try:
         tag_for = getattr(sts2, "tag_for", None)
