@@ -233,6 +233,20 @@ def is_recording() -> bool:
     return bool((st or {}).get("outputActive"))
 
 
+def stop_recording_now() -> str:
+    """让 OBS 停掉当前这段录制（不知道属于哪个 run），返回 outputPath。
+
+    用于「OBS 里还有上一段没停」：新一局开录前先收掉，否则 StartRecord 报 500，
+    自动玩状态显示没在录、实际旧文件一直长。
+    """
+    obs = _obs()
+    try:
+        resp = obs.stop_record()
+        return str((resp or {}).get("outputPath") or "")
+    finally:
+        obs.close()
+
+
 # ---------------------------------------------------------------- 索引
 def scan(game: str | None = None) -> list[dict]:
     rows = []

@@ -240,6 +240,27 @@ def _recover_stale_recording() -> dict:
     return {"ok": True, "recovered": True, "path": str(dst)}
 
 
+def _preempt_busy_record() -> dict:
+    """开新一局前，把 OBS 里残留的上一段录制停掉。
+
+    ``_recover_stale_recording`` 只认本项目的 current 指针；上一段如果是手工开的、
+    或指针已经清掉而 OBS 还在录，StartRecord 会一直报 500，于是「录像没开」但
+    文件其实在长。这里兜底：OBS 还在录就先停掉（日志留 record_preempt）。
+    """
+    try:
+        if not replay.is_recording():
+            return {"ok": True, "stopped": False}
+        out = replay.stop_recording_now()
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+    try:
+        record_event("record_preempt", reason="obs_busy", path=out)
+    except Exception:  # noqa: BLE001
+        pass
+    time.sleep(0.5)
+    return {"ok": True, "stopped": True, "path": out}
+
+
 def start_session(game: str = "", note: str = "") -> dict:
     """开一局自动玩录像；失败返回 ok=False，不阻断自动玩。"""
     global _session
@@ -261,6 +282,10 @@ def start_session(game: str = "", note: str = "") -> dict:
         ok, why = ensure_obs(game=game)
         if not ok:
             return {"ok": False, "error": why}
+        pre = _preempt_busy_record()
+        if not pre.get("ok"):
+            return {"ok": False,
+                    "error": f"OBS 里还有一段录制停不掉：{pre.get('error')}"}
         scene_ok, scene_why = _prepare_scene(game)
         run_dir = replay.create_run(game, note=note or "自动玩")
         try:

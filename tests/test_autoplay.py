@@ -1276,6 +1276,29 @@ def test_fingerprint_sees_block_only_change():
     assert sts2._fingerprint(_COMBAT_STATE) != sts2._fingerprint(potion)
 
 
+# ---------------------------------------------------------------- 开录前收掉 OBS 残留录制
+def test_preempt_busy_record_stops_leftover_obs(monkeypatch):
+    from dafeiyu.recording import auto as recording_auto, replay
+
+    events = []
+    monkeypatch.setattr(replay, "is_recording", lambda: True)
+    monkeypatch.setattr(replay, "stop_recording_now",
+                        lambda: events.append("stop") or "D:/rec/old.mp4")
+    monkeypatch.setattr(recording_auto, "record_event",
+                        lambda *a, **k: events.append("event"))
+    monkeypatch.setattr(recording_auto.time, "sleep", lambda *_: None)
+    out = recording_auto._preempt_busy_record()
+    assert out == {"ok": True, "stopped": True, "path": "D:/rec/old.mp4"}
+    assert events[:2] == ["stop", "event"]
+
+
+def test_preempt_busy_record_noop_when_obs_idle(monkeypatch):
+    from dafeiyu.recording import auto as recording_auto, replay
+
+    monkeypatch.setattr(replay, "is_recording", lambda: False)
+    assert recording_auto._preempt_busy_record() == {"ok": True, "stopped": False}
+
+
 # ---------------------------------------------------------------- 锻造/升级选牌不撞键
 def _smith_state(floor, cards, selected=0):
     return {
