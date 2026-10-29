@@ -52,6 +52,7 @@ import threading
 import time
 import urllib.request
 import wave
+from collections import deque
 from ctypes import wintypes
 
 try:
@@ -827,6 +828,152 @@ def load_pet_sprite(facing: str, height: int) -> Image.Image:
     return im
 
 
+# ---------------------------------------------------------------- 直播间互动气泡
+# 桌宠侧面那串小气泡：点赞=爱心、礼物=大米饭、弹幕=内容、进场=欢迎+名字。
+# 这条通道和头顶的「主播气泡」分开：头顶是她在说话，侧面是观众在互动。
+ROOM_BUBBLE_MAX = 4          # 同时最多 4 个（四种互动各一），再多顶掉最旧的
+ROOM_BUBBLE_LIFE = {"like": 3.2, "gift": 3.8, "enter": 4.2, "follow": 4.2,
+                    "share": 4.2, "chat": 4.8}
+_ROOM_CTRL = re.compile(r"[\x00-\x1f\x7f\u200b-\u200f\u202a-\u202e\ufeff]")
+_ROOM_KINDS = frozenset(ROOM_BUBBLE_LIFE)
+
+
+def room_clean(text: str, limit: int) -> str:
+    """观众内容进气泡前洗一遍：去控制字符/换行/双向控制符，压空格，限长。"""
+    t = _ROOM_CTRL.sub(" ", str(text or ""))
+    t = " ".join(t.split())
+    return t[:limit]
+
+
+def _heart_shape(d: ImageDraw.ImageDraw, cx: int, cy: int, r: int, fill) -> None:
+    d.ellipse([cx - r, cy - int(r * 0.95), cx, cy + int(r * 0.2)], fill=fill)
+    d.ellipse([cx, cy - int(r * 0.95), cx + r, cy + int(r * 0.2)], fill=fill)
+    d.polygon([(cx - int(r * 0.98), cy), (cx + int(r * 0.98), cy),
+               (cx, cy + int(r * 1.15))], fill=fill)
+
+
+def _draw_heart(d: ImageDraw.ImageDraw, cx: int, cy: int, r: int, fill) -> None:
+    """爱心：先画白色描边再叠实心，浅色气泡上也看得清（PIL 没有彩色 emoji）。"""
+    r = max(3, int(r))
+    _heart_shape(d, cx, cy, r + max(1, r // 4), (255, 255, 255, 235))
+    _heart_shape(d, cx, cy, r, fill)
+
+
+def _draw_rice_bowl(d: ImageDraw.ImageDraw, cx: int, cy: int, r: int) -> None:
+    """大米饭：白米饭 + 暖色碗 + 米粒 + 热气。礼物气泡用它。"""
+    r = max(5, int(r))
+    # 碗（下半圆）
+    d.pieslice([cx - r, cy - int(r * 0.5), cx + r, cy + int(r * 1.1)], 0, 180,
+               fill=(232, 126, 82, 255))
+    # 碗口
+    d.ellipse([cx - r, cy - int(r * 0.72), cx + r, cy - int(r * 0.2)],
+              fill=(255, 236, 208, 255), outline=(206, 104, 64, 255),
+              width=max(1, int(r * 0.12)))
+    # 米饭（比碗口浅，带描边，否则白气泡上看不见）
+    d.ellipse([cx - int(r * 0.78), cy - int(r * 1.0), cx + int(r * 0.78), cy - int(r * 0.3)],
+              fill=(255, 252, 243, 255), outline=(212, 203, 184, 255),
+              width=max(1, int(r * 0.1)))
+    for k in (-1, 0, 1):
+        dx = cx + int(k * r * 0.42)
+        d.ellipse([dx - int(r * 0.16), cy - int(r * 0.9),
+                   dx + int(r * 0.16), cy - int(r * 0.55)], fill=(246, 238, 219, 255))
+    # 热气
+    for k in (-1, 1):
+        x0 = cx + int(k * r * 0.3)
+        d.arc([x0 - int(r * 0.22), cy - int(r * 1.7), x0 + int(r * 0.22), cy - int(r * 1.05)],
+              200, 340, fill=(206, 198, 182, 255), width=max(1, int(r * 0.1)))
+
+
+def room_bubble_text(kind: str, username: str = "", text: str = "",
+                     count: int = 1, gift: str = "") -> str:
+    """把一条互动压成气泡里的字；点赞/礼物留空时用图标表达。"""
+    who = room_clean(username, 20)
+    body = room_clean(text, 60)
+    n = max(1, int(count or 1))
+    if kind == "enter":
+        return f"欢迎 {who}！" if who else "欢迎新观众！"
+    if kind == "follow":
+        return f"{who} 关注了" if who else "有人关注了"
+    if kind == "share":
+        return f"{who} 分享了直播间" if who else "有人分享了直播间"
+    if kind == "like":
+        return f"点赞 ×{n}" if n > 1 else "点赞"
+    if kind == "gift":
+        name = room_clean(gift or body, 18) or "礼物"
+        return f"×{n} {name}" if n > 1 else name
+    return body or "弹幕"
+
+
+def _draw_room_bubbles(canvas: Image.Image, pet, now: float, scale: float,
+                       x: int, y: int, sprite: Image.Image, W: int) -> None:
+    """在精灵侧面画互动气泡；没有就立刻返回。"""
+    bubbles = getattr(pet, "room_bubbles", None)
+    if not bubbles:
+        return
+    live = []
+    for b in list(bubbles):
+        if not isinstance(b, dict):
+            continue
+        kind = str(b.get("kind") or "chat")
+        life = ROOM_BUBBLE_LIFE.get(kind, 4.0)
+        age = now - float(b.get("at") or 0.0)
+        if 0.0 <= age <= life:
+            live.append((b, age, life))
+    if not live:
+        return
+    live = live[-ROOM_BUBBLE_MAX:]
+
+    font = get_font(max(10, int(round(12 * scale))))
+    pad_x, pad_y = int(10 * scale), int(7 * scale)
+    icon_w = int(24 * scale)
+    probe = ImageDraw.Draw(canvas)
+    right_room = W - (x + sprite.width) - int(6 * scale)
+    left_room = x - int(6 * scale)
+    side_right = right_room >= left_room
+    bw_max = max(int(110 * scale), min(int(240 * scale), max(right_room, left_room,
+                                                              int(90 * scale))))
+    top = y + int(sprite.height * 0.26)
+    for b, age, life in live:
+        kind = str(b.get("kind") or "chat")
+        label = room_clean(b.get("text"), 60)
+        alpha = min(1.0, age / 0.12) * min(1.0, max(0.0, (life - age) / 0.55))
+        if alpha <= 0.02:
+            continue
+        icon = kind in ("like", "gift")
+        max_tw = max(int(40 * scale), bw_max - 2 * pad_x - (icon_w if icon else 0))
+        lines = wrap_cjk(label, font, max_tw, probe) if label else []
+        line_h = int(font.size * 1.4) if hasattr(font, "size") else int(17 * scale)
+        tw = max([int(probe.textlength(line, font=font)) for line in lines] or [0])
+        bw = min(bw_max, max(int(52 * scale), tw + 2 * pad_x + (icon_w if icon else 0)))
+        bh = max(int(26 * scale), len(lines) * line_h + 2 * pad_y)
+        if side_right:
+            bx = x + sprite.width + int(5 * scale)
+        else:
+            bx = x - bw - int(5 * scale)
+        bx = max(int(4 * scale), min(bx, W - bw - int(4 * scale)))
+        by = top + int((1.0 - alpha) * 5 * scale)
+        color = {"like": (240, 96, 122), "gift": (236, 148, 60),
+                 "enter": (96, 178, 128), "chat": (96, 150, 236)}.get(kind, (150, 150, 160))
+        d = ImageDraw.Draw(canvas)
+        d.rounded_rectangle([bx + 1, by + 2, bx + bw + 1, by + bh + 2],
+                            radius=int(10 * scale), fill=(0, 0, 0, int(44 * alpha)))
+        d.rounded_rectangle([bx, by, bx + bw, by + bh], radius=int(10 * scale),
+                            fill=(255, 253, 248, int(240 * alpha)),
+                            outline=(*color, int(215 * alpha)),
+                            width=max(1, int(1.2 * scale)))
+        if kind == "like":
+            _draw_heart(d, bx + pad_x + icon_w // 2, by + bh // 2,
+                        int(8 * scale), (*color, int(255 * alpha)))
+        elif kind == "gift":
+            _draw_rice_bowl(d, bx + pad_x + icon_w // 2, by + bh // 2, int(9 * scale))
+        tx = bx + pad_x + (icon_w + int(3 * scale) if icon else 0)
+        ty = by + pad_y
+        for line in lines:
+            d.text((tx, ty), line, font=font, fill=(44, 46, 58, int(255 * alpha)))
+            ty += line_h
+        top = by + bh + int(5 * scale)
+
+
 def render_pet(text: str, mode: str, scale: float, now: float, pet) -> Image.Image:
     """桌宠一帧：精灵 + 气泡。
 
@@ -909,6 +1056,8 @@ def render_pet(text: str, mode: str, scale: float, now: float, pet) -> Image.Ima
             d.line([(x0, y0), (x0 - dirn * ln, y0)],
                    fill=(255, 255, 255, int(80 * energy)), width=max(1, int(2 * scale)))
     canvas.alpha_composite(sprite, (x, y))
+    # 观众互动气泡画在侧面（和头顶的说话气泡分开）
+    _draw_room_bubbles(canvas, pet, now, scale, x, y, sprite, W)
 
     # ---- 气泡
     if mode == "thinking":
@@ -1188,6 +1337,10 @@ class StreamerWindow:
                                on_start=self.start_talking)
         self.text = ""
         self.status = {}
+        # 直播间互动（点赞/弹幕/进场/礼物）的侧边小气泡；由 GiftBridge 写入，
+        # render_pet 每帧画在精灵侧面。deque 有上限，刷屏也不会堆内存。
+        self.room_bubbles: deque = deque(maxlen=8)
+        self._room_lock = threading.Lock()
         self.presence = CasterState()      # 说话/思考/空闲三态（真实信号驱动）
         self._think_seq = 0
         self._audio_seq = -1               # 真实播放事件的序号（旧帧不许覆盖新状态）
@@ -1857,6 +2010,49 @@ class StreamerWindow:
             presence.on_line(text)
         self.speaker.speak(text)   # 和页面一样：说的就是气泡里这一句
 
+    def room_event(self, kind: str, username: str = "", text: str = "",
+                   count: int = 1, gift: str = "") -> None:
+        """直播间互动 → 桌宠侧面的小气泡（点赞/弹幕/进场/礼物）。
+
+        由 GiftBridge 的监听线程调用；只往 deque 里塞一条并置 dirty，
+        下一帧主循环自己会画。点赞/同款礼物 2 秒内合并成一条 `×N`，
+        免得「连点 30 个赞」刷出 30 个气泡。
+        """
+        raw_kind = str(kind or "").strip().lower()
+        kind = "gift" if raw_kind in ("super_chat", "guard") else raw_kind
+        if kind not in _ROOM_KINDS:
+            return
+        now = time.perf_counter()
+        label = room_bubble_text(kind, username, text, count, gift)
+        if raw_kind == "super_chat":
+            # 醒目留言要显示观众写的话，不是礼物名
+            label = room_clean(text, 40) or "醒目留言"
+        if not label:
+            return
+        # 合并用的稳定键：同一个人的同一种礼物/连续点赞才累加，
+        # 不能拿显示文案比（×1 和 ×2 文案不同，比对会每下都新开一个气泡）。
+        key = f"{kind}|{room_clean(username, 20)}|{room_clean(gift or text, 40)}"
+        with self._room_lock:
+            if kind in ("like", "gift"):
+                for b in reversed(self.room_bubbles):
+                    if b.get("kind") != kind:
+                        continue
+                    if now - float(b.get("at") or 0.0) > 2.2:
+                        break
+                    if b.get("key") != key:
+                        break
+                    b["count"] = int(b.get("count") or 1) + int(count or 1)
+                    b["at"] = now
+                    b["text"] = (label if raw_kind == "super_chat"
+                                 else room_bubble_text(kind, username, text,
+                                                       b["count"], gift))
+                    self.dirty = True
+                    return
+            self.room_bubbles.append({"kind": kind, "text": label, "at": now,
+                                      "key": key,
+                                      "count": max(1, int(count or 1))})
+            self.dirty = True
+
     def set_thinking(self, on: bool, seq: int | None = None, note: str = "") -> None:
         """overlay `/thinking` 的落点：seq 迟到的事件由 CasterState 自己丢掉。"""
         before = self.presence.state
@@ -2413,6 +2609,15 @@ def poll_loop(win: StreamerWindow, port: int, stop: threading.Event, demo: bool)
     if demo:
         win.push("这一手先算账：它 21，我最多挡 15。", "差 6，嗨呀。",
                  {"character": "演示角色", "ascension": 10, "floor": 8, "hp": 23, "max_hp": 80, "gold": 20})
+        # 侧边互动气泡也放一遍：跑 `python main.py --demo` 就能预览四种互动。
+        for args in (("like", "", "", 5, ""),
+                     ("enter", "小明", "", 1, ""),
+                     ("chat", "", "这手打得可以啊，鱼哥", 1, ""),
+                     ("gift", "阿花", "", 2, "小心心")):
+            try:
+                win.room_event(*args)
+            except Exception:
+                pass
     while not stop.is_set():
         try:
             d = fetch_state(port, last_id)
@@ -2569,6 +2774,16 @@ class GiftBridge:
         # 进入/点赞这类高频事件只进「最近 120 条」，不刷控制台日志。
         if getattr(event, "kind", "") in ("chat", "gift", "super_chat", "guard"):
             print(f"[bilibili] {event.line()[:80]}", flush=True)
+        # 每条互动都往桌宠侧面推一个气泡：点赞=爱心、弹幕=内容、进场=欢迎、
+        # 礼物=大米饭。频控和合并都在 room_event 里做。
+        try:
+            self.win.room_event(str(getattr(event, "kind", "") or ""),
+                                str(getattr(event, "username", "") or ""),
+                                str(getattr(event, "text", "") or ""),
+                                int(getattr(event, "count", 0) or 0),
+                                str(getattr(event, "gift_name", "") or ""))
+        except Exception as exc:  # noqa: BLE001
+            print(f"[bilibili] 互动气泡失败：{type(exc).__name__}: {exc}", flush=True)
 
     def _on_gift(self, event) -> None:
         try:

@@ -3,7 +3,7 @@
 > 一个可换游戏、可换性格、可换声音的 **AI 直播工具**。
 > 第一视角是《杀戮尖塔 2》铁甲战士 A10——但它只是「游戏列表」里的第一个包。
 
-`v2.2` · Python 3.10+ · Windows（桌宠 / OBS） · 中文
+`v2.3` · Python 3.10+ · Windows（桌宠 / OBS） · 中文
 
 ---
 
@@ -37,6 +37,8 @@ v1 把四样东西焊在一个「打杀戮尖塔」的工程里；v2 把它们�
 - **Agent 流程**：LangGraph 把一回合拆成观察 → 规划 → 验算 → 执行 → 反思，节点耗时/token/重试写本机轨迹，控制台「Agent 流程」可看。
 - **录像回放**：自动玩开始即开录（OBS 没开会自动拉起），停止时收成 `recordings/<游戏>/run-NNNN/run.mp4`；同目录 `events.jsonl` / `chapters.md` / `timeline.json` 记录画面、楼层、战斗、台词和对应时间段，方便出混剪；`meta.json` 记角色/进阶/结果。
 - **B 站礼物**：控制台「基础配置」填直播间房间号并勾选监听，桌宠会连 B 站直播 WebSocket，收到 `SEND_GIFT` / 醒目留言 / 上舰就让鱼绕两圈并气泡道谢；匿名被风控时再填可选 Cookie（只存本机，不回显）。
+- **直播间互动气泡**：桌宠侧面会弹出观众互动——点赞出爱心、弹幕显示内容、进直播间「欢迎 名字」、送礼物出大米饭表情；
+  点赞/同款礼物 2 秒内合并成 `×N`，最多同时 4 个，观众内容会去控制字符并限长（不刷屏、不进 OBS 网页源）。
 - **离线演示**：`python main.py demo` 不需要游戏，跑通「游戏 → 性格 → 语音 → UI」。
 
 ![直播姬控制台](docs/studio.png)
@@ -548,7 +550,7 @@ python tools/release_check.py      # 发布门禁：版本 + 单测 + 文档 + �
 - CI 在 `.github/workflows/ci.yml`，跑 `python tools/release_check.py --ci`；
 - `tools/` 的兼容 shim 还在观察期，映射和退役条件见 [tools/README.md](tools/README.md)。
 
-当前版本 **2.2.2**：新增第二游戏 `toy-duel`、跨游戏一致性门禁和发布门禁；
+当前版本 **2.3.0**：新增第二游戏 `toy-duel`、跨游戏一致性门禁和发布门禁；
 STS2 实机验收记录是 `recordings/slay-the-spire-2/run-0108/`。
 
 ---
