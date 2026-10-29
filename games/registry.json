@@ -22,6 +22,16 @@
       "notes": "完全离线的可控小游戏，用来验证 observe/control/autoplay 的非 STS2 全链路；不启动 Steam，不依赖 OBS。"
     },
     {
+      "id": "bilibili-hot-commentary",
+      "name": "B站热门视频云观影",
+      "platform": "B站 · 热门视频（只读元数据 + 弹幕时间轴）",
+      "status": "mode",
+      "pack": "bilibili-hot-commentary",
+      "adapter": "adapter.py:BiliHotAdapter",
+      "tags": ["云观影", "B站", "解说", "非游戏"],
+      "notes": "按鱼人设搜索/筛选视频，只读取标题/简介/UP 主/热评/弹幕时间轴；选中后用 Chrome 打开视频页，但不读取页面、不下载、不同步播放。"
+    },
+    {
       "id": "demo",
       "name": "演示信号源",
       "platform": "内置",

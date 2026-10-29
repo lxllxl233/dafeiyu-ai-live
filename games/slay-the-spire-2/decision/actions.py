@@ -44,6 +44,25 @@ def _run(state: dict) -> dict:
 
 
 # ---------------------------------------------------------------- 菜单
+def _planned_next(plan: dict, graph: list[dict]):
+    """路线计划里「当前节点的下一格」坐标；当前节点不在计划里则取计划起点。"""
+    path = [p for p in (plan.get("path") or [])
+            if isinstance(p, list) and len(p) >= 2]
+    if not path:
+        return None
+    cur = next((n for n in graph if n.get("is_current")), None)
+    idx = None
+    if cur is not None:
+        idx = next((i for i, p in enumerate(path)
+                    if _int(p[0]) == _int(cur.get("row"))
+                    and _int(p[1]) == _int(cur.get("col"))), None)
+    if idx is None:
+        return (path[0][0], path[0][1])
+    if idx + 1 >= len(path):
+        return None
+    return (path[idx + 1][0], path[idx + 1][1])
+
+
 def _map_menu(state: dict) -> list[dict]:
     acts = _acts(state)
     if "choose_map_node" not in acts:
@@ -51,27 +70,72 @@ def _map_menu(state: dict) -> list[dict]:
     mp = state.get("map") or {}
     graph = [n for n in (mp.get("nodes") or []) if isinstance(n, dict)]
     by_coord = {(n.get("row"), n.get("col")): n for n in graph}
+    plan = state.get("route_plan") if isinstance(state.get("route_plan"), dict) else {}
+    nxt = _planned_next(plan, graph) if plan else None
+    policy = plan.get("policy") or {}
+    banned_elite = policy.get("elite_ok") is False
     out = []
     # 模组 choose_map_node 的 option_index 就是 available_nodes 的下标；照抄它，
     # 别依赖「nodes 过滤 is_available 后的顺序」碰巧一致。
     avail = [n for n in (mp.get("available_nodes") or []) if isinstance(n, dict)]
+    plan_next_avail = (nxt is not None and bool(avail)
+                       and any((n.get("row"), n.get("col")) == nxt for n in avail))
     if avail:
         for pos, n in enumerate(avail):
             row, col = n.get("row"), n.get("col")
             g = by_coord.get((row, col)) or {}
-            nxt = ",".join(str((c or {}).get("node_type") or "?")
-                           for c in (g.get("children") or []) if isinstance(c, dict))
-            out.append({"a": "choose_map_node", "i": _int(n.get("index"), pos),
-                        "n": f"{n.get('node_type') or '?'} ({row},{col})",
-                        "fx": f"后续：{nxt}" if nxt else ""})
-        return out
+            nxt_types = ",".join(str((c or {}).get("node_type") or "?")
+                                 for c in (g.get("children") or []) if isinstance(c, dict))
+            typ = str(n.get("node_type") or "?")
+            item = {"a": "choose_map_node", "i": _int(n.get("index"), pos),
+                    "n": f"{typ} ({row},{col})", "t": typ,
+                    "fx": f"后续：{nxt_types}" if nxt_types else ""}
+            if nxt and (row, col) == (nxt[0], nxt[1]):
+                item["plan"] = True
+                item["fx"] = "计划下一格" + (f"｜{item['fx']}" if item["fx"] else "")
+            elif plan_next_avail:
+                item["off"] = True
+                item["why_off"] = (f"不在开局计划里（计划下一格 {nxt}）；"
+                                   "要改道在 plan 里写 allow_off_route=1")
+            if banned_elite and typ == "Elite":
+                item["ban"] = True
+                item["why"] = (f"A10 不碰精英：{policy.get('why') or 'Act1/卡组未成型'}。"
+                               "按 ctx.route.next 走；要硬闯在 plan 里写 allow_off_route=1")
+            out.append(item)
+        return _forced_elite_fix(out)
     nodes = [n for n in graph if n.get("is_available")]
+    plan_next_avail = (nxt is not None and bool(nodes)
+                       and any((n.get("row"), n.get("col")) == nxt for n in nodes))
     for i, n in enumerate(nodes):
-        nxt = ",".join(str((c or {}).get("node_type") or "?")
-                       for c in (n.get("children") or []) if isinstance(c, dict))
-        out.append({"a": "choose_map_node", "i": i,
-                    "n": f"{n.get('node_type') or '?'} ({n.get('row')},{n.get('col')})",
-                    "fx": f"后续：{nxt}" if nxt else ""})
+        nxt_types = ",".join(str((c or {}).get("node_type") or "?")
+                             for c in (n.get("children") or []) if isinstance(c, dict))
+        typ = str(n.get("node_type") or "?")
+        item = {"a": "choose_map_node", "i": i,
+                "n": f"{typ} ({n.get('row')},{n.get('col')})", "t": typ,
+                "fx": f"后续：{nxt_types}" if nxt_types else ""}
+        if nxt and (n.get("row"), n.get("col")) == (nxt[0], nxt[1]):
+            item["plan"] = True
+            item["fx"] = "计划下一格" + (f"｜{item['fx']}" if item["fx"] else "")
+        elif plan_next_avail:
+            item["off"] = True
+            item["why_off"] = (f"不在开局计划里（计划下一格 {nxt}）；"
+                               "要改道在 plan 里写 allow_off_route=1")
+        if banned_elite and typ == "Elite":
+            item["ban"] = True
+            item["why"] = (f"A10 不碰精英：{policy.get('why') or 'Act1/卡组未成型'}。"
+                           "按 ctx.route.next 走；要硬闯在 plan 里写 allow_off_route=1")
+        out.append(item)
+    return _forced_elite_fix(out)
+
+
+def _forced_elite_fix(out: list[dict]) -> list[dict]:
+    """可选点全是精英时解除禁令：地图单线强迫，总得走一格（只在日志里记明）。"""
+    if out and all(e.get("ban") for e in out):
+        for e in out:
+            e.pop("ban", None)
+            e.pop("why", None)
+            e["fx"] = (e.get("fx") or "") + "（可选点全是精英：被迫）"
+            e["forced"] = True
     return out
 
 
@@ -383,6 +447,16 @@ def _chest_guard(state: dict, entry: dict) -> str:
     return ""
 
 
+def _node_guard(plan: dict, entry: dict) -> str:
+    """路线计划禁止的节点（A10 Act1 精英 / 偏航）不执行；模型可写 allow_off_route 硬闯。"""
+    allow = plan.get("allow_off_route") or plan.get("allow_elite")
+    if entry.get("ban") is True and not allow:
+        return str(entry.get("why") or "计划路线不允许这个节点")
+    if entry.get("off") is True and not allow:
+        return str(entry.get("why_off") or "不在计划路线上；要改道写 allow_off_route=1")
+    return ""
+
+
 def check(plan: dict, state: dict) -> tuple[dict | None, str]:
     """把模型的 plan 对到菜单项；返回 (entry, err)。err 非空表示不可执行。"""
     if not isinstance(plan, dict):
@@ -397,7 +471,8 @@ def check(plan: dict, state: dict) -> tuple[dict | None, str]:
     if raw is None:
         for entry in menu:
             if entry["a"] == act and entry["i"] is None:
-                err = _chest_guard(state, entry) or _reward_guard(state, entry)
+                err = (_chest_guard(state, entry) or _reward_guard(state, entry)
+                       or _node_guard(plan, entry))
                 return (None, err) if err else (entry, "")
         return None, f"{act} 不能这么点；可选：{_menu_names(menu)}"
     try:
@@ -406,7 +481,8 @@ def check(plan: dict, state: dict) -> tuple[dict | None, str]:
         return None, "i 必须是整数下标"
     for entry in menu:
         if entry["a"] == act and entry["i"] == idx:
-            err = _chest_guard(state, entry) or _reward_guard(state, entry)
+            err = (_chest_guard(state, entry) or _reward_guard(state, entry)
+                   or _node_guard(plan, entry))
             return (None, err) if err else (entry, "")
     return None, f"{act}[{idx}] 不在菜单里；可选：{_menu_names(menu)}"
 

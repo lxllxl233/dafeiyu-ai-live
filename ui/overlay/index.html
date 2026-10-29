@@ -430,7 +430,7 @@
   }
 
   // 前端版本：每次改这个文件就 +1，页面加载时上报一次，日志里能确认「播的到底是新 JS 还是缓存」。
-  const UI_VER = '2026-10-27b';
+  const UI_VER = '2026-10-30-speech';
   try { mark('hi', null, { ver: UI_VER }); } catch (e) {}
 
   function ageMsOf(c) {
@@ -496,9 +496,7 @@
   async function sayOne(c, silent, tok) {
     const thought = clip(cleanSpeech(c.thought), MAX_THOUGHT);
     const memeText = clip(cleanSpeech(c.meme), MAX_MEME);
-    if (!thought && !memeText) return;
-
-    // 台词由 sts2.py 先合成好再推过来（/tts 已预热），字幕和配音拿到的是同一句
+    // 云观影这类插件只给 speech、不给 thought/meme；先取 speech，不能因为前两项为空就丢掉。
     const sentence = (c.speech && String(c.speech).trim()) || composeSentence(thought, memeText);
     if (!sentence) return;
 

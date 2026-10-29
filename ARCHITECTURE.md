@@ -229,6 +229,9 @@ recordings/<game-id>/run-NNNN/
 - `start` 先 `SetRecordDirectory` 指到该局，再 `StartRecord`；老 OBS 不支持就退回默认目录。
 - `stop` 读 `StopRecord.outputPath`，`os.replace` 成 `run.mp4`（同盘瞬间），再写 meta。
 - 目标 `run.mp4` 已存在默认报错，不静默覆盖；多出的段进 `_extra/`。
+- 桌宠右键「OBS 录像」走 `src/dafeiyu/recording/manual.py`：先探 `GetRecordStatus`，没录就开、
+  在录就停（一个入口两用）；这一局是 `replay` 开的那就顺手收尾成 `run.mp4`，否则只停 OBS，
+  文件留在 OBS 自己的输出目录。连不上 OBS 时只返回一句提示，异常不上抛到窗口线程。
 - `recordings/INDEX.md` 由 `scan()` 生成；视频被 `.gitignore` 排除，只提交说明和索引。
 
 ## 6.5 Agent 层（LangGraph）

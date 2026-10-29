@@ -424,6 +424,27 @@ def boss_gate(state: dict, card_db=None, monster_db=None, encounters_db=None,
     }
 
 
+def elite_policy(act_id, deck: dict, potions: int, hp_ratio: float) -> tuple[bool, str]:
+    """A10 路线里的精英闸：Act1 一律不碰；Act2+ 要卡组成型才允许「考虑」。
+
+    A10 的精英（尤其 Act1）会直接打掉半条命和全部药水，开局路线必须绕开。
+    卡组闸沿用战斗侧的精英四检：防御≥6 / AOE≥1 / 药水≥1；再叠血线 60%。
+    返回 (allowed, why)，why 会写进路线计划和 ctx，模型/观众都能看到原因。
+    """
+    act = _int(act_id, 0)
+    if act < 1:
+        return False, "Act1 不碰精英（A10 开局硬规则）"
+    d = deck or {}
+    defense = _int(d.get("defense"), 0)
+    aoe = _int(d.get("aoe"), 0)
+    pots = _int(potions, 0)
+    if defense < 6 or aoe < 1 or pots < 1:
+        return False, f"卡组闸未过：防御{defense}/AOE{aoe}/药水{pots}"
+    if hp_ratio < 0.60:
+        return False, f"血 {hp_ratio:.0%} < 60%"
+    return True, "Act2+ 卡组闸通过；精英只作备选，先看精英后到 Boss 的补给"
+
+
 def _resource_score(path: list[dict]) -> float:
     c = Counter(_ntype(n) for n in path)
     sc = 4.0 * c["restsite"] + 2.0 * c["shop"] + 2.0 * c["treasure"]

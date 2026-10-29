@@ -378,12 +378,24 @@
           <div class="hint" style="margin-bottom:8px;color:var(--muted);font-size:11px">点一个游戏 → 编辑它的策略文档、查看并完善资料笔记。</div>
           <div id="gameRows"></div>
         </div>
+        <div class="card" id="biliPlaylistCard" style="grid-column:1/-1;display:none">
+          <h2>B站播放列表 <span id="biliPlaylistState">—</span></h2>
+          <div class="hint" id="biliPlaylistHint" style="margin-bottom:8px;color:var(--muted);font-size:11px">
+            选一个候选 → 播放；新视频会先关掉旧标签页再开新的，同一个视频则直接刷新当前标签页。
+          </div>
+          <div class="row" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
+            <button class="btn sm ghost" id="biliRefresh">刷新当前标签页</button>
+            <button class="btn sm ghost" id="biliClose">关闭当前标签页</button>
+            <span class="hint" id="biliBrowserState" style="color:var(--muted);font-size:11px">—</span>
+          </div>
+          <div id="biliPlaylist"></div>
+        </div>
         <div class="card" id="gameDetailCard" style="grid-column:1/-1;display:none">
           <h2><span id="gameDetailTitle">游戏详情</span> <span id="gameDetailMeta">—</span></h2>
           <div class="hint" id="gameDetailDesc" style="line-height:1.8;color:var(--muted)">—</div>
           <div class="editor">
             <select id="gEditFile" onchange="loadGameFile()"></select>
-            <textarea id="gEditText" spellcheck="false" placeholder="选择一篇策略文档开始编辑…"></textarea>
+            <textarea id="gEditText" spellcheck="false" placeholder="选择一篇策略/人设文档开始编辑…"></textarea>
             <div class="meta" id="gEditHint">不限字数，保存即写盘；页面会立刻刷新。</div>
             <div class="row" style="margin-top:0">
               <button class="btn" type="button" onclick="saveGameFile()">保存</button>
@@ -811,7 +823,7 @@ async function openGame(gid){
     $("#gameDetailTitle").textContent = info.name || GAME_SEL;
     $("#gameDetailMeta").textContent = `${m.version || info.version || ""} · ${m.platform || info.platform || ""}`;
     $("#gameDetailDesc").textContent = m.notes || m.description || info.description || "";
-    const groups = [["strategy", "决策手册"], ["notes", "资料笔记"], ["caster", "主播稿"]];
+    const groups = [["strategy", "决策手册"], ["caster", "主播稿 / 人设"], ["notes", "资料笔记"]];
     const sel = $("#gEditFile");
     sel.innerHTML = groups.map(([g, label]) => {
       const items = (d.files || []).filter(f => (f.group || "strategy") === g);
@@ -939,6 +951,73 @@ function renderGames(){
   }).join("") || `<div class="empty">没有注册游戏。</div>`;
 }
 
+function fmtBiliDuration(value){
+  const s = Math.max(0, Number(value || 0));
+  if(!s) return "—";
+  return `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
+}
+
+function biliStateLabel(state, running){
+  const labels = {
+    idle: "空闲", selecting: "选片中", playing: "播放中", prefetch: "预取中",
+    between: "准备下一条", stopped: "已停止", missing: "还没有记录",
+    not_b: "不是 B 站模式", error: "读取失败",
+  };
+  const base = labels[state] || state || "—";
+  return running ? base : `${base} · 未启动`;
+}
+
+function renderBiliPlaylist(){
+  const card = $("#biliPlaylistCard");
+  if(!card) return;
+  const isB = String(DATA?.config?.game || "") === "bilibili-hot-commentary";
+  card.style.display = isB ? "" : "none";
+  if(!isB) return;
+
+  const p = DATA?.bilibili_playlist || {};
+  const items = Array.isArray(p.items) ? p.items : [];
+  const browser = p.browser || {};
+  const running = !!DATA?.play?.running;
+  $("#biliPlaylistState").textContent = biliStateLabel(p.state, running);
+  const opened = !!browser.opened;
+  $("#biliRefresh").disabled = !opened;
+  $("#biliClose").disabled = !opened;
+  $("#biliBrowserState").textContent = opened
+    ? `标签页：${browser.title || browser.url || "已打开"}`
+    : (browser.url ? "标签页已关闭（可点播放重开）" : "还没有 B 站标签页");
+  $("#biliPlaylistHint").textContent = !running
+    ? "当前没有在跑 B站云观影。先在「B站云观影」启动自动玩，播放列表才会实时更新。"
+    : (p.state === "stopped"
+      ? "自动玩已停止；播放列表保留最后一版，重新启动后继续。"
+      : "选一个候选 → 播放；新视频会先关旧标签页再开新的，同一个视频则刷新当前标签页。");
+  if(p.error) $("#biliPlaylistHint").textContent = `播放列表读取失败：${p.error}`;
+
+  if(!items.length){
+    $("#biliPlaylist").innerHTML = `<div class="empty">还没有播放列表。B站云观影选到候选后会显示在这里。</div>`;
+    return;
+  }
+  $("#biliPlaylist").innerHTML = items.map((item, i) => {
+    const bvid = String(item.bvid || "");
+    const current = bvid && bvid === String(p.current_bvid || "");
+    const title = item.title || bvid || "未命名视频";
+    const disabled = running ? "" : "disabled";
+    return `<div style="display:flex;gap:10px;align-items:center;padding:8px 0;border-top:1px solid var(--line)">
+      <div style="color:var(--muted);font-size:11px;width:22px;text-align:right">${i + 1}</div>
+      <div style="flex:1;min-width:0">
+        <div style="font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
+          ${esc(title)} ${current ? `<span class="badge gold">当前</span>` : ""}
+        </div>
+        <div style="color:var(--muted);font-size:10.5px;margin-top:2px">
+          ${esc(item.owner || "—")} · ${fmtBiliDuration(item.duration_s)} · ${esc(bvid)}
+        </div>
+      </div>
+      <button class="btn sm ${current ? "ghost" : ""}" data-bili-play="${esc(bvid)}"
+        ${disabled}>${current ? "刷新" : "播放"}</button>
+      ${current ? `<button class="btn sm ghost" data-bili-close ${opened ? "" : "disabled"}>关闭</button>` : ""}
+    </div>`;
+  }).join("");
+}
+
 function renderRight(){
   const ov = DATA?.overlay || {};
   const st = DATA?.studio || {};
@@ -1026,7 +1105,9 @@ function renderTelemetry(){
   $("#tokHint").textContent = u.calls ? `本地估算 · ${u.calls} 轮，不是 API 账单` : "按台词字数估算，不是 API 账单";
 
   const th = ov.thinking || {};
-  $("#thinkingNow").textContent = th.on ? (th.note ? `思考ing · ${th.note}` : "思考ing") : "吃饭ing";
+  const play = DATA?.play || {};
+  const idleText = play.running && play.idle_text ? play.idle_text : "吃饭ing";
+  $("#thinkingNow").textContent = th.on ? (th.note ? `思考ing · ${th.note}` : "思考ing") : idleText;
 
   const decisions = (ov.decisions || []).slice().reverse();
   $("#decisionList").innerHTML = decisions.length ? decisions.slice(0, 20).map(d => {
@@ -1442,7 +1523,7 @@ function renderSamples(){
 }
 
 function render(){
-  renderPills(); renderPersona(); renderVoice(); renderGames(); renderRight(); renderFeed(); renderSamples();
+  renderPills(); renderPersona(); renderVoice(); renderGames(); renderBiliPlaylist(); renderRight(); renderFeed(); renderSamples();
   renderConfig(); renderTelemetry(); renderAgent(); renderPlay(); renderRoom(); renderTokens(); renderNav();
   $("#rootHint").textContent = DATA?.root ? `仓库：${DATA.root}` : "";
 }
@@ -1532,6 +1613,24 @@ async function preview(voice){
   }catch(e){ toast("试听失败：" + e.message, true); }
 }
 
+async function biliControl(action, bvid){
+  if(!DATA?.play?.running){
+    toast("B站云观影还没启动，先在上面启动自动玩", true);
+    return;
+  }
+  const labels = {play:"播放", close:"关闭标签页", refresh:"刷新标签页"};
+  try{
+    const r = await fetch("/api/bilibili/control", {
+      method:"POST", headers:{"content-type":"application/json"},
+      body: JSON.stringify({action, bvid: bvid || ""}),
+    });
+    const res = await r.json();
+    if(!res.ok) throw new Error(res.error || "HTTP " + r.status);
+    toast((labels[action] || action) + "命令已发送");
+    setTimeout(refresh, 900);
+  }catch(e){ toast("操作失败：" + e.message, true); }
+}
+
 const VIEW_ALIASES = {settings:"basic", basic:"basic", games:"games", persona:"persona",
   room:"room", interaction:"interaction", agent:"agent", telemetry:"telemetry"};
 function setView(name, updateHash){
@@ -1570,7 +1669,11 @@ document.addEventListener("click", (ev) => {
     return;
   }
   const pv = ev.target.closest("[data-voice]");
-  if(pv){ preview(pv.dataset.voice); }
+  if(pv){ preview(pv.dataset.voice); return; }
+  const bp = ev.target.closest("[data-bili-play]");
+  if(bp){ biliControl("play", bp.dataset.biliPlay); return; }
+  const bc = ev.target.closest("[data-bili-close]");
+  if(bc){ biliControl("close"); }
 });
 
 $("#send").addEventListener("click", () => send(false));
@@ -1578,6 +1681,8 @@ $("#lintOnly").addEventListener("click", () => send(true));
 $("#cfgSave").addEventListener("click", saveConfig);
 $("#gameSave").addEventListener("click", saveGame);
 $("#gameLaunch").addEventListener("click", launchGame);
+$("#biliRefresh").addEventListener("click", () => biliControl("refresh"));
+$("#biliClose").addEventListener("click", () => biliControl("close"));
 $("#agentRun").addEventListener("click", runAgent);
 $("#playStart").addEventListener("click", startPlay);
 $("#playStop").addEventListener("click", stopPlay);

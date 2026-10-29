@@ -838,14 +838,59 @@ def _choice(state: dict) -> dict:
     sc = state.get("screen")
     if sc == "MAP":
         m = state.get("map") or {}
+        all_nodes = [x for x in (m.get("nodes") or []) if isinstance(x, dict)]
+        plan = state.get("route_plan") if isinstance(state.get("route_plan"), dict) else {}
+        path = [p for p in (plan.get("path") or [])
+                if isinstance(p, list) and len(p) >= 2]
+        nxt = None
+        if path:
+            cur = next((n for n in all_nodes if n.get("is_current")), None)
+            idx = None
+            if cur is not None:
+                idx = next((i for i, p in enumerate(path)
+                            if _int(p[0]) == _int(cur.get("row"))
+                            and _int(p[1]) == _int(cur.get("col"))), None)
+            if idx is not None and idx + 1 < len(path):
+                nxt = path[idx + 1]
+            elif idx is None:
+                nxt = path[0]
+        policy = plan.get("policy") or {}
+        avail_nodes = [x for x in all_nodes if x.get("is_available")]
+        all_elite = bool(avail_nodes) and all(
+            str(n.get("node_type")) == "Elite" for n in avail_nodes)
+        banned_elite = policy.get("elite_ok") is False and not all_elite
         opts = []
-        for i, n in enumerate([x for x in (m.get("nodes") or [])
-                               if isinstance(x, dict) and x.get("is_available")]):
-            opts.append({"i": i, "t": str(n.get("node_type") or "?"),
-                         "r": _int(n.get("row")), "c": _int(n.get("col")),
-                         "to": [str((x or {}).get("node_type") or "?")
-                                for x in (n.get("children") or []) if isinstance(x, dict)]})
-        return {"kind": "map", "opts": opts}
+        for i, n in enumerate(avail_nodes):
+            o = {"i": i, "t": str(n.get("node_type") or "?"),
+                 "r": _int(n.get("row")), "c": _int(n.get("col")),
+                 "to": [str((x or {}).get("node_type") or "?")
+                        for x in (n.get("children") or []) if isinstance(x, dict)]}
+            if nxt is not None and _int(n.get("row")) == _int(nxt[0]) \
+                    and _int(n.get("col")) == _int(nxt[1]):
+                o["plan"] = True
+            if banned_elite and str(n.get("node_type")) == "Elite":
+                o["ban"] = True
+            opts.append(o)
+        out = {"kind": "map", "opts": opts}
+        if path:
+            kinds = [str(p[2]) for p in path]
+            out["route"] = {
+                "seq": str(plan.get("seq") or ""),
+                "next": (f"{nxt[2]} ({nxt[0]},{nxt[1]})" if nxt is not None else ""),
+                "elite": kinds.count("Elite"),
+                "rest": kinds.count("RestSite"),
+                "shop": kinds.count("Shop"),
+                "elite_ok": bool(policy.get("elite_ok", False)),
+                "forced": bool(policy.get("forced") or all_elite),
+                "why": str(policy.get("why") or ""),
+            }
+            if out["route"]["elite"]:
+                last = max(i for i, k in enumerate(kinds) if k == "Elite")
+                after = kinds[last + 1:]
+                out["route"]["tail"] = (
+                    f"精英后到 Boss：营火{after.count('RestSite')}"
+                    f"/商店{after.count('Shop')}")
+        return out
     if sc == "EVENT":
         ev = state.get("event") or {}
         opts = []

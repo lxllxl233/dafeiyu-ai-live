@@ -479,6 +479,24 @@ def _route_current(plan: dict, state: dict) -> bool:
     return True
 
 
+def _route_next_coord(plan: dict, nodes: list[dict]):
+    """计划里「下一格」坐标；当前节点不在计划里则取计划起点（用于判断是否偏航）。"""
+    path = [p for p in (plan.get("path") or []) if isinstance(p, list) and len(p) >= 2]
+    if not path:
+        return None
+    cur = next((n for n in nodes if n.get("is_current")), None)
+    idx = None
+    if cur is not None:
+        idx = next((i for i, p in enumerate(path)
+                    if int(p[0]) == int(cur.get("row", -1))
+                    and int(p[1]) == int(cur.get("col", -1))), None)
+    if idx is None:
+        return (int(path[0][0]), int(path[0][1]))
+    if idx + 1 >= len(path):
+        return None
+    return (int(path[idx + 1][0]), int(path[idx + 1][1]))
+
+
 def _route_target(plan: dict, nodes: list[dict], avail: list[dict]):
     """取计划里下一格；计划起点是「下一次可选节点」，当前节点在路径里时取下一格。"""
     path = [p for p in (plan.get("path") or []) if isinstance(p, list) and len(p) >= 2]
@@ -515,6 +533,46 @@ def _publish_route(sts2, state: dict, output: str = "", reason: str = "") -> dic
     return plan
 
 
+def _route_policy_ok(plan: dict) -> bool:
+    """计划的精英政策和当前规则一致吗？旧代码写下的、带精英的 Act1 计划一律重算。"""
+    if not isinstance(plan, dict):
+        return False
+    pol = plan.get("policy") or {}
+    if not pol:
+        return False
+    if pol.get("elite_ok") is not False:
+        return True
+    path = [p for p in (plan.get("path") or []) if isinstance(p, list) and len(p) >= 3]
+    if not any(str(p[2]) == "Elite" for p in path):
+        return True
+    return pol.get("forced") is True
+
+
+def _ensure_route_plan(sts2, state: dict) -> dict:
+    """MAP 上确保有一份**本局本幕**的路线计划；stale 就重规划并 commit。
+
+    LLM 模式以前直接把 MAP 丢给模型、从不刷新 route_plan，于是计划文件可能
+    还是上一局/上一幕的（日志里 ROUTE_PLAN_STALE 一直刷），模型只能走一步
+    看一步。现在进 MAP 前先对齐计划，再交给 ctx/菜单当依据。
+    """
+    plan = _route_plan(sts2)
+    if _route_current(plan, state) and plan.get("path") and _route_policy_ok(plan):
+        # 偏航/计划下一格已经不在可选点里（上一格被改道、或在事件里跳了行）：
+        # 立刻按当前可选点重排，别让模型拿着一份走不通的计划继续猜。
+        nodes, avail = _map_nodes(state)
+        nxt = _route_next_coord(plan, nodes)
+        coords = {(n.get("row"), n.get("col")) for n in avail}
+        if not coords or (nxt is not None and nxt in coords):
+            return plan
+    output = ""
+    try:
+        _, output = _call(sts2, sts2.cmd_route, commit=0)
+    except Exception as exc:  # noqa: BLE001
+        _log("route_failed", error=f"{type(exc).__name__}: {exc}")
+        return plan if _route_current(plan, state) else {}
+    return _publish_route(sts2, state, output, reason="auto")
+
+
 def _choose_map(sts2, state: dict) -> str:
     nodes, avail = _map_nodes(state)
     if not avail:
@@ -548,12 +606,7 @@ def _choose_map(sts2, state: dict) -> str:
         _publish_route(sts2, state, reason="reuse")
     if target is None:
         # 开局/换幕/换图/路线断了：只在这里规划一次并 commit，后面按计划走。
-        output = ""
-        try:
-            _, output = _call(sts2, sts2.cmd_route, commit=0)
-        except Exception as exc:  # noqa: BLE001
-            _log("route_failed", error=f"{type(exc).__name__}: {exc}")
-        plan = _publish_route(sts2, state, output, reason="auto")
+        plan = _ensure_route_plan(sts2, state)
         target = _route_target(plan, nodes, avail) if _route_current(plan, state) else None
 
     chosen = target
@@ -888,6 +941,46 @@ LLM_SCREENS = ("MAP", "EVENT", "REST", "SHOP", "CHEST", "REWARD",
                 "CARD_SELECTION", "BUNDLE_SELECTION")
 
 
+def _after_deck_pick(sts2) -> None:
+    """点完 ``select_deck_card`` 之后，把这场选牌的收尾做完、并等界面真的离开。
+
+    两个实机坑：
+    1. mod 的 ``select_deck_card`` 只选不确认，``selection.selected_count`` 还经常
+       滞后为 0；模型看到 0/1 会再点同一张，而它是**切换** —— 第二下把选择取消。
+    2. 选择/确认/界面切换都是异步的：点完立刻读状态会拿到**旧的** CARD_SELECTION，
+       下一回合再点一次。run-0049 f7（营火锻造）、f21（商店删牌）、f1（涅奥删牌）
+       都因此被判 stalled，其中商店那次牌其实已经删掉了（used=True）。
+
+    所以这里不依赖调用方传进来的 ``selection`` 字段（它可能已经过期）：
+    点完先等选择生效，需要确认就确认，最后最多等 5 秒直到屏幕不再是 CARD_SELECTION。
+    """
+    time.sleep(0.35)
+    try:
+        now = sts2.get_state()
+    except Exception:  # noqa: BLE001
+        return
+    if _screen(now) == "CARD_SELECTION":
+        acts = set(_acts(now))
+        sel = now.get("selection") or {}
+        if "confirm_selection" in acts and sts2._int(sel.get("max_select"), 0) <= 1:
+            try:
+                sts2.act("confirm_selection")
+                _log("auto_confirm_selection",
+                     kind=str(sel.get("kind") or ""),
+                     selected=sts2._int(sel.get("selected_count"), 0))
+            except Exception as exc:  # noqa: BLE001
+                _log("auto_confirm_failed", error=f"{type(exc).__name__}: {exc}")
+    deadline = time.time() + 5.0
+    while time.time() < deadline:
+        time.sleep(0.2)
+        try:
+            if _screen(sts2.get_state()) != "CARD_SELECTION":
+                return
+        except Exception:  # noqa: BLE001
+            return
+    _log("deck_pick_still_selection")
+
+
 def _screen_llm(sts2, planner, state: dict, screen: str) -> str:
     """让 LLM 选一个界面动作并执行；返回空串表示「模型没给出可执行动作」。
 
@@ -900,6 +993,11 @@ def _screen_llm(sts2, planner, state: dict, screen: str) -> str:
     except Exception as exc:  # noqa: BLE001
         _log("screen_llm_unavailable", error=f"{type(exc).__name__}: {exc}")
         return ""
+    if screen == "MAP":
+        plan = _ensure_route_plan(sts2, state)
+        if plan:
+            # 计划是开局整幕算好的：ctx 给出下一格和精英政策，菜单标出计划节点
+            state = dict(state, route_plan=plan)
     menu = actions.available(state)
     if screen == "CHEST":
         # 实机反馈「宝箱遗物老是忘了拿」：把 mod 真实给的宝箱字段记下来，
@@ -954,7 +1052,8 @@ def _screen_llm(sts2, planner, state: dict, screen: str) -> str:
         plan = res.get("plan") if isinstance(res.get("plan"), dict) else {}
         entry, err = actions.check(plan, state)
         if entry is None:
-            feedback = f"上一版不能执行：{err}。只从 context.acts 里挑一项并给对 i。"
+            feedback = (f"上一版不能执行：{err}。只从 context.acts 里挑一项并给对 i；"
+                        "如果被路线拦住改选了别的格子，重写 say 让台词和动作一致。")
             _log("screen_plan_invalid", screen=screen, attempt=attempt, error=err[:160])
             continue
         say = plan.get("say")
@@ -980,6 +1079,8 @@ def _screen_llm(sts2, planner, state: dict, screen: str) -> str:
             return ""
         _log("llm_screen", screen=screen, act=entry["a"], i=entry.get("i"),
              tokens=res.get("usage"), say=text[:120])
+        if entry["a"] == "select_deck_card":
+            _after_deck_pick(sts2)
         if entry["a"] == "skip_reward_cards":
             _reward_leave(sts2)     # 别让 Card 奖励留在屏上再被 claim 一次
         return f"{screen} {actions.label(entry)}"

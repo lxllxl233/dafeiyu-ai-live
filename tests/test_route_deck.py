@@ -104,9 +104,46 @@ def test_ctx_noncombat_exposes_deck_power():
     assert isinstance(pw.get("need"), list)
 
 
-def test_prompts_route_and_campfire_use_deck_power():
+def test_prompts_route_follows_act_plan_and_bans_act1_elite():
     text = prompts.NONCOMBAT_PROMPT
-    assert "deck_pw" in text
-    assert "卡组" in text and "≥50%" in text
+    assert "ctx.route" in text and "route.next" in text
+    assert "allow_off_route" in text
+    assert "Act2+" in text
     # 旧的「HP<70% 睡」一刀切已经不在
     assert "HP<70% 睡" not in text
+
+
+def test_elite_policy_bans_act1_and_gates_later_acts():
+    path = GameRegistry().load_game_module("slay-the-spire-2", "decision.path")
+    assert path.elite_policy(0, {"defense": 9, "aoe": 2}, 3, 0.95)[0] is False
+    assert path.elite_policy(1, {"defense": 4, "aoe": 0}, 0, 0.95)[0] is False
+    assert path.elite_policy(1, {"defense": 7, "aoe": 1}, 1, 0.59)[0] is False
+    assert path.elite_policy(1, {"defense": 7, "aoe": 1}, 1, 0.60)[0] is True
+
+
+def test_map_ctx_exposes_route_plan_and_marks_banned_elite():
+    st = _map_state(48, STRONG)
+    st["route_plan"] = {
+        "seq": "M M B",
+        "path": [[1, 1, "Monster"], [2, 2, "Boss"]],
+        "policy": {"elite_ok": False, "why": "Act1 不碰精英（A10 开局硬规则）"},
+    }
+    brief = ctx.build(st)
+    ch = brief["choice"]
+    assert ch["route"]["next"].startswith("Monster")
+    assert ch["route"]["elite_ok"] is False
+    assert sum(1 for o in ch["opts"] if o.get("plan")) == 1
+    elite = next(o for o in ch["opts"] if o["t"] == "Elite")
+    assert elite["ban"] is True
+
+
+def test_map_ctx_does_not_ban_when_only_elites_are_available():
+    st = _map_state(48, STRONG)
+    st["map"]["nodes"] = [{"row": 1, "col": 0, "node_type": "Elite",
+                           "is_available": True}]
+    st["route_plan"] = {"path": [[1, 0, "Elite"], [2, 0, "Monster"]],
+                        "policy": {"elite_ok": False, "forced": True,
+                                   "why": "Act1 不碰精英"}}
+    ch = ctx.build(st)["choice"]
+    assert ch["route"]["forced"] is True
+    assert not ch["opts"][0].get("ban")

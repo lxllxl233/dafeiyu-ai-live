@@ -1687,7 +1687,16 @@ def cmd_route(commit=None, note=""):
             elite_pen *= 0.85
         if deck_stats["defense"] < 5:
             elite_pen *= 1.25
-        sc -= (elite_pen + 2.0) * c["Elite"]  # 非必要不精英
+        if c["Elite"]:
+            # 精英后到 Boss 的补给：没有营火/商店的精英线不值得（用户 2026-10-29 反馈）
+            last_e = max(i for i, n in enumerate(path)
+                         if n.get("node_type") == "Elite")
+            after = path[last_e + 1:]
+            tail_rest = sum(1 for n in after if n.get("node_type") == "RestSite")
+            tail_shop = sum(1 for n in after if n.get("node_type") == "Shop")
+            sc -= (100.0 if not elite_ok else (elite_pen + 2.0)) * c["Elite"]
+            if tail_rest == 0 and tail_shop == 0:
+                sc -= 4.0 * c["Elite"]
         sc -= (1.0 if pct < 0.45 else 0.3) * c["Monster"]
         if deck_stats["size"] > 16:
             sc += 1.0 * c["Shop"]  # 牌组大了，商店的删牌价值更高
@@ -1714,6 +1723,11 @@ def cmd_route(commit=None, note=""):
     snap = _snapshot(s)
     deck_stats = snap.get("deck") or {}
     potion_count = _int(snap.get("potions"), 0)
+    # A10 硬规则：Act1 路线不碰精英；Act2+ 卡组成型（防/AOE/药）且血≥60% 才允许
+    # 「考虑」精英，而且仍只作备选。路线计划把结论写进 policy，LLM/菜单都读它。
+    act_id = _int(run.get("act_id"), 0)
+    elite_ok, elite_why = brps.elite_policy(act_id, deck_stats, potion_count, pct)
+    print(f"ELITE_POLICY {'allow' if elite_ok else 'ban'} | {elite_why}")
     print("SELF " + _fmt_snap(snap))
     gate = []
     gate.append("防御≥6? " + ("是" if deck_stats.get("defense", 0) >= 6 else f"否（{deck_stats.get('defense', 0)}）"))
@@ -1724,10 +1738,19 @@ def cmd_route(commit=None, note=""):
     if line:
         print(line)
     ranked = []
+    all_paths = 0
+    safe_paths = 0
     for i, start in enumerate(avail):
         paths = walk(start)
         if not paths:
             continue
+        all_paths += len(paths)
+        if not elite_ok:
+            safe = [p for p in paths
+                    if not any(str(n.get("node_type")) == "Elite" for n in p)]
+            safe_paths += len(safe)
+            if safe:
+                paths = safe
         scored = brps.score_paths(
             s, m, paths,
             CARD_DB, MONSTER_DB, ENCOUNTER_DB,
@@ -1735,6 +1758,12 @@ def cmd_route(commit=None, note=""):
         )
         if not scored:
             continue
+        if not elite_ok:
+            safe_scored = [b for b in scored
+                           if not any(str(n.get("node_type")) == "Elite"
+                                      for n in b["path"])]
+            if safe_scored:
+                scored = safe_scored
         b = scored[0]
         sc, c, p, pre_shop = score(b["path"])
         # BRPS is the primary key; the old resource score stays as a small
@@ -1742,11 +1771,27 @@ def cmd_route(commit=None, note=""):
         rank_sc = b["score"] + 0.25 * sc
         ranked.append((rank_sc, sc, i, start, b["path"], c, pre_shop, b))
     ranked.sort(key=lambda x: x[0], reverse=True)
+    if not elite_ok:
+        # 不同起点的候选一起排名后再兜一层：只要还存在零精英路线，就不许
+        # 把带精英的路线 commit 成整幕计划（Act1 硬规则，DP 漏一个都不行）。
+        safe_ranked = [r for r in ranked
+                       if not any(str(n.get("node_type")) == "Elite"
+                                  for n in r[4])]
+        print(f"ELITE_FILTER safe={safe_paths}/{all_paths} "
+              f"ranked={len(ranked)}->{len(safe_ranked)}")
+        if safe_ranked:
+            ranked = safe_ranked
     for rank_sc, sc, i, start, path, c, pre_shop, b in ranked[:3]:
         seq = b["seq"]
         notes = []
         if c["Elite"]:
             notes.append(f"精英{c['Elite']}")
+            last_e = max(i for i, n in enumerate(path)
+                         if n.get("node_type") == "Elite")
+            after = path[last_e + 1:]
+            notes.append("精英后：营火%d/商店%d" % (
+                sum(1 for n in after if n.get("node_type") == "RestSite"),
+                sum(1 for n in after if n.get("node_type") == "Shop")))
         if c["RestSite"]:
             notes.append(f"营火{c['RestSite']}")
         if c["Shop"]:
@@ -1826,6 +1871,14 @@ def cmd_route(commit=None, note=""):
                         for n in path
                     ],
                     "note": note,
+                    "policy": {
+                        "act_id": act_id,
+                        "elite_ok": elite_ok,
+                        "why": elite_why,
+                        "paths": all_paths,
+                        "safe_paths": safe_paths,
+                        "forced": safe_paths == 0,
+                    },
                     "predicted": {
                         "score": b.get("score"),
                         "hp_after": b.get("hp_after"),

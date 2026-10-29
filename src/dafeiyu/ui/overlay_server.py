@@ -374,9 +374,16 @@ def add_comment(payload: dict) -> dict:
         }
         _decisions.append(decision)
         _save_seq()
-        for key in ("character", "ascension", "floor", "hp", "max_hp", "gold", "screen"):
+        for key in ("character", "ascension", "floor", "hp", "max_hp", "gold",
+                    "screen"):
             if payload.get(key) is not None:
                 _status[key] = payload[key]
+        # 空闲文案只跟当前说话的来源走：B 站会带 idle_text；普通游戏不带，
+        # 下一条普通游戏台词必须把上一局残留的「看视频ing」清掉。
+        if "idle_text" in payload:
+            _status["idle_text"] = str(payload.get("idle_text") or "")[:32]
+        else:
+            _status.pop("idle_text", None)
         snap = {"seq": _seq, "comments": [c], "status": dict(_status)}
     log_event("say", f"#{c['id']} {c['speech'][:80]} · tokens={usage['total']}")
     _av_append(
@@ -395,6 +402,16 @@ def add_comment(payload: dict) -> dict:
         snap["playback"] = audio_state()
     publish(snap)
     return c
+
+
+def update_status(payload: dict) -> dict:
+    """只更新少量 UI 状态（目前是云观影的 idle_text），不出台词。"""
+    global _seq
+    with _lock:
+        _seq += 1
+        if "idle_text" in payload:
+            _status["idle_text"] = str(payload.get("idle_text") or "")[:32]
+        return {"seq": _seq, "status": dict(_status)}
 
 
 # ---- 推送：出话即时到达页面，不再等下一次轮询（轮询最慢会晚 1 秒，字幕就落在出牌之后）
@@ -628,6 +645,17 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as exc:
                 self._send(500, json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False)
                            .encode("utf-8"), "application/json; charset=utf-8")
+        elif path == "/api/bilibili/playlist":
+            try:
+                from dafeiyu.ui.studio import get_runtime
+
+                body = json.dumps(get_runtime().bilibili_playlist(),
+                                  ensure_ascii=False).encode("utf-8")
+                self._send(200, body, "application/json; charset=utf-8")
+            except Exception as exc:
+                self._send(500, json.dumps({"ok": False, "error": str(exc)},
+                                           ensure_ascii=False).encode("utf-8"),
+                           "application/json; charset=utf-8")
         elif path.startswith("/state"):
             q = 0
             if "after=" in self.path:
@@ -877,6 +905,41 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as exc:
                 self._send(500, json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False)
                            .encode("utf-8"), "application/json; charset=utf-8")
+            return
+        if self.path == "/status":
+            try:
+                n = int(self.headers.get("Content-Length", "0") or 0)
+                payload = json.loads(self.rfile.read(n) or b"{}") if n else {}
+                payload = payload if isinstance(payload, dict) else {}
+                result = update_status(payload)
+                self._send(200, json.dumps(result, ensure_ascii=False).encode("utf-8"),
+                           "application/json; charset=utf-8")
+            except Exception as exc:
+                self._send(500, json.dumps({"ok": False, "error": str(exc)},
+                                           ensure_ascii=False).encode("utf-8"),
+                           "application/json; charset=utf-8")
+            return
+        if self.path == "/api/bilibili/control":
+            try:
+                n = int(self.headers.get("Content-Length", "0") or 0)
+                payload = json.loads(self.rfile.read(n) or b"{}") if n else {}
+                payload = payload if isinstance(payload, dict) else {}
+                from dafeiyu.ui.studio import get_runtime
+
+                result = get_runtime().bilibili_command(
+                    str(payload.get("action") or "").strip(),
+                    str(payload.get("bvid") or "").strip(),
+                )
+                self._send(200, json.dumps(result, ensure_ascii=False).encode("utf-8"),
+                           "application/json; charset=utf-8")
+            except ValueError as exc:
+                self._send(400, json.dumps({"ok": False, "error": str(exc)},
+                                           ensure_ascii=False).encode("utf-8"),
+                           "application/json; charset=utf-8")
+            except Exception as exc:
+                self._send(500, json.dumps({"ok": False, "error": str(exc)},
+                                           ensure_ascii=False).encode("utf-8"),
+                           "application/json; charset=utf-8")
             return
         if self.path == "/api/voice/start":
             try:

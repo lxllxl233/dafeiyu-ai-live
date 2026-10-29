@@ -322,3 +322,78 @@ def test_card_reward_screen_does_not_offer_deck_select_twice():
     assert [(e["a"], e["i"]) for e in actions.available(state)] == [
         ("choose_reward_card", 0), ("choose_reward_card", 1),
         ("skip_reward_cards", None)]
+
+
+# A10 第一幕零精英：路线计划把结论写进 policy，菜单/校验都据此拦人。
+MAP_PLAN_STATE = {
+    "screen": "MAP",
+    "available_actions": ["choose_map_node"],
+    "map": {
+        "nodes": [
+            {"row": 0, "col": 0, "node_type": "Monster", "is_current": True,
+             "children": [{"row": 1, "col": 0, "node_type": "Elite"},
+                          {"row": 1, "col": 1, "node_type": "Monster"}]},
+            {"row": 1, "col": 0, "node_type": "Elite", "is_available": True},
+            {"row": 1, "col": 1, "node_type": "Monster", "is_available": True},
+        ],
+        "available_nodes": [
+            {"index": 0, "row": 1, "col": 0, "node_type": "Elite"},
+            {"index": 1, "row": 1, "col": 1, "node_type": "Monster"},
+        ],
+    },
+    "route_plan": {
+        "seq": "M M B",
+        "path": [[0, 0, "Monster"], [1, 1, "Monster"], [2, 2, "Boss"]],
+        "policy": {"elite_ok": False, "why": "Act1 不碰精英（A10 开局硬规则）"},
+    },
+}
+
+
+def test_map_menu_marks_planned_node_and_bans_act1_elite():
+    menu = actions.available(MAP_PLAN_STATE)
+    assert menu[0]["ban"] is True and "Act1 不碰精英" in menu[0]["why"]
+    assert menu[1].get("plan") is True
+    # 精英项仍列出（否则整屏无出口时模型会乱点），但校验会拦。
+    entry, err = actions.check({"act": "choose_map_node", "i": 0}, MAP_PLAN_STATE)
+    assert entry is None and "Act1 不碰精英" in err
+    entry, err = actions.check({"act": "choose_map_node", "i": 1}, MAP_PLAN_STATE)
+    assert entry is not None and err == ""
+
+
+def test_map_menu_allows_explicit_off_route_override():
+    entry, err = actions.check(
+        {"act": "choose_map_node", "i": 0, "allow_off_route": 1}, MAP_PLAN_STATE)
+    assert entry is not None and err == ""
+
+
+def test_map_menu_unbans_when_every_choice_is_elite():
+    """单线地图可选点全是精英：不能把整屏都封死，否则模型无路可走。"""
+    st = {"screen": "MAP", "available_actions": ["choose_map_node"],
+          "map": {"nodes": [{"row": 1, "col": 0, "node_type": "Elite",
+                             "is_available": True}],
+                  "available_nodes": [{"index": 0, "row": 1, "col": 0,
+                                       "node_type": "Elite"}]},
+          "route_plan": {"path": [[0, 0, "Monster"], [1, 0, "Elite"]],
+                         "policy": {"elite_ok": False, "forced": True,
+                                    "why": "Act1 不碰精英"}}}
+    menu = actions.available(st)
+    assert menu and not menu[0].get("ban") and menu[0].get("forced") is True
+    entry, err = actions.check({"act": "choose_map_node", "i": 0}, st)
+    assert entry is not None and err == ""
+
+
+def test_map_menu_blocks_off_plan_node_unless_override():
+    st = {"screen": "MAP", "available_actions": ["choose_map_node"],
+          "map": {"nodes": [
+              {"row": 1, "col": 0, "node_type": "Monster", "is_available": True},
+              {"row": 1, "col": 1, "node_type": "Monster", "is_available": True}],
+              "available_nodes": [
+                  {"index": 0, "row": 1, "col": 0, "node_type": "Monster"},
+                  {"index": 1, "row": 1, "col": 1, "node_type": "Monster"}]},
+          "route_plan": {"path": [[1, 1, "Monster"], [2, 2, "Boss"]],
+                         "policy": {"elite_ok": False, "why": "Act1"}}}
+    entry, err = actions.check({"act": "choose_map_node", "i": 0}, st)
+    assert entry is None and "allow_off_route" in err
+    entry, err = actions.check(
+        {"act": "choose_map_node", "i": 0, "allow_off_route": 1}, st)
+    assert entry is not None and err == ""

@@ -23,6 +23,7 @@ KEEP_ROWS = 1500
 DEFAULT_STATE: dict = {
     "running": False, "screen": "", "floor": 0, "hp": 0, "max_hp": 0,
     "step": 0, "last": "", "error": "", "started_at": 0, "updated_at": 0,
+    "idle_text": "",
     "game": "", "pid": 0, "mode": "local", "pace": "voice",
     "tokens_in": 0, "tokens_out": 0, "tokens_total": 0, "llm_calls": 0,
     "tokens_last": 0,

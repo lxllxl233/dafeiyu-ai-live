@@ -284,6 +284,7 @@ class StudioRuntime:
             "agent": {**agent_summary(), "tokens": token_usage(40)},
             "play": play_status(),
             "bilibili": self._bilibili_status(),
+            "bilibili_playlist": self.bilibili_playlist(),
             "samples": list(card.openers[:2]) + list(card.quips[:4]),
             "links": {
                 "overlay": "/",
@@ -341,6 +342,34 @@ class StudioRuntime:
             "max": _ROOM_MAX,
         })
         return raw
+
+    def _bili_control_module(self):
+        """当前游戏是 B 站时才允许读写 B 模式的控制面。"""
+        self._sync_config()
+        if str(self.cfg.game or "") != "bilibili-hot-commentary":
+            raise ValueError("当前游戏不是 B站云观影")
+        module = self.registry.load_game_module(
+            "bilibili-hot-commentary", "control")
+        if module is None:
+            raise RuntimeError("B站云观影控制模块不可用")
+        return module
+
+    def bilibili_playlist(self) -> dict:
+        """读引擎写的播放列表快照；B 引擎不在时也能展示最后一版。"""
+        if str(self.cfg.game or "") != "bilibili-hot-commentary":
+            return {"ok": True, "state": "not_b", "current_bvid": "",
+                    "items": [], "browser": {}, "updated_at": 0}
+        try:
+            return self._bili_control_module().read_playlist()
+        except Exception as exc:  # noqa: BLE001 - 控制台不能因播放列表 500
+            return {"ok": False, "state": "error", "current_bvid": "",
+                    "items": [], "browser": {}, "updated_at": 0,
+                    "error": f"{type(exc).__name__}: {exc}"}
+
+    def bilibili_command(self, action: str, bvid: str = "") -> dict:
+        """控制台点播放/关闭/刷新时写一条本地命令，由 B 引擎消费。"""
+        module = self._bili_control_module()
+        return module.send_command(action, bvid)
 
     def send_to_room(self, text: str) -> dict:
         """控制台发一条弹幕进直播间；需要带 bili_jct 的登录 Cookie。"""
@@ -614,10 +643,16 @@ class StudioRuntime:
         except Exception as exc:
             _atomic_write(path, old)
             raise ValueError(f"保存失败，已回滚：{exc}") from exc
+        note = None
+        if hasattr(mod, "save_note"):
+            try:
+                note = mod.save_note(name)
+            except Exception:
+                note = None
         return {"ok": True, "game": gid, "name": name,
                 "bytes": len(body.encode("utf-8")),
                 "tokens": mod.est_tokens(body),
-                "message": "已保存（按需读取时生效；实时提示词仍是 prompts.py）"}
+                "message": note or "已保存（按需读取时生效；实时提示词仍是 prompts.py）"}
 
     # ---------------------------------------------------------------- 说话
     def say(self, body: dict, add_comment: Callable[[dict], Any], *,

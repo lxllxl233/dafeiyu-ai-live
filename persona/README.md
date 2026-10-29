@@ -19,9 +19,13 @@ persona/<id>/
 | `banned_prefixes` / `banned_labels` | 不许出现的自称、报告体标签 |
 | `repeat_words` | 一条里出现两次就 FAIL 的空梗 |
 | `quips` | 招牌稿（一句最多一句，带冷却） |
+| `watch` | 可选：旧版看片偏好（`keywords` / `avoid` / `prefer`）；B 站模式已不用这一份 |
 | `openers` / `closers` | 开局、收尾备选 |
 
 新增人设：复制 `dafeiyu/` 改名，改 `id`/`name`/`voice`，再在 `config.json` 里指定
 `{"persona": "<id>"}` 或设置 `DAFEIYU_PERSONA=<id>`。
 
 代码入口：`src/dafeiyu/persona/`（`Persona.compose` / `.lint` / `.render` / `.note_sent`）。
+
+B 站云观影是隔离人设：读 `games/bilibili-hot-commentary/persona/{card.json,style.md}`，
+不跟随这里的 `config.persona`；在控制台「游戏 → B站云观影 → 游戏详情」里编辑。

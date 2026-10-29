@@ -1021,7 +1021,8 @@ def test_map_menu_uses_available_node_index():
                   "available_nodes": [{"index": 0, "row": 1, "col": 2,
                                        "node_type": "Shop"}]}}
     menu = actions.available(st)
-    assert menu == [{"a": "choose_map_node", "i": 0, "n": "Shop (1,2)", "fx": ""}]
+    assert menu == [{"a": "choose_map_node", "i": 0, "n": "Shop (1,2)",
+                     "t": "Shop", "fx": ""}]
 
 
 def test_select_menu_offers_close_cards_view():
@@ -1690,3 +1691,45 @@ def test_status_repairs_recording_flag_after_foreign_reset(monkeypatch):
     out = play._with_liveness({"last": "REWARD claim_reward 0"})
     assert out["recording"] is True
     assert out["record_path"] == r"D:\rec\run-0001"
+
+
+def test_after_deck_pick_confirms_and_waits(monkeypatch):
+    """run-0049 f7/f21/f1：点牌后要补确认，并等界面真的离开 CARD_SELECTION。
+    商店那次牌其实已经删掉了（used=True），只是下一回合读到旧界面又点一次。"""
+    monkeypatch.setattr(play.time, "sleep", lambda _s: None)
+
+    class _Fake:
+        def __init__(self, states):
+            self.states = list(states)
+            self.i = 0
+            self.calls = []
+
+        @staticmethod
+        def _int(v, d=0):
+            try:
+                return int(v)
+            except (TypeError, ValueError):
+                return d
+
+        def get_state(self):
+            return self.states[min(self.i, len(self.states) - 1)]
+
+        def act(self, action, **kw):
+            self.calls.append(action)
+            if action == "confirm_selection":
+                self.i += 1
+
+    picking = {"screen": "CARD_SELECTION",
+               "available_actions": ["select_deck_card", "confirm_selection"],
+               "selection": {"kind": "deck_card_select", "min_select": 1,
+                             "max_select": 1, "requires_confirmation": True,
+                             "can_confirm": True, "selected_count": 0}}
+    done = {"screen": "EVENT", "available_actions": ["choose_event_option"]}
+    fake = _Fake([picking, done])
+    play._after_deck_pick(fake)
+    assert fake.calls == ["confirm_selection"]
+
+    # 点完自己进下一步：不要再确认
+    fake2 = _Fake([done])
+    play._after_deck_pick(fake2)
+    assert fake2.calls == []

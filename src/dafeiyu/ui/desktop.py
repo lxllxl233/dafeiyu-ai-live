@@ -17,7 +17,8 @@
     左键拖动  → 挪位置（松手自动记住，下次原地开）
     右下角拖动 → 缩放（等比，0.5×–1.8×；缩放后大小也记住）
     滚轮      → 缩放（同一个比例，懒得找角就用它）
-    右键      → 菜单：置顶 / 点击穿透 / 声音 / 录屏里隐藏 / 语音 / 模型 / 配置 API / 管理端 / 示例 / 关闭
+    右键      → 菜单：置顶 / 点击穿透 / 声音 / 录屏里隐藏 / OBS 录像 / 语音 / 模型 /
+                配置 API / 管理端 / 示例 / 关闭
     ☰（右下角金钮）→ 穿透模式下也能点：左键拖、右键菜单
     Ctrl+Alt+D 点击穿透开关（穿透后只有 ☰ 和右下缩放把手可点，其余照常穿过去）
     Ctrl+Alt+H 隐藏/显示
@@ -1064,7 +1065,7 @@ def render_pet(text: str, mode: str, scale: float, now: float, pet) -> Image.Ima
         text = THINKING_TEXT
         alpha = 1.0
     elif mode == "idle":
-        text = IDLE_TEXT
+        text = text or IDLE_TEXT
         alpha = 1.0
     elif not text or text == PLACEHOLDER:
         return canvas
@@ -1357,6 +1358,12 @@ class StreamerWindow:
         self._menu_open = False
         self._menu_models: list[str] = []
         self._menu_games: list[tuple[str, str]] = []
+        # 右键「OBS 录像」：菜单勾选只认这里缓存的状态（None = 还没问过 OBS），
+        # 点击时再去问真状态，所以勾晚一拍也不会点错方向。
+        self._obs_rec: bool | None = None
+        self._obs_lock = threading.Lock()
+        self._obs_probe_at = 0.0
+        self._obs_gen = 0        # 点过一次就 +1，晚回来的探针不许盖掉新状态
         self._transparent = bool(click_through)
         self._watch_stop = threading.Event()
         self._memdc = None
@@ -1485,6 +1492,49 @@ class StreamerWindow:
         self.exclude_capture = on
         return ok
 
+    # ---- 右键「OBS 录像」：一个入口开 / 关，状态问 OBS 自己
+    def _probe_obs(self) -> None:
+        """顺手问一句 OBS 在不在录，只用来更新菜单勾选；连不上就安静地不勾。"""
+        now = time.time()
+        if now - self._obs_probe_at < 1.5:      # 连点右键别一直去连 OBS
+            return
+        self._obs_probe_at = now
+        gen = self._obs_gen
+
+        def work():
+            try:
+                from ..recording import manual
+
+                out = manual.probe(timeout=1.5)
+                if out.get("ok") and gen == self._obs_gen:
+                    self._obs_rec = bool(out.get("recording"))
+            except Exception:
+                pass
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def toggle_obs_record(self) -> None:
+        """右键「OBS 录像」：没在录就开录，正在录就停掉（连接慢，放后台线程）。"""
+        if not self._obs_lock.acquire(blocking=False):
+            print("OBS：上一次切换还没结束")
+            return
+        self._obs_gen += 1        # 作废还在路上的探针结果
+
+        def work():
+            try:
+                from ..recording import manual
+
+                out = manual.toggle(timeout=2.0)
+                if out.get("recording") is not None:
+                    self._obs_rec = bool(out["recording"])
+                print("OBS：" + str(out.get("message") or out))
+            except Exception as exc:      # 这里再兜一层，后台线程炸了也不能沉掉
+                print(f"OBS 录像切换失败：{exc}")
+            finally:
+                self._obs_lock.release()
+
+        threading.Thread(target=work, daemon=True).start()
+
     def _proc(self, hwnd, msg, wparam, lparam):
         # 穿透模式下只有「鼠标贴到 ☰/手把」时窗口才临时接收鼠标（见 _watch_interaction）。
         # 以前这里是 if self.click_through: return 0 —— 穿透开着就永远点不到，弹窗成了死的。
@@ -1588,6 +1638,11 @@ class StreamerWindow:
         user32.AppendMenuW(hmenu, MF_STRING | (MF_CHECKED if self.click_through else 0), 2, "点击穿透")
         user32.AppendMenuW(hmenu, MF_STRING | (MF_CHECKED if self.speaker.enabled else 0), 3, "声音")
         user32.AppendMenuW(hmenu, MF_STRING | (MF_CHECKED if self.exclude_capture else 0), 4, "录屏里隐藏")
+        # 「OBS 录像」：勾上 = 正在录，点一下就是开 / 关。OBS 没开也不挡菜单——
+        # 状态是后台问来的，连接慢不能卡住右键。
+        user32.AppendMenuW(hmenu, MF_STRING | (MF_CHECKED if self._obs_rec else 0),
+                           70, "OBS 录像")
+        self._probe_obs()
 
         # 语音 / 模型 / 游戏：配置写本机 config.json（.gitignore 已忽略，API Key 不在这里）
         try:
@@ -1705,6 +1760,8 @@ class StreamerWindow:
             self.toggle_sound()
         elif cmd == 4:
             self.apply_capture_exclusion(not self.exclude_capture)
+        elif cmd == 70:
+            self.toggle_obs_record()
         elif cmd == 5:
             self.push("这一手先算账：它 21，我最多挡 15。", "差 6，嗨呀。",
                       {"character": "演示角色", "ascension": 10, "floor": 8, "hp": 23, "max_hp": 80, "gold": 20})
@@ -2121,7 +2178,14 @@ class StreamerWindow:
         if mode == "thinking":
             return THINKING_TEXT
         if mode == "speaking":
-            return self.text or IDLE_TEXT
+            return self.text or self._idle_text()
+        return self._idle_text()
+
+    def _idle_text(self) -> str:
+        """云观影等模式可给 status.idle_text；普通游戏仍回落「吃饭ing」。"""
+        status = getattr(self, "status", None)
+        if isinstance(status, dict):
+            return str(status.get("idle_text") or IDLE_TEXT)
         return IDLE_TEXT
 
     def update_status(self, status: dict):
@@ -2385,7 +2449,13 @@ class PetWindow(StreamerWindow):
         if mode == "thinking":
             return THINKING_TEXT
         if mode == "speaking":
-            return self.text or IDLE_TEXT
+            return self.text or self._idle_text()
+        return self._idle_text()
+
+    def _idle_text(self) -> str:
+        status = getattr(self, "status", None)
+        if isinstance(status, dict):
+            return str(status.get("idle_text") or IDLE_TEXT)
         return IDLE_TEXT
 
     def _is_animating(self, now: float) -> bool:
@@ -2644,7 +2714,13 @@ def poll_loop(win: StreamerWindow, port: int, stop: threading.Event, demo: bool)
                 last_id = max(last_id, int(c.get("id", 0)))
             if d.get("comments"):
                 latest = d["comments"][-1]
-                win.push(latest.get("thought", ""), latest.get("meme", ""), d.get("status") or {})
+                thought = str(latest.get("thought") or "")
+                meme = str(latest.get("meme") or "")
+                # 云观影只发 speech、不发 thought/meme；桌宠气泡直接拿它当正文，
+                # 否则文本和语音都会被 push() 的空文案挡掉。
+                if not thought.strip() and not meme.strip():
+                    thought = str(latest.get("speech") or "")
+                win.push(thought, meme, d.get("status") or {})
         except Exception as e:  # 单帧画崩不许带走整个轮询循环
             print(f"主播窗：这一帧没画出来（{type(e).__name__}: {e}），继续轮询")
         now = time.time()

@@ -58,3 +58,8 @@ logs/*.html
 logs/*profile*/
 logs/pet_src/
 games/*.7z
+
+# B站热门云观影：热门/详情/热评/弹幕缓存、已看/失败记录和临时控制文件
+logs/bilibili_commentary/
+logs/bilibili_commentary.pause
+logs/bilibili_commentary.skip

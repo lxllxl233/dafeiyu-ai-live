@@ -1591,6 +1591,14 @@ def validate(state: dict, seq: list) -> tuple[bool, str, Sim, list]:
                             "读新 ctx 看完新手牌再出下一手"), sim, steps)
         if not sim.alive() and n != len(seq) - 1:
             # 清场后多写的动作会落到结算/新回合，前置拒绝比打到一半报错干净。
+            # 但**尾部的 end** 是合法的：batch 会跳过它（清场记录里都是
+            # 「斩杀牌 + end」这个形状）。以前把 end 也算成越界，模型排一手
+            # 斩杀 + end 会被整手拒绝、重试到兜底（实机 f11 t2 两次）。
+            tail = seq[n + 1:]
+            if tail and all(isinstance(x, dict) and (x.get("end") or x.get("a") == "end")
+                            for x in tail):
+                steps.append({"k": "end"})
+                return True, "", sim, steps
             return (False, (f"第{n + 1}步已经清场，后面还有 {len(seq) - n - 1} 步；"
                             "清场就停在清场那张牌"), sim, steps)
     return True, "", sim, steps

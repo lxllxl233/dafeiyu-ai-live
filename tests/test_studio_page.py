@@ -39,6 +39,9 @@ REQUIRED = {
     # 游戏详情：策略/资料
     "gameDetailCard", "gEditFile", "gEditText", "gEditHint", "gEditState",
     "gMatCounts", "gMatFiles", "gMatPreview",
+    # B站播放列表 / 浏览器标签页
+    "biliPlaylistCard", "biliPlaylistState", "biliPlaylistHint",
+    "biliBrowserState", "biliPlaylist", "biliRefresh", "biliClose",
 }
 
 
@@ -83,6 +86,15 @@ def test_skill_editor_is_wired():
     assert "gEditEffect" in HTML
     assert "4600 token" not in HTML
     assert 'data-view="skill"' not in HTML      # 不再单独开页，收进游戏详情
+
+
+def test_bili_playlist_is_wired_to_control_api():
+    assert "/api/bilibili/control" in HTML
+    assert "renderBiliPlaylist" in HTML
+    assert "data-bili-play" in HTML and "data-bili-close" in HTML
+    assert 'id="biliRefresh"' in HTML and 'id="biliClose"' in HTML
+    assert "bilibili-hot-commentary" in HTML
+    assert "play.idle_text" in HTML          # 云观影空闲文案由后端给
 
 
 def test_token_card_is_wired_to_api_payload():
