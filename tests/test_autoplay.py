@@ -849,6 +849,59 @@ def test_shop_with_shelf_open_closes_it_when_the_model_fails(monkeypatch):
     assert fake.calls == [("close_shop_inventory", {})]
 
 
+_SHOP_REMOVAL_STATE = {
+    "screen": "SHOP", "run_id": "r1",
+    "run": {"floor": 30, "act_id": "1", "current_hp": 82, "max_hp": 95, "gold": 446,
+            "deck": [], "relics": [], "potions": []},
+    "available_actions": ["close_shop_inventory", "buy_card", "remove_card_at_shop"],
+    "shop": {"is_open": True,
+             "cards": [{"name": "余烬", "price": 130, "available": True}],
+             "card_removal": {"price": 100, "available": True, "used": False,
+                              "enough_gold": True}},
+}
+
+
+def test_shop_menu_offers_card_removal():
+    """删牌服务不进菜单时模型只能开/关货架，整局卡在商店（run-0116 18 分钟）。"""
+    actions = _decision_module("actions")
+    menu = actions.available(_SHOP_REMOVAL_STATE)
+    e = [x for x in menu if x["a"] == "remove_card_at_shop"]
+    assert len(e) == 1
+    assert e[0]["i"] is None          # 模组接口不收参数，别传 option_index
+    assert e[0]["ok"] is True
+    entry, err = actions.check({"act": "remove_card_at_shop"}, _SHOP_REMOVAL_STATE)
+    assert err == "" and entry["a"] == "remove_card_at_shop"
+
+
+def test_shop_menu_hides_used_or_unaffordable_removal():
+    actions = _decision_module("actions")
+    used = {**_SHOP_REMOVAL_STATE,
+            "shop": {**_SHOP_REMOVAL_STATE["shop"],
+                     "card_removal": {"price": 100, "available": False,
+                                      "used": True, "enough_gold": False}}}
+    assert not [x for x in actions.available(used) if x["a"] == "remove_card_at_shop"]
+    poor = {**_SHOP_REMOVAL_STATE,
+            "run": {**_SHOP_REMOVAL_STATE["run"], "gold": 30}}
+    # 买不起时 available() 整项过滤掉（和其它商品一致），别留 ok:False 的诱饵。
+    assert not [x for x in actions.available(poor) if x["a"] == "remove_card_at_shop"]
+
+
+def test_shop_toggle_counts_as_no_progress():
+    assert play._stall_key("SHOP", "SHOP open") == ("SHOP", "SHOP toggle")
+    assert play._stall_key("SHOP", "SHOP close") == ("SHOP", "SHOP toggle")
+
+
+def test_shop_model_can_buy_card_removal(monkeypatch):
+    monkeypatch.setattr(play, "_remember_speech", lambda t: None)
+    fake = _FakeSts2([_SHOP_REMOVAL_STATE])
+    planner = _FakePlanner([{"say": ["删一张打击，100 金。"],
+                             "act": "remove_card_at_shop"}])
+    last = play._one_step(fake, None, _SHOP_REMOVAL_STATE, mode="llm",
+                          screen_planner=planner)
+    assert last == "SHOP remove_card_at_shop"
+    assert fake.calls == [("remove_card_at_shop", {})]
+
+
 def test_shop_model_can_pick_close_shelf(monkeypatch):
     monkeypatch.setattr(play, "_remember_speech", lambda t: None)
     fake = _FakeSts2([_SHOP_STATE])

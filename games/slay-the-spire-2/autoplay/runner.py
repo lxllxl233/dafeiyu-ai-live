@@ -996,6 +996,9 @@ def _stall_key(screen: str, last: str) -> tuple[str, str] | None:
         return (screen, last)
     if last.startswith("WAIT_"):
         return (screen, last.split(" ", 1)[0])
+    if last in ("SHOP open", "SHOP close"):
+        # 商店开/关货架来回切字符串不同，普通去重抓不到；归一成一个键才判得出来。
+        return (screen, "SHOP toggle")
     return None
 
 

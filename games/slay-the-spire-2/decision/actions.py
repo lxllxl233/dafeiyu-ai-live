@@ -133,6 +133,15 @@ def _shop_menu(state: dict) -> list[dict]:
                         "n": f"{_short(it.get('name') or '?', 24)} {price}金",
                         "fx": _short(it.get("description") or "", 70),
                         "ok": price <= gold})
+    # 删牌服务：不进菜单时模型只能开/关货架，商店原地打转 18 分钟（实机 run-0116）。
+    # 模组的 remove_card_at_shop 不收参数，所以 i 必须是 None（别传 option_index）。
+    cr = sh.get("card_removal") or {}
+    if "remove_card_at_shop" in acts and cr.get("available") and not cr.get("used"):
+        price = _int(cr.get("price"), 0)
+        out.append({"a": "remove_card_at_shop", "i": None,
+                    "n": f"删牌服务 {price}金",
+                    "fx": "挑一张牌永久移除（脚本按价值自动挑）",
+                    "ok": price <= gold})
     if "leave_shop" in acts:
         out.append({"a": "leave_shop", "i": None, "n": "离开商店", "fx": ""})
     elif "proceed" in acts:
