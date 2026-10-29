@@ -838,6 +838,128 @@ _SHOP_STATE = {
 }
 
 
+_BUNDLE_STATE = {
+    "screen": "BUNDLE_SELECTION", "run_id": "r1",
+    "run": {"floor": 1, "act_id": "0", "current_hp": 64, "max_hp": 80, "gold": 99,
+            "deck": [], "relics": [], "potions": []},
+    "available_actions": ["choose_bundle", "confirm_bundle"],
+    "bundles": [
+        {"index": 0, "cards": [
+            {"name": "痛击", "card_type": "Attack", "energy_cost": 2,
+             "resolved_rules_text": "造成10点伤害。"},
+            {"name": "防御", "card_type": "Skill", "energy_cost": 1,
+             "resolved_rules_text": "获得5点格挡。"}]},
+        {"index": 1, "cards": [
+            {"name": "打击", "card_type": "Attack", "energy_cost": 1,
+             "resolved_rules_text": "造成6点伤害。"}]},
+    ],
+}
+
+
+def test_bundle_menu_lists_bundles_and_confirm():
+    """开局选牌包没有菜单时整局停在第 1 层（run-0116 之前那次）。"""
+    actions = _decision_module("actions")
+    menu = actions.available(_BUNDLE_STATE)
+    picks = [e for e in menu if e["a"] == "choose_bundle"]
+    assert [e["i"] for e in picks] == [0, 1]
+    assert "痛击" in picks[0]["n"] and "10点伤害" in picks[0]["fx"]
+    assert [e for e in menu if e["a"] == "confirm_bundle"]
+    entry, err = actions.check({"act": "choose_bundle", "i": 1}, _BUNDLE_STATE)
+    assert err == "" and entry["i"] == 1
+
+
+def test_one_step_bundle_picks_first(monkeypatch):
+    monkeypatch.setattr(play, "_remember_speech", lambda t: None)
+    fake = _FakeSts2([_BUNDLE_STATE])
+    last = play._one_step(fake, None, _BUNDLE_STATE, mode="local")
+    assert last == "BUNDLE pick"
+    assert fake.calls == [("choose_bundle", {"option_index": 0})]
+
+
+def test_one_step_bundle_confirms_when_only_confirm(monkeypatch):
+    monkeypatch.setattr(play, "_remember_speech", lambda t: None)
+    st = dict(_BUNDLE_STATE, available_actions=["confirm_bundle"])
+    fake = _FakeSts2([st])
+    assert play._one_step(fake, None, st, mode="local") == "BUNDLE confirm"
+    assert fake.calls == [("confirm_bundle", {})]
+
+
+def test_modal_menu_hides_underlying_options():
+    """确认框弹着时底层屏幕的选项点不动，菜单只能给确认/取消。"""
+    actions = _decision_module("actions")
+    st = {"screen": "EVENT", "modal": {"title": "放弃本局？"},
+          "available_actions": ["confirm_modal", "dismiss_modal"],
+          "event": {"options": [{"title": "离开", "description": "x"}]}}
+    menu = actions.available(st)
+    assert [e["a"] for e in menu] == ["confirm_modal", "dismiss_modal"]
+
+
+def test_one_step_confirms_modal(monkeypatch):
+    monkeypatch.setattr(play, "_remember_speech", lambda t: None)
+    st = {"screen": "MAIN_MENU", "modal": {"title": "放弃本局？"},
+          "available_actions": ["confirm_modal", "dismiss_modal"]}
+    fake = _FakeSts2([st])
+    assert play._one_step(fake, None, st, mode="local") == "MODAL confirm_modal"
+    assert fake.calls == [("confirm_modal", {})]
+
+
+def test_map_menu_uses_available_node_index():
+    """模组 choose_map_node 的 option_index 是 available_nodes 的下标。"""
+    actions = _decision_module("actions")
+    st = {"screen": "MAP", "available_actions": ["choose_map_node"],
+          "map": {"nodes": [{"row": 0, "col": 0, "is_available": True,
+                             "node_type": "Monster"}],
+                  "available_nodes": [{"index": 0, "row": 1, "col": 2,
+                                       "node_type": "Shop"}]}}
+    menu = actions.available(st)
+    assert menu == [{"a": "choose_map_node", "i": 0, "n": "Shop (1,2)", "fx": ""}]
+
+
+def test_select_menu_offers_close_cards_view():
+    actions = _decision_module("actions")
+    st = {"screen": "CARD_SELECTION", "available_actions": ["close_cards_view"],
+          "selection": {"cards": []}}
+    assert [e["a"] for e in actions.available(st)] == ["close_cards_view"]
+
+
+# mod（STS2-Agent v0.8.0 + compat 补丁）在 GameActionService 里实际支持的界面动作。
+# 白名单菜单只能引用这些名字：多写一个是死项，少写一个可能让整屏没有出口。
+_MOD_SCREEN_ACTIONS = {
+    "abandon_run", "buy_card", "buy_potion", "buy_relic", "choose_bundle",
+    "choose_capstone_option", "choose_event_option", "choose_map_node",
+    "choose_rest_option", "choose_reward_card", "choose_timeline_epoch",
+    "choose_treasure_relic", "claim_reward", "close_cards_view",
+    "close_main_menu_submenu", "close_shop_inventory",
+    "collect_rewards_and_proceed", "confirm_bundle", "confirm_modal",
+    "confirm_selection", "confirm_timeline_overlay", "continue_run",
+    "decrease_ascension", "discard_potion", "disconnect_multiplayer_lobby",
+    "dismiss_modal", "embark", "end_turn", "host_multiplayer_lobby",
+    "increase_ascension", "join_multiplayer_lobby", "open_character_select",
+    "open_chest", "open_shop_inventory", "open_timeline", "play_card",
+    "proceed", "ready_multiplayer_lobby", "remove_card_at_shop",
+    "resolve_rewards", "return_to_main_menu", "select_character",
+    "select_deck_card", "skip_reward_cards", "unready", "use_potion",
+}
+
+
+def test_menu_only_uses_real_mod_actions():
+    """菜单里写错/写死一个动作名就会像商店删牌那样整屏没有出口。"""
+    import re
+    from pathlib import Path
+
+    src = Path(__file__).resolve().parents[1] / "games/slay-the-spire-2/decision/actions.py"
+    used = set(re.findall(r'"a":\s*"([a-z_]+)"', src.read_text(encoding="utf-8")))
+    assert used <= _MOD_SCREEN_ACTIONS, sorted(used - _MOD_SCREEN_ACTIONS)
+
+
+def test_bundle_ctx_has_card_text():
+    ctx = _decision_module("ctx")
+    ch = ctx._choice(_BUNDLE_STATE)
+    assert ch["kind"] == "bundle"
+    assert ch["items"][0]["cards"][0]["n"] == "痛击"
+    assert "10点伤害" in ch["items"][0]["cards"][0]["fx"]
+
+
 def test_shop_with_shelf_open_closes_it_when_the_model_fails(monkeypatch):
     """货架开着时本地兜底必须能关货架，否则整局停在商店（run-0111）。"""
     monkeypatch.setattr(play, "_remember_speech", lambda t: None)

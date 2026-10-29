@@ -321,9 +321,14 @@ def _ensure_run(sts2, state: dict) -> dict | None:
 
 # ---------------------------------------------------------------- 地图
 def _map_nodes(state: dict) -> tuple[list[dict], list[dict]]:
-    nodes = [n for n in ((state.get("map") or {}).get("nodes") or [])
-             if isinstance(n, dict)]
-    return nodes, [n for n in nodes if n.get("is_available")]
+    mp = state.get("map") or {}
+    nodes = [n for n in (mp.get("nodes") or []) if isinstance(n, dict)]
+    # 模组 choose_map_node 的 option_index 是 available_nodes 的下标，优先用它，
+    # 别指望「nodes 过滤 is_available」的顺序和它一致。
+    avail = [n for n in (mp.get("available_nodes") or []) if isinstance(n, dict)]
+    if not avail:
+        avail = [n for n in nodes if n.get("is_available")]
+    return nodes, avail
 
 
 def _route_plan(sts2) -> dict:
@@ -572,7 +577,8 @@ def _combat(sts2, advisor, state: dict, *, mode: str = "local",
 # ---------------------------------------------------------------- 界面决策（LLM 优先）
 # 这些屏幕的点击属于「玩家决策」：llm 模式先问模型，模型给不出可执行动作才退回本地启发式。
 # 主菜单/角色选择/确认框是过场管道，不算决策，始终走本地。
-LLM_SCREENS = ("MAP", "EVENT", "REST", "SHOP", "CHEST", "REWARD", "CARD_SELECTION")
+LLM_SCREENS = ("MAP", "EVENT", "REST", "SHOP", "CHEST", "REWARD",
+                "CARD_SELECTION", "BUNDLE_SELECTION")
 
 
 def _screen_llm(sts2, planner, state: dict, screen: str) -> str:
@@ -879,6 +885,20 @@ def _shop(sts2, state: dict) -> str:
     return "SHOP unknown"
 
 
+def _bundle(sts2, state: dict) -> str:
+    """牌包选择：模型失败时兜底挑第一包再确认，别把整局停在第 1 层。"""
+    acts = _acts(state)
+    bundles = [b for b in (state.get("bundles") or []) if isinstance(b, dict)]
+    if "choose_bundle" in acts and bundles:
+        idx = int(bundles[0].get("index") or 0)
+        sts2.act("choose_bundle", option_index=idx)
+        return "BUNDLE pick"
+    if "confirm_bundle" in acts:
+        sts2.act("confirm_bundle")
+        return "BUNDLE confirm"
+    return "BUNDLE unknown"
+
+
 def _chest(sts2, state: dict) -> str:
     acts = _acts(state)
     if "open_chest" in acts:
@@ -909,7 +929,8 @@ def _chest(sts2, state: dict) -> str:
 
 def _modal(sts2, state: dict) -> str:
     # 主菜单的 abandon_run 会弹确认框，只认 proceed/dismiss 会停手。
-    for name in ("proceed", "confirm_modal", "dismiss_modal", "dismiss",
+    # confirm 优先：这些框都是我们自己点的动作弹出来的（放弃/存档退出），确认才是本意。
+    for name in ("confirm_modal", "dismiss_modal", "proceed", "dismiss",
                  "close_modal", "close"):
         if name in _acts(state):
             sts2.act(name)
@@ -923,6 +944,10 @@ def _one_step(sts2, advisor, state: dict, *, mode: str = "local",
     if _stopping():
         return "STOPPED"
     screen = _screen(state)
+    acts = _acts(state)
+    if "confirm_modal" in acts or "dismiss_modal" in acts:
+        # 确认框弹着时底层屏幕的按钮点不动，先把它收掉（否则会一直 UNKNOWN/WAIT）。
+        return _modal(sts2, state)
     if screen == "GAME_OVER":
         return "GAME_OVER"
     if screen in ("MAIN_MENU", "CHARACTER_SELECT"):
@@ -955,6 +980,8 @@ def _one_step(sts2, advisor, state: dict, *, mode: str = "local",
         return _shop(sts2, state)
     if screen == "CHEST":
         return _chest(sts2, state)
+    if screen == "BUNDLE_SELECTION":
+        return _bundle(sts2, state)
     if screen == "MODAL":
         return _modal(sts2, state)
     return f"UNKNOWN {screen}"

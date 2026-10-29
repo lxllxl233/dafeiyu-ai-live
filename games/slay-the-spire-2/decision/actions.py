@@ -45,11 +45,27 @@ def _run(state: dict) -> dict:
 
 # ---------------------------------------------------------------- 菜单
 def _map_menu(state: dict) -> list[dict]:
-    if "choose_map_node" not in _acts(state):
+    acts = _acts(state)
+    if "choose_map_node" not in acts:
         return []
-    nodes = [n for n in ((state.get("map") or {}).get("nodes") or [])
-             if isinstance(n, dict) and n.get("is_available")]
+    mp = state.get("map") or {}
+    graph = [n for n in (mp.get("nodes") or []) if isinstance(n, dict)]
+    by_coord = {(n.get("row"), n.get("col")): n for n in graph}
     out = []
+    # 模组 choose_map_node 的 option_index 就是 available_nodes 的下标；照抄它，
+    # 别依赖「nodes 过滤 is_available 后的顺序」碰巧一致。
+    avail = [n for n in (mp.get("available_nodes") or []) if isinstance(n, dict)]
+    if avail:
+        for pos, n in enumerate(avail):
+            row, col = n.get("row"), n.get("col")
+            g = by_coord.get((row, col)) or {}
+            nxt = ",".join(str((c or {}).get("node_type") or "?")
+                           for c in (g.get("children") or []) if isinstance(c, dict))
+            out.append({"a": "choose_map_node", "i": _int(n.get("index"), pos),
+                        "n": f"{n.get('node_type') or '?'} ({row},{col})",
+                        "fx": f"后续：{nxt}" if nxt else ""})
+        return out
+    nodes = [n for n in graph if n.get("is_available")]
     for i, n in enumerate(nodes):
         nxt = ",".join(str((c or {}).get("node_type") or "?")
                        for c in (n.get("children") or []) if isinstance(c, dict))
@@ -92,6 +108,8 @@ def _reward_menu(state: dict) -> list[dict]:
     rw = state.get("reward") or {}
     out = []
     for i, r in enumerate([x for x in (rw.get("rewards") or []) if isinstance(x, dict)]):
+        if r.get("claimable") is False or r.get("claimed"):
+            continue
         out.append({"a": "claim_reward", "i": i,
                     "n": _short(r.get("name") or r.get("reward_type") or "奖励", 30),
                     "fx": _short(r.get("description") or "", 60)})
@@ -159,9 +177,7 @@ def _shop_menu(state: dict) -> list[dict]:
                     "n": f"删牌服务 {price}金",
                     "fx": "挑一张牌永久移除（脚本按价值自动挑）",
                     "ok": price <= gold})
-    if "leave_shop" in acts:
-        out.append({"a": "leave_shop", "i": None, "n": "离开商店", "fx": ""})
-    elif "proceed" in acts:
+    if "proceed" in acts:
         out.append({"a": "proceed", "i": None, "n": "继续", "fx": ""})
     return out
 
@@ -174,7 +190,7 @@ def _chest_menu(state: dict) -> list[dict]:
     out = []
     if "open_chest" in acts:
         out.append({"a": "open_chest", "i": None, "n": "打开宝箱", "fx": ""})
-    if "choose_treasure_relic" in acts:
+    if "choose_treasure_relic" in acts and not ch.get("has_relic_been_claimed"):
         for i, r in enumerate([x for x in (ch.get("relic_options") or [])
                                if isinstance(x, dict)]):
             out.append({"a": "choose_treasure_relic", "i": i,
@@ -185,13 +201,9 @@ def _chest_menu(state: dict) -> list[dict]:
             out.append({"a": "claim_reward", "i": i,
                         "n": _short(r.get("name") or r.get("reward_type") or "奖励", 26),
                         "fx": _short(r.get("description") or "", 60)})
-    if "claim_all_rewards" in acts:
-        out.append({"a": "claim_all_rewards", "i": None, "n": "收下全部", "fx": ""})
     if "collect_rewards_and_proceed" in acts:
         out.append({"a": "collect_rewards_and_proceed", "i": None,
                     "n": "收下全部并继续", "fx": ""})
-    if "close_chest" in acts:
-        out.append({"a": "close_chest", "i": None, "n": "关掉宝箱", "fx": ""})
     if "proceed" in acts:
         out.append({"a": "proceed", "i": None, "n": "继续", "fx": ""})
     return out
@@ -220,6 +232,43 @@ def _select_menu(state: dict) -> list[dict]:
         out.append({"a": "confirm_selection", "i": None, "n": "确认", "fx": ""})
     if "skip_reward_cards" in acts:
         out.append({"a": "skip_reward_cards", "i": None, "n": "跳过选牌", "fx": ""})
+    # 牌组查看（只退不选）时只有 close_cards_view；不列就整屏没有出口。
+    if "close_cards_view" in acts:
+        out.append({"a": "close_cards_view", "i": None, "n": "关闭牌组", "fx": ""})
+    return out
+
+
+def _bundle_menu(state: dict) -> list[dict]:
+    """开局「选一组牌包」：BUNDLE_SELECTION 之前没有菜单，整局在第 1 层就停了（run-0116 前）。"""
+    acts = _acts(state)
+    bundles = [b for b in (state.get("bundles") or []) if isinstance(b, dict)]
+    out = []
+    if "choose_bundle" in acts:
+        for pos, b in enumerate(bundles):
+            cards = [c for c in (b.get("cards") or []) if isinstance(c, dict)]
+            names = "、".join(_short(c.get("name") or c.get("card_id") or "?", 12)
+                             for c in cards) or f"牌包{pos}"
+            fx = "；".join(
+                f"{_short(c.get('name') or '', 10)}：{_short(c.get('resolved_rules_text') or '', 40)}"
+                for c in cards[:4])
+            out.append({"a": "choose_bundle", "i": _int(b.get("index"), pos),
+                        "n": names, "fx": fx})
+    if "confirm_bundle" in acts:
+        out.append({"a": "confirm_bundle", "i": None, "n": "确认牌包", "fx": ""})
+    return out
+
+
+def _modal_menu(state: dict) -> list[dict]:
+    """确认框弹着时只能点确认/取消；底层屏幕的选项此刻点不动。"""
+    acts = _acts(state)
+    md = state.get("modal") or {}
+    title = _short(md.get("title") or md.get("message") or "确认框", 40)
+    body = _short(md.get("description") or md.get("body") or md.get("message") or "", 70)
+    out = []
+    if "confirm_modal" in acts:
+        out.append({"a": "confirm_modal", "i": None, "n": f"确认（{title}）", "fx": body})
+    if "dismiss_modal" in acts:
+        out.append({"a": "dismiss_modal", "i": None, "n": "取消", "fx": ""})
     return out
 
 
@@ -231,12 +280,16 @@ _BUILDERS = {
     "SHOP": _shop_menu,
     "CHEST": _chest_menu,
     "CARD_SELECTION": _select_menu,
+    "BUNDLE_SELECTION": _bundle_menu,
 }
 
 
 def available(state: dict) -> list[dict]:
     """当前屏幕可点的动作菜单；LOCAL_SCREENS 之外返回空。"""
     screen = str(state.get("screen") or "").upper()
+    acts = _acts(state)
+    if "confirm_modal" in acts or "dismiss_modal" in acts:
+        return _modal_menu(state)
     builder = _BUILDERS.get(screen)
     if builder is None:
         return []

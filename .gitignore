@@ -57,3 +57,4 @@ logs/*.lock
 logs/*.html
 logs/*profile*/
 logs/pet_src/
+games/*.7z

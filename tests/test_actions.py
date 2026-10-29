@@ -90,15 +90,16 @@ def test_event_menu_skips_locked_options():
         ("choose_event_option", 1)]
 
 
-def test_shop_menu_drops_unaffordable_items_and_offers_leave():
+def test_shop_menu_drops_unaffordable_items_and_offers_proceed():
+    # mod v0.8.0 不发 leave_shop：货架关掉后出口是 proceed。
     state = {"screen": "SHOP", "run": {"gold": 60},
-             "available_actions": ["buy_card", "buy_relic", "leave_shop"],
+             "available_actions": ["buy_card", "buy_relic", "proceed"],
              "shop": {"cards": [{"name": "重击", "price": 50, "available": True},
                                 {"name": "恶魔形态", "price": 300, "available": True}],
                       "relics": [{"name": "燃烧之血", "price": 150, "available": True}],
                       "potions": []}}
     assert [(e["a"], e["i"]) for e in actions.available(state)] == [
-        ("buy_card", 0), ("leave_shop", None)]
+        ("buy_card", 0), ("proceed", None)]
 
 
 def test_shop_menu_lists_close_shelf_while_open():
@@ -131,13 +132,24 @@ def test_card_reward_menu_uses_choose_reward_card():
     assert entry is not None and err == "" and entry["n"] == "防御"
 
 
-def test_chest_menu_can_claim_rewards_and_close():
+def test_chest_menu_can_claim_rewards_and_continue():
+    # mod 的发奖动作用 claim_reward（claim_all_rewards / close_chest 它根本不发）。
     state = {"screen": "CHEST",
-             "available_actions": ["claim_all_rewards", "collect_rewards_and_proceed"],
-             "chest": {"relic_options": [{"name": "燃烧之血"}]}}
+             "available_actions": ["claim_reward", "collect_rewards_and_proceed"],
+             "chest": {"relic_options": [{"name": "燃烧之血"}]},
+             "reward": {"rewards": [{"name": "金币", "reward_type": "Gold",
+                                     "claimable": True}]}}
     menu = actions.available(state)
     assert [(e["a"], e["i"]) for e in menu] == [
-        ("claim_all_rewards", None), ("collect_rewards_and_proceed", None)]
+        ("claim_reward", 0), ("collect_rewards_and_proceed", None)]
+
+
+def test_chest_menu_hides_claimed_relic():
+    state = {"screen": "CHEST",
+             "available_actions": ["choose_treasure_relic", "proceed"],
+             "chest": {"has_relic_been_claimed": True,
+                       "relic_options": [{"name": "燃烧之血"}]}}
+    assert [(e["a"], e["i"]) for e in actions.available(state)] == [("proceed", None)]
 
 
 def test_map_menu_only_lists_available_nodes():

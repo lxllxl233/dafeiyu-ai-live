@@ -40,6 +40,20 @@
   现在货架打开且服务可用时菜单会给出「删牌服务 100金」（模组接口不收参数，
   所以 `i` 必须是 None），选中后进入选牌界面，脚本按价值自动挑牌、确认；
   另外「开/关货架」两种返回并成同一个卡住键，来回切换也会被防呆收掉。
+- **白名单菜单审计**：逐屏对了一遍模组 `GameActionService` 真正支持的动作，补上
+  漏掉的出口——① 开局「选牌包」`BUNDLE_SELECTION` 之前根本没有菜单，整局在第 1 层
+  以 `UNKNOWN BUNDLE_SELECTION` 收尾（run-0116 之前那次就是这么停的）；② 确认框
+  （`confirm_modal`/`dismiss_modal`）现在优先于底层屏幕，否则放弃/存档退出后会卡在
+  `WAIT_MAIN_MENU`；③ 地图改用模组的 `available_nodes` 下标（之前靠
+  `nodes.is_available` 的过滤顺序碰巧一致）；④ 选牌界面补 `close_cards_view`；
+  ⑤ 奖励只列 `claimable` 的、宝箱不列已领走的遗物；⑥ 删掉模组根本不发的死项
+  `claim_all_rewards` / `close_chest` / `leave_shop`。另加一条守卫测试：菜单里出现的
+  动作名必须都在模组动作表里。已知仍不支持：`CAPSTONE_SELECTION`（模组没暴露选项
+  数量，进不到这个屏幕）。
+- **CLI 托管不再被外部状态覆盖弄停**：`python main.py play` 的等待循环只看
+  `logs/autoplay.json` 的 `running`，别的进程（跑测试、toy-duel 验收）把它写成
+  `game=toy-duel, running=false` 时，正在直播的这一局会被静默停掉（实机 15:54）。
+  现在 pid 不是本进程时继续等，不跟着退出。
 - **商店的遗物/药水也带上效果**：商店 payload 只给名字和价格，ctx.shop.items
   里的遗物/药水没有说明，模型只能凭名字猜，历史上一件遗物/药水都没买过。
   现在从本地 RELIC_DB/POTION_DB 补效果文本（菜单和 ctx 都补），药水标

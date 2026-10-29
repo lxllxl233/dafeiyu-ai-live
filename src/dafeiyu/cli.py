@@ -345,9 +345,22 @@ def cmd_play(args) -> int:
     if not result.get("ok"):
         return 1
     last = None
+    started_pid = int((result.get("status") or {}).get("pid") or 0)
+    foreign = 0
     try:
-        while status().get("running"):
+        while True:
             now = status()
+            if not now.get("running"):
+                # 状态文件被别的局/别的进程覆盖（实机：跑测试或第二游戏验收把
+                # logs/autoplay.json 写成了另一局、running=false），
+                # 但本进程的线程还在打——别跟着退出，否则直播间会被静默停掉。
+                if started_pid and int(now.get("pid") or 0) != started_pid:
+                    foreign += 1
+                    if foreign < 600:
+                        time.sleep(1.0)
+                        continue
+                break
+            foreign = 0
             key = (now.get("screen"), now.get("floor"), now.get("hp"), now.get("step"),
                    now.get("last"), now.get("tokens_total"))
             if key != last:

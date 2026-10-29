@@ -856,6 +856,20 @@ def _choice(state: dict) -> dict:
                                             "draw", "en", "vuln", "weak", "aoe", "x", "exh")
                           if k in e})
         return {"kind": "reward", "items": items, "cards": cards}
+    if sc == "BUNDLE_SELECTION":
+        bs = [b for b in (state.get("bundles") or []) if isinstance(b, dict)]
+        items = []
+        for pos, b in enumerate(bs):
+            cards = [x for x in (b.get("cards") or []) if isinstance(x, dict)]
+            items.append({
+                "i": _int(b.get("index"), pos),
+                "cards": [{"n": _short(x.get("name") or x.get("card_id") or "", 20),
+                           "c": _int(x.get("energy_cost"), 0),
+                           "t": str(x.get("card_type") or "")[:1],
+                           "fx": _short(x.get("resolved_rules_text") or x.get("rules_text") or "", 50)}
+                          for x in cards],
+            })
+        return {"kind": "bundle", "items": items}
     if sc == "SHOP":
         sh = state.get("shop") or {}
         out = {"kind": "shop", "gold": _int((state.get("run") or {}).get("gold")), "items": []}
