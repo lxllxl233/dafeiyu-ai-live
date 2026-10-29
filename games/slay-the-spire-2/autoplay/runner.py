@@ -937,6 +937,8 @@ def _screen_llm(sts2, planner, state: dict, screen: str) -> str:
             return ""
         _log("llm_screen", screen=screen, act=entry["a"], i=entry.get("i"),
              tokens=res.get("usage"), say=text[:120])
+        if entry["a"] == "skip_reward_cards":
+            _reward_leave(sts2)     # 别让 Card 奖励留在屏上再被 claim 一次
         return f"{screen} {actions.label(entry)}"
     _log("llm_fallback", error=f"{screen} 规划不可用：{feedback}"[:200])
     return ""
@@ -1033,6 +1035,28 @@ def _deck_order(state: dict, sel: dict, cards: list[dict]) -> list[int]:
     return order
 
 
+def _reward_leave(sts2) -> str:
+    """跳过选牌后把奖励屏收掉。
+
+    mod 的 ``skip_reward_cards`` 只关掉选牌（pending=False），Card 奖励还留在
+    奖励列表里 claimable；下一步再从奖励屏 claim 同一张就会无限循环
+    （run-0005 f1 实测：REWARD claim → CARD skip → REWARD claim…300+ 步）。
+    """
+    try:
+        now = sts2.get_state()
+    except Exception as exc:  # noqa: BLE001
+        _log("reward_leave_state_failed", error=f"{type(exc).__name__}: {exc}")
+        return ""
+    if "collect_rewards_and_proceed" in _acts(now):
+        try:
+            sts2.act("collect_rewards_and_proceed")
+            _log("reward_leave")
+            return "leave"
+        except Exception as exc:  # noqa: BLE001
+            _log("reward_leave_failed", error=f"{type(exc).__name__}: {exc}")
+    return ""
+
+
 def _card_selection(sts2, state: dict) -> str:
     acts = _acts(state)
     sel = state.get("selection") or {}
@@ -1047,7 +1071,7 @@ def _card_selection(sts2, state: dict) -> str:
             pass
         if "skip_reward_cards" in acts:
             sts2.act("skip_reward_cards")
-            return "CARD skip"
+            return "CARD skip+leave" if _reward_leave(sts2) else "CARD skip"
     if "select_deck_card" in acts and cards:
         need = _selection_need(sel)
         # mod 0.8.0 起牌组多选屏（「移除/升级 N 张」）支持 confirm_selection：
@@ -1101,7 +1125,7 @@ def _card_selection(sts2, state: dict) -> str:
         return "CARD confirm"
     if "skip_reward_cards" in acts:
         sts2.act("skip_reward_cards")
-        return "CARD skip"
+        return "CARD skip+leave" if _reward_leave(sts2) else "CARD skip"
     if "proceed" in acts:
         sts2.act("proceed")
         return "CARD proceed"

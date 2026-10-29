@@ -14,6 +14,10 @@
 
 ### Fixed
 
+- **奖励屏「跳过选牌」死循环**：mod 的 `skip_reward_cards` 只关掉选牌，Card 奖励
+  仍留在奖励列表里 `claimable`，下一步又从奖励屏点 `claim_reward` 打开同一张牌，
+  REWARD→CARD→REWARD 无限循环（run-0005 f1 实测卡了 300+ 步）。现在跳过选牌后
+  自动 `collect_rewards_and_proceed` 收掉奖励屏；LLM 直接选「跳过选牌」时也补这一步。
 - **添柴随机换手牌后重新读局面**：`STOKE` 这类「消耗所有手牌 + 随机生成」的牌，
   以前打完还按旧手牌续排，随机给的牌等于没看。现在 sim 把它记成手牌未知，
   `validate` 在生成边界拒绝后续预排（连 `end` 也不让接）：只打这张、不写 end，

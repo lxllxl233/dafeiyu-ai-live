@@ -7,12 +7,8 @@
 
 | 局 | 角色 | 进阶 | 结果 | 大小 | 文件 |
 |---|---|---|---|---|---|
-| 10 | — | — | autoplay_end | 1.4 GB | `slay-the-spire-2/run-0010/run.mp4` |
-| 9 | — | — | autoplay_end | 180.8 MB | `slay-the-spire-2/run-0009/run.mp4` |
-| 8 | — | — | run_end | 190.9 MB | `slay-the-spire-2/run-0008/run.mp4` |
-| 7 | — | — | autoplay_end | 480.1 MB | `slay-the-spire-2/run-0007/run.mp4` |
-| 5 | — | — | stopped | 950.4 MB | `slay-the-spire-2/run-0005/run.mp4` |
-| 4 | — | — | 自动玩 · llm | 0.0 B | `slay-the-spire-2/run-0004/` |
-| 3 | — | — | 自动玩 · llm | 0.0 B | `slay-the-spire-2/run-0003/` |
-| 2 | — | — | 自动玩 · llm | 0.0 B | `slay-the-spire-2/run-0002/` |
-| 1 | — | — | 自动玩 · llm | 2.2 GB | `slay-the-spire-2/run-0001/2026-10-29 17-01-26.mp4` |
+| 5 | — | — | autoplay_end | 190.6 MB | `slay-the-spire-2/run-0005/run.mp4` |
+| 4 | — | — | run_end | 1.2 GB | `slay-the-spire-2/run-0004/run.mp4` |
+| 3 | — | — | run_end | 1.0 GB | `slay-the-spire-2/run-0003/run.mp4` |
+| 2 | — | — | run_end | 700.5 MB | `slay-the-spire-2/run-0002/run.mp4` |
+| 1 | — | — | autoplay_end | 278.3 MB | `slay-the-spire-2/run-0001/run.mp4` |

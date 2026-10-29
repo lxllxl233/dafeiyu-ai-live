@@ -1505,3 +1505,37 @@ def test_recording_retries_even_without_run_id(monkeypatch):
                         lambda *a, **k: calls.append("start") or {"ok": True})
     play._maybe_split_recording({"run": {"floor": 2}})
     assert calls == ["start"]
+
+def test_card_skip_leaves_reward_screen_instead_of_looping():
+    """跳过选牌后 Card 奖励还 claimable：必须收掉奖励屏，否则 claim→skip 死循环。"""
+    card_state = {
+        "screen": "CARD_SELECTION",
+        "available_actions": ["choose_reward_card", "skip_reward_cards"],
+        "selection": {"kind": "deck_card_select",
+                      "cards": [{"index": 0, "name": "预判"}]},
+        "reward": {"pending_card_choice": True,
+                   "card_options": [{"index": 0, "card_id": "ANTICIPATE"}]},
+    }
+    reward_state = {
+        "screen": "REWARD",
+        "available_actions": ["collect_rewards_and_proceed", "claim_reward"],
+        "reward": {"rewards": [{"reward_type": "Card", "claimable": True}]},
+    }
+    fake = _FakeSts2([card_state, reward_state])
+    assert play._card_selection(fake, card_state) == "CARD skip+leave"
+    assert fake.calls == [("skip_reward_cards", {}),
+                          ("collect_rewards_and_proceed", {})]
+
+
+def test_card_skip_without_collect_action_falls_back():
+    card_state = {
+        "screen": "CARD_SELECTION",
+        "available_actions": ["choose_reward_card", "skip_reward_cards"],
+        "selection": {"kind": "deck_card_select",
+                      "cards": [{"index": 0, "name": "预判"}]},
+    }
+    stuck = {"screen": "REWARD", "available_actions": ["claim_reward"],
+             "reward": {"rewards": [{"reward_type": "Card", "claimable": True}]}}
+    fake = _FakeSts2([card_state, stuck])
+    assert play._card_selection(fake, card_state) == "CARD skip"
+    assert fake.calls == [("skip_reward_cards", {})]
