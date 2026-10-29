@@ -265,8 +265,6 @@
         <i>▦</i><span>游戏</span><b id="navGame">—</b></button>
       <button class="nav-item" type="button" data-view="persona">
         <i>✎</i><span>人设配置</span><b id="navPersona">—</b></button>
-      <button class="nav-item" type="button" data-view="skill">
-        <i>▤</i><span>对战手册</span><b id="navSkill">—</b></button>
       <div class="nav-group">直播</div>
       <button class="nav-item" type="button" data-view="room">
         <i>◉</i><span>直播间</span><b id="navRoom">—</b></button>
@@ -377,7 +375,26 @@
         </div>
         <div class="card">
           <h2>游戏列表 <span id="gameCount">—</span></h2>
+          <div class="hint" style="margin-bottom:8px;color:var(--muted);font-size:11px">点一个游戏 → 编辑它的策略文档、查看并完善资料笔记。</div>
           <div id="gameRows"></div>
+        </div>
+        <div class="card" id="gameDetailCard" style="grid-column:1/-1;display:none">
+          <h2><span id="gameDetailTitle">游戏详情</span> <span id="gameDetailMeta">—</span></h2>
+          <div class="hint" id="gameDetailDesc" style="line-height:1.8;color:var(--muted)">—</div>
+          <div class="editor">
+            <select id="gEditFile" onchange="loadGameFile()"></select>
+            <textarea id="gEditText" spellcheck="false" placeholder="选择一篇策略文档开始编辑…"></textarea>
+            <div class="meta" id="gEditHint">OS.md 上限 15000 字节 / 215 行 / 4600 token。</div>
+            <div class="row" style="margin-top:0">
+              <button class="btn" type="button" onclick="saveGameFile()">保存</button>
+              <button class="btn ghost" type="button" onclick="loadGameFile()">还原</button>
+              <span class="hint" id="gEditState"></span>
+            </div>
+          </div>
+          <h2 style="margin-top:14px">游戏资料 <span>原始资料只读，策略与笔记可编辑</span></h2>
+          <div class="hint" id="gMatCounts" style="line-height:1.8;color:var(--muted)">—</div>
+          <div class="chips" id="gMatFiles"></div>
+          <pre id="gMatPreview" style="max-height:260px;overflow:auto;white-space:pre-wrap;font-size:11px;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px;margin-top:10px">点上面的资料文件查看内容。</pre>
         </div>
       </div>
     </section>
@@ -416,31 +433,6 @@
               <button class="btn ghost" type="button" onclick="loadPersonaFile()">还原</button>
               <button class="btn ghost" type="button" onclick="reloadPersona()">重载人设</button>
               <span class="hint" id="pEditState"></span>
-            </div>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <section class="view" data-view="skill" id="view-skill">
-      <div class="view-head">
-        <div>
-          <span class="eyebrow">SKILL / PLAYBOOK</span>
-          <h2>对战手册</h2>
-          <p>改游戏包里的知识文档（决策手册 / 卡表 / 敌人 / 主播稿）。保存前按字节 / 行 / token 限额校验，超限拒绝。</p>
-        </div>
-      </div>
-      <div class="grid wide">
-        <div class="card" style="grid-column:1/-1">
-          <h2>编辑手册 <span>Markdown · 保存即写盘</span></h2>
-          <div class="editor">
-            <select id="sEditFile" onchange="loadSkillFile()"></select>
-            <textarea id="sEditText" spellcheck="false" placeholder="选择一篇手册开始编辑…"></textarea>
-            <div class="meta" id="sEditHint">OS.md 上限 15000 字节 / 215 行 / 4600 token；实时战斗提示词仍是 prompts.py，不走这里。</div>
-            <div class="row" style="margin-top:0">
-              <button class="btn" type="button" onclick="saveSkillFile()">保存</button>
-              <button class="btn ghost" type="button" onclick="loadSkillFile()">还原</button>
-              <span class="hint" id="sEditState"></span>
             </div>
           </div>
         </div>
@@ -795,62 +787,107 @@ async function reloadPersona(){
   }
 }
 
-let SKILL = null;
+let GAME_DOC = null;
+let GAME_SEL = "";
 
-async function loadSkill(){
+async function openGame(gid){
+  GAME_SEL = gid || "";
+  if(!GAME_SEL) return;
+  $("#gameDetailCard").style.display = "";
+  $("#gameDetailTitle").textContent = "游戏详情";
+  $("#gameDetailMeta").textContent = GAME_SEL;
+  $("#gEditState").textContent = "加载中…";
   try{
-    const r = await fetch("/api/skill", {cache:"no-store"});
-    if(!r.ok) throw new Error("HTTP " + r.status);
-    SKILL = await r.json();
-    if(!SKILL.ok) throw new Error(SKILL.error || "没有手册");
-    const sel = $("#sEditFile");
-    const cur = sel.value;
-    sel.innerHTML = (SKILL.files || []).map(f =>
-      `<option value="${esc(f.name)}">${esc(f.label || f.name)}</option>`).join("");
-    if(cur && (SKILL.files || []).some(f => f.name === cur)) sel.value = cur;
-    loadSkillFile();
+    const r = await fetch("/api/skill?game=" + encodeURIComponent(GAME_SEL), {cache:"no-store"});
+    const d = await r.json();
+    if(!d.ok) throw new Error(d.error || ("HTTP " + r.status));
+    GAME_DOC = d;
+    const info = d.info || {};
+    const m = info.manifest || {};
+    $("#gameDetailTitle").textContent = info.name || GAME_SEL;
+    $("#gameDetailMeta").textContent = `${m.version || info.version || ""} · ${m.platform || info.platform || ""}`;
+    $("#gameDetailDesc").textContent = m.notes || m.description || info.description || "";
+    const groups = [["strategy", "决策手册"], ["notes", "资料笔记"], ["caster", "主播稿"]];
+    const sel = $("#gEditFile");
+    sel.innerHTML = groups.map(([g, label]) => {
+      const items = (d.files || []).filter(f => (f.group || "strategy") === g);
+      if(!items.length) return "";
+      return `<optgroup label="${esc(label)}">` + items.map(f =>
+        `<option value="${esc(f.name)}">${esc(f.label || f.name)}</option>`).join("") + `</optgroup>`;
+    }).join("");
+    renderGameMaterials(d.materials || {});
+    loadGameFile();
+    $("#gEditState").textContent = "";
   }catch(e){
-    $("#sEditHint").textContent = "手册加载失败：" + e.message;
+    $("#gEditState").textContent = "";
+    $("#gEditHint").textContent = "加载失败：" + e.message;
   }
 }
 
-function loadSkillFile(){
-  const name = $("#sEditFile").value;
-  if(!SKILL || !name) return;
-  const text = (SKILL.texts || {})[name] || "";
-  $("#sEditText").value = text;
-  renderSkillHint(name, text);
-  $("#sEditState").textContent = "";
+function loadGameFile(){
+  const name = $("#gEditFile").value;
+  if(!GAME_DOC || !name) return;
+  const text = (GAME_DOC.texts || {})[name] || "";
+  $("#gEditText").value = text;
+  renderGameHint(name, text);
+  $("#gEditState").textContent = "";
 }
 
-function renderSkillHint(name, text){
-  const f = (SKILL?.files || []).find(x => x.name === name) || {};
+function renderGameHint(name, text){
+  const f = (GAME_DOC?.files || []).find(x => x.name === name) || {};
   const lim = f.limit || {};
   const bytes = new TextEncoder().encode(text).length;
   const lines = text ? text.split("\n").length : 0;
   const caps = lim.bytes ? ` · 上限 ${lim.bytes}B / ${lim.lines} 行 / ${lim.tokens} token` : "";
-  $("#sEditHint").innerHTML = `<b>${esc(name)}</b> · ${bytes} 字节 · ${lines} 行${caps}`;
+  $("#gEditHint").innerHTML = `<b>${esc(name)}</b> · ${bytes} 字节 · ${lines} 行${caps}`;
 }
 
-async function saveSkillFile(){
-  const name = $("#sEditFile").value;
-  if(!name){ toast("先选一篇手册"); return; }
-  const text = $("#sEditText").value;
-  $("#sEditState").textContent = "保存中…";
+async function saveGameFile(){
+  const name = $("#gEditFile").value;
+  if(!GAME_SEL || !name){ toast("先选一篇文档"); return; }
+  const text = $("#gEditText").value;
+  $("#gEditState").textContent = "保存中…";
   try{
     const r = await fetch("/api/skill", {
       method: "POST",
       headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({name, text}),
+      body: JSON.stringify({game: GAME_SEL, name, text}),
     });
     const d = await r.json();
     if(!r.ok || !d.ok) throw new Error(d.error || ("HTTP " + r.status));
-    toast(d.message || "手册已保存");
-    $("#sEditState").textContent = d.message || "已保存";
-    await loadSkill();
+    toast(d.message || "已保存");
+    $("#gEditState").textContent = d.message || "已保存";
+    await openGame(GAME_SEL);
   }catch(e){
-    $("#sEditState").textContent = "";
+    $("#gEditState").textContent = "";
     toast("保存失败：" + e.message, true);
+  }
+}
+
+function renderGameMaterials(mats){
+  const counts = mats.counts || {};
+  const names = {cards: "卡牌", relics: "遗物", monsters: "敌人", potions: "药水",
+                 events: "事件", encounters: "遭遇", powers: "能力", characters: "角色"};
+  const parts = Object.keys(names).filter(k => counts[k] != null)
+    .map(k => `${names[k]} ${counts[k]}`);
+  $("#gMatCounts").textContent = parts.length
+    ? "资料库：" + parts.join(" · ") + "（原始 JSON 只读）" : "这个游戏没有原始资料库。";
+  const files = mats.files || [];
+  $("#gMatFiles").innerHTML = files.slice(0, 24).map(f =>
+    `<span class="chip" data-mat="${esc(f.name)}" onclick="previewMaterial('${esc(f.name)}')">${esc(f.label || f.name)} · ${Math.round((f.bytes || 0) / 1024)}KB</span>`).join("");
+}
+
+async function previewMaterial(rel){
+  if(!GAME_SEL) return;
+  $("#gMatPreview").textContent = "加载中…";
+  try{
+    const r = await fetch(`/api/skill?game=${encodeURIComponent(GAME_SEL)}&material=${encodeURIComponent(rel)}`,
+                          {cache:"no-store"});
+    const d = await r.json();
+    if(!d.ok) throw new Error(d.error || ("HTTP " + r.status));
+    $("#gMatPreview").textContent = d.text + (d.truncated ? "\n…（已截断，只显示前 20KB）" : "");
+  }catch(e){
+    $("#gMatPreview").textContent = "加载失败：" + e.message;
   }
 }
 
@@ -890,7 +927,7 @@ function renderGames(){
     if(compat.api) badges.push(`<span class="badge">API ${esc(compat.api)}</span>`);
     if(corpus.db) badges.push(`<span class="badge gold">${esc(corpus.db)}</span>`);
     if(corpus.tables) badges.push(`<span class="badge">${esc(Object.values(corpus.tables).reduce((a,b)=>a+b,0))} 条资料</span>`);
-    return `<div class="game">
+    return `<div class="game" style="cursor:pointer" onclick="openGame('${esc(g.id)}')">
       <div class="gh">${dotFor(!!g.connected, true)}<span class="gn">${esc(g.name)}</span>
         <span class="gp">${esc(g.platform || "")}</span></div>
       <div class="gd">${esc(g.notes || "")}</div>
@@ -1498,6 +1535,10 @@ function setView(name, updateHash){
   const target = VIEW_ALIASES[name] || "basic";
   document.querySelectorAll(".view").forEach(v => v.classList.toggle("active", v.dataset.view === target));
   document.querySelectorAll(".nav-item").forEach(v => v.classList.toggle("active", v.dataset.view === target));
+  if(target === "games" && !GAME_SEL){
+    const cur = (DATA?.config || {}).game || "";
+    if(cur) openGame(cur);      // 进游戏页先展开当前游戏的详情
+  }
   if(updateHash !== false){
     const hash = target === "basic" ? "settings" : target;
     if(location.hash !== "#" + hash) history.replaceState(null, "", "#" + hash);
@@ -1556,7 +1597,6 @@ setView(location.hash.replace(/^#/, ""), false);
 setCounter();
 refresh();
 loadPersona();
-loadSkill();
 setInterval(refresh, 3000);
 </script>
 </body>

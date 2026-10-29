@@ -4,13 +4,14 @@
 
 ### Added
 
-- **控制台编辑对战手册**：新增「对战手册」页，可编辑游戏包里的知识文档——
-  `decision/knowledge/ironclad/OS.md`（决策手册）、`references/*.md`（卡表 / 敌人 /
-  药水 / 教训 / 流派）、`defect/OS.md` 和 `persona/*.md`（主播稿）。保存前按
-  OS.md 的 15000 字节 / 215 行 / 4600 token 限额校验，超限直接拒绝并说明；路径
-  白名单（不能写 `prompts.py` 或包外文件），写入按字节 + LF，写坏自动回滚。
-  接口是 `GET/POST /api/skill`，实现放在 `games/slay-the-spire-2/skills.py`
-  （核心不硬编码知识库路径）。
+- **游戏详情里编辑策略、查看资料**：控制台「游戏」页的游戏列表点进去，就是该游戏的
+  详情面板——上半部分是可编辑的策略文档（`decision/knowledge/ironclad/OS.md` 决策手册、
+  `references/*.md` 资料笔记、`defect/OS.md`、`persona/*.md` 主播稿），保存前按 OS.md 的
+  15000 字节 / 215 行 / 4600 token 限额校验，超限直接拒绝；下半部分是「游戏资料」：
+  `corpus/data/eng/*.json` 的条数统计（卡牌 / 遗物 / 敌人 / 药水 / 事件…）和只读 JSON
+  预览（超过 20KB 截断）。路径白名单（不能写 `prompts.py` 或包外文件），写入按字节 + LF，
+  写坏自动回滚。接口 `GET/POST /api/skill?game=<id>`，实现放在
+  `games/slay-the-spire-2/skills.py`（核心不硬编码知识库/资料路径）。
 
 ### Fixed
 

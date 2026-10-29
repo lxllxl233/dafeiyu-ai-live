@@ -1,4 +1,4 @@
-"""控制台「对战手册」编辑：白名单、限额校验、LF 写入。"""
+"""控制台「游戏 → 详情」：策略文档编辑、资料笔记白名单、原始资料只读预览。"""
 from __future__ import annotations
 
 import pytest
@@ -20,16 +20,29 @@ def _runtime():
     return rt
 
 
-def test_skill_files_are_whitelisted():
+def test_game_files_are_grouped_and_whitelisted():
     mod = _skills()
-    names = {f["name"] for f in mod.files()}
-    assert "decision/knowledge/ironclad/OS.md" in names
-    assert any(n.startswith("decision/knowledge/ironclad/references/") for n in names)
-    assert any(n.startswith("persona/") for n in names)
+    rows = mod.files()
+    groups = {r["group"] for r in rows}
+    assert {"strategy", "notes", "caster"} <= groups
+    assert any(r["name"].endswith("OS.md") for r in rows if r["group"] == "strategy")
+    assert any(r["group"] == "notes" for r in rows)
+    assert any(r["group"] == "caster" for r in rows)
     with pytest.raises(ValueError):
         mod.path_of("../config.json")
     with pytest.raises(ValueError):
         mod.path_of("decision/prompts.py")
+
+
+def test_material_index_and_preview_are_read_only():
+    mod = _skills()
+    mats = mod.materials()
+    assert mats["counts"].get("cards", 0) > 0
+    assert any(f["name"].endswith("cards.json") for f in mats["files"])
+    out = mod.material_text("corpus/data/eng/cards.json")
+    assert out["ok"] and out["text"]
+    with pytest.raises(ValueError):
+        mod.material_text("decision/knowledge/ironclad/OS.md")
 
 
 def test_skill_limits_reject_oversize():
@@ -39,7 +52,7 @@ def test_skill_limits_reject_oversize():
     assert err and "token" in err
 
 
-def test_save_skill_writes_lf_and_payload_reads_it(tmp_path, monkeypatch):
+def test_game_payload_and_save(tmp_path, monkeypatch):
     mod = _skills()
     target = tmp_path / "decision/knowledge/ironclad"
     target.mkdir(parents=True)
@@ -47,12 +60,20 @@ def test_save_skill_writes_lf_and_payload_reads_it(tmp_path, monkeypatch):
     monkeypatch.setattr(mod, "ROOT", tmp_path)
 
     rt = _runtime()
-    payload = rt.skill_payload()
-    assert payload["ok"]
+    payload = rt.skill_payload("slay-the-spire-2")
+    assert payload["ok"] and payload["game"] == "slay-the-spire-2"
+    assert payload["info"]["id"] == "slay-the-spire-2"
     name = "decision/knowledge/ironclad/OS.md"
     assert payload["texts"][name] == "旧内容\n"
 
-    out = rt.save_skill(name, "第一行\n第二行\n")
-    assert out["ok"] and out["bytes"] > 0
+    out = rt.save_skill(name, "第一行\n第二行\n", "slay-the-spire-2")
+    assert out["ok"] and out["game"] == "slay-the-spire-2"
     assert (target / "OS.md").read_bytes() == "第一行\n第二行\n".encode("utf-8")
-    assert rt.skill_payload()["texts"][name] == "第一行\n第二行\n"
+    assert rt.skill_payload("slay-the-spire-2")["texts"][name] == "第一行\n第二行\n"
+
+
+def test_game_without_skills_module_returns_error():
+    rt = _runtime()
+    payload = rt.skill_payload("toy-duel")
+    assert payload["ok"] is False
+    assert payload["files"] == []

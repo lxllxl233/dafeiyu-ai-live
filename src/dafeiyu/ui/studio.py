@@ -543,21 +543,34 @@ class StudioRuntime:
         self.persona = Persona.load(self.cfg.persona)
         return {"ok": True, "message": "人设已重载", "persona": self.persona.to_dict()}
 
-    # ---------------------------------------------------------------- 对战手册
-    def _game_skills(self):
-        """手册文件清单由游戏包声明（核心不硬编码知识库路径）。"""
+    # ---------------------------------------------------------------- 游戏策略/资料
+    def _game_skills(self, game: str | None = None):
+        """文件清单由游戏包声明（核心不硬编码知识库路径）。"""
+        gid = str(game or self.cfg.game or "")
         try:
-            return self.registry.load_game_module(self.cfg.game, "skills")
+            return self.registry.load_game_module(gid, "skills")
         except Exception:
             return None
 
-    def skill_payload(self) -> dict:
-        """控制台「对战手册」页：可编辑的知识文档 + 当前内容。"""
+    def _game_info(self, game: str) -> dict:
+        try:
+            for pack in self.registry.packs():
+                if pack.info.id == game:
+                    return pack.info.to_dict()
+        except Exception:  # noqa: BLE001
+            pass
+        return {}
+
+    def skill_payload(self, game: str | None = None) -> dict:
+        """游戏详情页：策略文档 + 可编辑内容 + 原始资料索引。"""
         self._sync_config()
-        mod = self._game_skills()
+        gid = str(game or self.cfg.game or "")
+        info = self._game_info(gid)
+        mod = self._game_skills(gid)
         if mod is None:
-            return {"ok": False, "error": "当前游戏没有可编辑的手册文档",
-                    "game": self.cfg.game, "files": [], "texts": {}}
+            return {"ok": False, "error": "这个游戏还没有可编辑的策略文档",
+                    "game": gid, "info": info, "files": [], "texts": {},
+                    "materials": {"counts": {}, "files": []}}
         files = mod.files()
         texts: dict[str, str] = {}
         for item in files:
@@ -565,18 +578,35 @@ class StudioRuntime:
                 texts[item["name"]] = (mod.ROOT / item["name"]).read_text(encoding="utf-8")
             except OSError:
                 texts[item["name"]] = ""
-        return {"ok": True, "game": self.cfg.game, "files": files, "texts": texts}
+        try:
+            mats = mod.materials()
+        except Exception:  # noqa: BLE001
+            mats = {"counts": {}, "files": []}
+        return {"ok": True, "game": gid, "info": info, "files": files,
+                "texts": texts, "materials": mats}
 
-    def save_skill(self, name: str, text: str) -> dict:
-        """保存一篇手册；超过限额/路径不合法直接拒绝，写坏回滚。"""
+    def material_preview(self, game: str, rel: str) -> dict:
+        """只读预览一份游戏原始资料（卡表/遗物/敌人 JSON）。"""
         self._sync_config()
-        mod = self._game_skills()
+        mod = self._game_skills(game)
         if mod is None:
-            raise ValueError("当前游戏没有可编辑的手册文档")
+            raise ValueError("这个游戏没有可查看的资料")
+        try:
+            return mod.material_text(rel)
+        except ValueError as exc:
+            raise ValueError(str(exc)) from exc
+
+    def save_skill(self, name: str, text: str, game: str | None = None) -> dict:
+        """保存一篇游戏策略/资料笔记；超过限额/路径不合法直接拒绝，写坏回滚。"""
+        self._sync_config()
+        gid = str(game or self.cfg.game or "")
+        mod = self._game_skills(gid)
+        if mod is None:
+            raise ValueError("这个游戏没有可编辑的策略文档")
         body = str(text or "")
         err = mod.validate(name, body)
         if err:
-            raise ValueError(f"手册校验失败：{err}")
+            raise ValueError(f"文档校验失败：{err}")
         path = mod.path_of(name)
         old = path.read_text(encoding="utf-8") if path.exists() else ""
         try:
@@ -584,9 +614,10 @@ class StudioRuntime:
         except Exception as exc:
             _atomic_write(path, old)
             raise ValueError(f"保存失败，已回滚：{exc}") from exc
-        return {"ok": True, "name": name, "bytes": len(body.encode("utf-8")),
+        return {"ok": True, "game": gid, "name": name,
+                "bytes": len(body.encode("utf-8")),
                 "tokens": mod.est_tokens(body),
-                "message": "手册已保存（按需读取时生效；实时提示词仍是 prompts.py）"}
+                "message": "已保存（按需读取时生效；实时提示词仍是 prompts.py）"}
 
     # ---------------------------------------------------------------- 说话
     def say(self, body: dict, add_comment: Callable[[dict], Any], *,

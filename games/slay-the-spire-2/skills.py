@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
@@ -24,22 +25,63 @@ def files() -> list[dict]:
     """可编辑文件：路径相对游戏包，带显示名和限额。"""
     out: list[dict] = []
 
-    def add(rel: str, label: str, limit: dict | None = None) -> None:
-        out.append({"name": rel, "label": label, "limit": dict(limit or {})})
+    def add(rel: str, label: str, group: str, limit: dict | None = None) -> None:
+        out.append({"name": rel, "label": label, "group": group,
+                    "limit": dict(limit or {})})
 
-    add("decision/knowledge/ironclad/OS.md", "铁甲 · 决策手册（OS.md）",
+    add("decision/knowledge/ironclad/OS.md", "铁甲 · 决策手册（OS.md）", "strategy",
         {"bytes": 15_000, "lines": 215, "tokens": 4600})
     refs = ROOT / "decision" / "knowledge" / "ironclad" / "references"
     for p in sorted(refs.glob("*.md")):
-        add(f"decision/knowledge/ironclad/references/{p.name}", f"铁甲 · {p.stem}")
+        add(f"decision/knowledge/ironclad/references/{p.name}",
+            f"资料笔记 · {p.stem}", "notes")
     defect = ROOT / "decision" / "knowledge" / "defect" / "OS.md"
     if defect.exists():
-        add("decision/knowledge/defect/OS.md", "缺陷 · 决策手册（OS.md）")
+        add("decision/knowledge/defect/OS.md", "缺陷 · 决策手册（OS.md）", "strategy")
     for p in sorted((ROOT / "persona").glob("*.md")):
         if p.name == "README.md":
             continue
-        add(f"persona/{p.name}", f"主播稿 · {p.name}")
+        add(f"persona/{p.name}", f"主播稿 · {p.name}", "caster")
     return out
+
+
+MATERIAL_DIR = "corpus/data/eng"
+_MATERIAL_LIMIT = 20_000       # 预览截断（原始 JSON 动辄几百 KB）
+
+
+def materials() -> dict:
+    """游戏原始资料（只读）：卡/遗物/敌人/药水等 JSON 的条数与文件。"""
+    data = ROOT / "corpus" / "data" / "eng"
+    counts: dict[str, int] = {}
+    for key, fn in (("cards", "cards.json"), ("relics", "relics.json"),
+                    ("monsters", "monsters.json"), ("potions", "potions.json"),
+                    ("events", "events.json"), ("encounters", "encounters.json"),
+                    ("powers", "powers.json"), ("characters", "characters.json")):
+        p = data / fn
+        if not p.is_file():
+            continue
+        try:
+            raw = json.loads(p.read_text(encoding="utf-8"))
+            counts[key] = len(raw) if hasattr(raw, "__len__") else 0
+        except (OSError, ValueError):
+            continue
+    files = []
+    for p in sorted(data.glob("*.json")):
+        files.append({"name": f"{MATERIAL_DIR}/{p.name}", "label": p.stem,
+                      "bytes": p.stat().st_size})
+    return {"counts": counts, "files": files}
+
+
+def material_text(rel: str, limit: int = _MATERIAL_LIMIT) -> dict:
+    """读一份原始资料（只读预览，超长截断）。"""
+    rel = str(rel or "").replace("\\", "/").strip("/")
+    if not rel.startswith(MATERIAL_DIR + "/") or rel not in {
+            f["name"] for f in materials()["files"]}:
+        raise ValueError(f"{rel or '（空）'} 不是可查看的游戏资料")
+    p = ROOT / rel
+    text = p.read_text(encoding="utf-8")
+    return {"ok": True, "name": rel, "bytes": len(text.encode("utf-8")),
+            "text": text[:limit], "truncated": len(text) > limit}
 
 
 def path_of(rel: str) -> Path:
@@ -66,4 +108,5 @@ def validate(rel: str, text: str) -> str | None:
     return None
 
 
-__all__ = ["ROOT", "MAX_BYTES", "est_tokens", "files", "path_of", "validate"]
+__all__ = ["ROOT", "MAX_BYTES", "est_tokens", "files", "path_of", "validate",
+           "materials", "material_text"]

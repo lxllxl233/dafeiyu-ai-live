@@ -36,8 +36,9 @@ REQUIRED = {
     "tokKinds", "tokApiHint",
     # 人设/梗编辑
     "pEditFile", "pEditText", "pEditHint", "pEditState",
-    # 对战手册
-    "sEditFile", "sEditText", "sEditHint", "sEditState",
+    # 游戏详情：策略/资料
+    "gameDetailCard", "gEditFile", "gEditText", "gEditHint", "gEditState",
+    "gMatCounts", "gMatFiles", "gMatPreview",
 }
 
 
@@ -75,10 +76,11 @@ def test_persona_editor_is_wired():
 
 def test_skill_editor_is_wired():
     assert "/api/skill" in HTML
-    assert "saveSkillFile" in HTML and "loadSkillFile" in HTML
-    assert 'data-view="skill"' in HTML
-    assert "对战手册" in HTML
+    assert "openGame" in HTML and "saveGameFile" in HTML and "loadGameFile" in HTML
+    assert "previewMaterial" in HTML
+    assert "游戏资料" in HTML
     assert "4600 token" in HTML
+    assert 'data-view="skill"' not in HTML      # 不再单独开页，收进游戏详情
 
 
 def test_token_card_is_wired_to_api_payload():

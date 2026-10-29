@@ -601,9 +601,19 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 from dafeiyu.ui.studio import get_runtime
 
-                body = json.dumps(get_runtime().skill_payload(),
-                                  ensure_ascii=False).encode("utf-8")
+                qs = urllib.parse.parse_qs(
+                    self.path.split("?", 1)[1] if "?" in self.path else "")
+                game = str((qs.get("game") or [""])[0] or "")
+                material = str((qs.get("material") or [""])[0] or "")
+                rt = get_runtime()
+                payload = (rt.material_preview(game, material) if material
+                           else rt.skill_payload(game))
+                body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
                 self._send(200, body, "application/json; charset=utf-8")
+            except ValueError as exc:
+                self._send(400, json.dumps({"ok": False, "error": str(exc)},
+                                           ensure_ascii=False).encode("utf-8"),
+                           "application/json; charset=utf-8")
             except Exception as exc:
                 self._send(500, json.dumps({"ok": False, "error": f"{type(exc).__name__}: {exc}"},
                                            ensure_ascii=False).encode("utf-8"),
@@ -752,7 +762,8 @@ class Handler(BaseHTTPRequestHandler):
                 from dafeiyu.ui.studio import get_runtime
 
                 result = get_runtime().save_skill(str(payload.get("name") or ""),
-                                                  str(payload.get("text") or ""))
+                                                  str(payload.get("text") or ""),
+                                                  str(payload.get("game") or ""))
                 self._send(200, json.dumps(result, ensure_ascii=False).encode("utf-8"),
                            "application/json; charset=utf-8")
             except ValueError as exc:
