@@ -384,11 +384,15 @@
           <div class="editor">
             <select id="gEditFile" onchange="loadGameFile()"></select>
             <textarea id="gEditText" spellcheck="false" placeholder="选择一篇策略文档开始编辑…"></textarea>
-            <div class="meta" id="gEditHint">OS.md 上限 15000 字节 / 215 行 / 4600 token。</div>
+            <div class="meta" id="gEditHint">不限字数，保存即写盘；页面会立刻刷新。</div>
             <div class="row" style="margin-top:0">
               <button class="btn" type="button" onclick="saveGameFile()">保存</button>
               <button class="btn ghost" type="button" onclick="loadGameFile()">还原</button>
               <span class="hint" id="gEditState"></span>
+            </div>
+            <div class="hint" id="gEditEffect" style="margin-top:6px;line-height:1.7;color:var(--muted);font-size:11px">
+              生效方式：文档保存后，Agent 下次按需读取时用新内容；正在跑的这局不会热更新——实时决策提示词仍是
+              <code>decision/prompts.py</code>，改完要重启自动玩才生效。人设卡/梗走「人设配置 → 重载人设」。
             </div>
           </div>
           <h2 style="margin-top:14px">游戏资料 <span>原始资料只读，策略与笔记可编辑</span></h2>
@@ -834,12 +838,11 @@ function loadGameFile(){
 }
 
 function renderGameHint(name, text){
-  const f = (GAME_DOC?.files || []).find(x => x.name === name) || {};
-  const lim = f.limit || {};
   const bytes = new TextEncoder().encode(text).length;
   const lines = text ? text.split("\n").length : 0;
-  const caps = lim.bytes ? ` · 上限 ${lim.bytes}B / ${lim.lines} 行 / ${lim.tokens} token` : "";
-  $("#gEditHint").innerHTML = `<b>${esc(name)}</b> · ${bytes} 字节 · ${lines} 行${caps}`;
+  const soft = bytes > 15000
+    ? ` · <span style="color:var(--gold)">超过旧建议值 15000B（不影响保存）</span>` : "";
+  $("#gEditHint").innerHTML = `<b>${esc(name)}</b> · ${bytes} 字节 · ${lines} 行 · 不限字数${soft}`;
 }
 
 async function saveGameFile(){

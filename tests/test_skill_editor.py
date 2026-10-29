@@ -45,11 +45,12 @@ def test_material_index_and_preview_are_read_only():
         mod.material_text("decision/knowledge/ironclad/OS.md")
 
 
-def test_skill_limits_reject_oversize():
+def test_validate_only_checks_whitelist():
     mod = _skills()
     assert mod.validate("decision/knowledge/ironclad/OS.md", "短") is None
-    err = mod.validate("decision/knowledge/ironclad/OS.md", "长" * 4601)
-    assert err and "token" in err
+    long_text = "长" * 60_000
+    assert mod.validate("decision/knowledge/ironclad/OS.md", long_text) is None
+    assert "清单" in (mod.validate("decision/prompts.py", "x") or "")
 
 
 def test_game_payload_and_save(tmp_path, monkeypatch):

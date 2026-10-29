@@ -79,7 +79,9 @@ def test_skill_editor_is_wired():
     assert "openGame" in HTML and "saveGameFile" in HTML and "loadGameFile" in HTML
     assert "previewMaterial" in HTML
     assert "游戏资料" in HTML
-    assert "4600 token" in HTML
+    assert "不限字数" in HTML           # 保存不再有 15000 字节上限
+    assert "gEditEffect" in HTML
+    assert "4600 token" not in HTML
     assert 'data-view="skill"' not in HTML      # 不再单独开页，收进游戏详情
 
 

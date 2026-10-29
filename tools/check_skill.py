@@ -105,13 +105,14 @@ def main() -> int:
     text = SKILL.read_text(encoding="utf-8")
     lines = text.splitlines()
     size = len(text.encode("utf-8"))
+    # 手册长度只做「建议」提示：控制台允许写长，别让保存被字数卡死。
     if size > MAX_BYTES:
-        fail(f"OS.md {size} 字节 > {MAX_BYTES}：手册膨胀，先压细节")
+        warn(f"OS.md {size} 字节 > 建议 {MAX_BYTES}：已不阻止保存，注意按需读取成本")
     if len(lines) > MAX_LINES:
-        fail(f"OS.md {len(lines)} 行 > {MAX_LINES} 行")
+        warn(f"OS.md {len(lines)} 行 > 建议 {MAX_LINES} 行")
     tok = est_tokens(text)
     if tok > MAX_TOKENS:
-        fail(f"OS.md 估算 {tok} token > {MAX_TOKENS}：按需读取也要能一屏装下")
+        warn(f"OS.md 估算 {tok} token > 建议 {MAX_TOKENS}")
     if not lines or not lines[0].startswith("# 铁甲战士"):
         fail("OS.md 首行应是「# 铁甲战士 A10 · 决策 OS」标题")
 
