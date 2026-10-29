@@ -239,15 +239,22 @@ def _select_menu(state: dict) -> list[dict]:
                         "fx": _short(c.get("resolved_rules_text") or c.get("rules_text") or "", 70)})
     # mod 的卡牌奖励屏同时暴露 select_deck_card（它继承牌组多选屏），但奖励牌只能
     # 走 choose_reward_card；两套都列会让模型点错那一套，界面不动。
-    if "select_deck_card" in acts and "choose_reward_card" not in acts:
+    picked = _int(sel.get("selected_count"), 0)
+    need = max(1, _int(sel.get("min_select"), 1) or 1)
+    # 已经选够张数、只差确认时，别再列牌：mod 的 select_deck_card 是**切换**，
+    # 再点同一张会把选择取消掉（run-0049 f7 营火升级：点两次 12 → selected=0 →
+    # 界面原地不动，最后被 stalled 收尾）。此时唯一有意义的动作就是确认。
+    ready = bool(sel.get("can_confirm")) and picked >= need
+    if "select_deck_card" in acts and "choose_reward_card" not in acts and not ready:
         for i, c in enumerate(cards):
             if c.get("is_selected") or c.get("selected"):
                 continue
             out.append({"a": "select_deck_card", "i": i,
                         "n": _short(c.get("name") or c.get("card_id") or "?", 24),
                         "fx": _short(c.get("resolved_rules_text") or c.get("rules_text") or "", 70)})
-    if "confirm_selection" in acts:
-        out.append({"a": "confirm_selection", "i": None, "n": "确认", "fx": ""})
+    if "confirm_selection" in acts and ("select_deck_card" not in acts or ready):
+        out.append({"a": "confirm_selection", "i": None,
+                    "n": f"确认（已选 {picked}/{need}）" if ready else "确认", "fx": ""})
     if "skip_reward_cards" in acts:
         out.append({"a": "skip_reward_cards", "i": None, "n": "跳过选牌", "fx": ""})
     # 牌组查看（只退不选）时只有 close_cards_view；不列就整屏没有出口。

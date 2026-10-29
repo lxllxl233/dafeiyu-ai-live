@@ -194,6 +194,28 @@ def test_card_reward_menu_uses_choose_reward_card():
     assert entry is not None and err == "" and entry["n"] == "防御"
 
 
+def test_confirm_only_after_rest_site_card_is_selected():
+    """run-0049 f7 营火升级：选够 1 张后菜单只剩「确认」。
+    mod 的 select_deck_card 是切换，再点同一张会取消选择 → 界面原地不动。"""
+    state = {"screen": "CARD_SELECTION",
+             "available_actions": ["save_and_quit", "select_deck_card",
+                                   "confirm_selection", "discard_potion"],
+             "selection": {"min_select": 1, "max_select": 1,
+                           "requires_confirmation": True, "can_confirm": True,
+                           "selected_count": 1,
+                           "cards": [{"name": "打击", "card_id": "STRIKE_IRONCLAD"},
+                                     {"name": "防御", "card_id": "DEFEND_IRONCLAD"}]}}
+    menu = actions.available(state)
+    assert [(e["a"], e["i"]) for e in menu] == [("confirm_selection", None)]
+    assert "已选 1/1" in menu[0]["n"]
+
+    # 还没选够：列牌，不列确认（此时确认也没有意义）
+    state["selection"]["selected_count"] = 0
+    state["selection"]["can_confirm"] = False
+    assert [e["a"] for e in actions.available(state)] == ["select_deck_card",
+                                                          "select_deck_card"]
+
+
 def test_chest_menu_can_claim_rewards_and_continue():
     # mod 的发奖动作用 claim_reward（claim_all_rewards / close_chest 它根本不发）。
     state = {"screen": "CHEST",
