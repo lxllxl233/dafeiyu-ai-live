@@ -35,7 +35,7 @@ v1 把四样东西焊在一个「打杀戮尖塔」的工程里；v2 把它们�
 - **游戏启动**：右键「只启动游戏」、管理端按钮或 `python main.py game launch`，按 `game.json` 的 `launch` 拉起 Steam / exe。
 - **让她玩**：右键「让她玩」二级菜单选**本地算账 / LLM 规划**；默认慢速播报，等语音再出下一步。LLM 规划下**所有玩家决策都由模型做**（战斗牌序 + 地图/事件/营火/商店/奖励/选牌），本地启发式只在模型超时或输出不可执行时兜底；本地算账则全程按 `advisor.py` 的算账走。控制台也能切。自动玩默认自动开 OBS 录像，控制台「Agent 流程」能看到本轮累计 Token 和 LLM 回合数；开局第一张地图会按 BRPS 规划并锁定路线，状态里显示路线代号；开局不主动播报招呼，第一条台词从实际战斗/事件开始。正式实况目前是杀戮尖塔 2；内置 `toy-duel` 用来验收第二游戏的 observe/control/autoplay 链路。
 - **Agent 流程**：LangGraph 把一回合拆成观察 → 规划 → 验算 → 执行 → 反思，节点耗时/token/重试写本机轨迹，控制台「Agent 流程」可看。
-- **录像回放**：自动玩开始即开录（OBS 没开会自动拉起），停止时收成 `recordings/<游戏>/run-NNNN/run.mp4`；同目录 `events.jsonl` / `chapters.md` / `timeline.json` 记录画面、楼层、战斗、台词和对应时间段，方便出混剪；`meta.json` 记角色/进阶/结果。
+- **录像回放**：自动玩开始即开录（OBS 没开会自动拉起），**每局一个视频**——死亡收尾旧文件、新一局第一屏再开新的一段；停止时收成 `recordings/<游戏>/run-NNNN/run.mp4`；同目录 `events.jsonl` / `chapters.md` / `timeline.json` 记录画面、楼层、战斗、台词和对应时间段，方便出混剪；`meta.json` 记角色/进阶/结果。
 - **B 站礼物**：控制台「基础配置」填直播间房间号并勾选监听，桌宠会连 B 站直播 WebSocket，收到 `SEND_GIFT` / 醒目留言 / 上舰就让鱼绕两圈并气泡道谢；匿名被风控时再填可选 Cookie（只存本机，不回显）。
 - **直播间互动气泡**：桌宠侧面会弹出观众互动——点赞出爱心、弹幕显示内容、进直播间「欢迎 名字」、送礼物出大米饭表情；
   点赞/同款礼物 2 秒内合并成 `×N`，最多同时 4 个，观众内容会去控制字符并限长（不刷屏、不进 OBS 网页源）。
@@ -558,8 +558,9 @@ python tools/release_check.py      # 发布门禁：版本 + 单测 + 文档 + �
 - CI 在 `.github/workflows/ci.yml`，跑 `python tools/release_check.py --ci`；
 - `tools/` 的兼容 shim 还在观察期，映射和退役条件见 [tools/README.md](tools/README.md)。
 
-当前版本 **2.4.0**：控制台可直接编辑人设卡 / 梗列表 / 主播台词；自动玩在必死回合会
-「时间回溯」（save_and_quit → continue_run）重打整场；地图节点晚加载不再导致停播。
+当前版本 **2.4.1**：控制台可直接编辑人设卡 / 梗列表 / 主播台词；自动玩在必死回合会
+「时间回溯」（save_and_quit → continue_run）重打整场；录像按局切段（每局一个视频）；
+地图节点晚加载不再导致停播。
 STS2 实机验收记录是 `recordings/slay-the-spire-2/run-0108/`。
 
 ---

@@ -1405,3 +1405,72 @@ def test_try_sl_saves_and_quits_once_per_combat(monkeypatch):
     assert sts.calls == ["save_and_quit"]
     assert play._try_sl(sts, state) is False
     assert sts.calls == ["save_and_quit"]
+
+def test_recording_splits_on_new_run(monkeypatch):
+    calls = []
+
+    def stop(result=""):
+        calls.append(("stop", result))
+        return {"ok": True}
+
+    def start(game, mode):
+        calls.append(("start", game, mode))
+        return {"ok": True, "path": "x"}
+
+    monkeypatch.setattr(play, "_log", lambda *a, **k: None)
+    monkeypatch.setattr(play, "_state", {"recording": True})
+    monkeypatch.setattr(play, "_rec_run_id", "a")
+    monkeypatch.setattr(play, "_rec_game", "g")
+    monkeypatch.setattr(play, "_rec_mode", "llm")
+    monkeypatch.setattr(play, "_rec_pending", 0.0)
+    monkeypatch.setattr(play, "_finish_autoplay_recording", stop)
+    monkeypatch.setattr(play, "_start_autoplay_recording", start)
+    play._maybe_split_recording({"run": {"run_id": "b", "floor": 3}})
+    assert calls == [("stop", "run_end"), ("start", "g", "llm")]
+    assert play._rec_run_id == "b"
+
+
+def test_recording_adopts_first_run_without_splitting(monkeypatch):
+    calls = []
+    monkeypatch.setattr(play, "_log", lambda *a, **k: None)
+    monkeypatch.setattr(play, "_state", {"recording": True})
+    monkeypatch.setattr(play, "_rec_run_id", None)
+    monkeypatch.setattr(play, "_finish_autoplay_recording",
+                        lambda *a, **k: calls.append("stop") or {"ok": True})
+    monkeypatch.setattr(play, "_start_autoplay_recording",
+                        lambda *a, **k: calls.append("start") or {"ok": True})
+    play._maybe_split_recording({"run": {"run_id": "a", "floor": 1}})
+    assert calls == []
+    assert play._rec_run_id == "a"
+
+
+def test_recording_after_game_over_starts_only(monkeypatch):
+    calls = []
+    monkeypatch.setattr(play, "_log", lambda *a, **k: None)
+    monkeypatch.setattr(play, "_state", {"recording": False})
+    monkeypatch.setattr(play, "_rec_run_id", "")
+    monkeypatch.setattr(play, "_rec_pending", 0.0)
+    monkeypatch.setattr(play, "_rec_game", "g")
+    monkeypatch.setattr(play, "_rec_mode", "llm")
+    monkeypatch.setattr(play, "_finish_autoplay_recording",
+                        lambda *a, **k: calls.append("stop") or {"ok": True})
+    monkeypatch.setattr(play, "_start_autoplay_recording",
+                        lambda *a, **k: calls.append("start") or {"ok": True})
+    play._maybe_split_recording({"run": {"run_id": "c", "floor": 1}})
+    assert calls == ["start"]
+    assert play._rec_run_id == "c"
+
+
+def test_recording_retries_when_obs_start_failed(monkeypatch):
+    calls = []
+    monkeypatch.setattr(play, "_log", lambda *a, **k: None)
+    monkeypatch.setattr(play, "_state", {"recording": False})
+    monkeypatch.setattr(play, "_rec_run_id", "d")
+    monkeypatch.setattr(play, "_rec_pending", time.time() - 1)
+    monkeypatch.setattr(play, "_rec_game", "g")
+    monkeypatch.setattr(play, "_rec_mode", "llm")
+    monkeypatch.setattr(play, "_start_autoplay_recording",
+                        lambda *a, **k: calls.append("start") or {"ok": True})
+    play._maybe_split_recording({"run": {"run_id": "d", "floor": 2}})
+    assert calls == ["start"]
+    assert play._rec_pending == 0.0

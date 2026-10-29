@@ -1,5 +1,15 @@
 # Changelog
 
+## [2.4.1] - 2026-10-29
+
+### Changed
+
+- **自动玩录像按局切段（每局一个视频）**：以前只在 `play` 启动时开一次 OBS 录制，
+  GAME_OVER 自动重开下一局也接着录，一晚上十几局会全在一个 mp4 里。
+  现在死亡收尾旧录像，等新一局第一屏出现再开新的一段（`recordings/<game>/run-XXXX/`）；
+  SL 回档属于同一局，不切段。OBS 万一开录失败会在 6 秒后重试一次，不阻断自动玩。
+  日志新增 `record_split` / `record_start_run` / `record_retry` / `record_split_failed`。
+
 ## [2.4.0] - 2026-10-29
 
 ### Added

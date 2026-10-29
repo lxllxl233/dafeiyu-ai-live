@@ -136,12 +136,63 @@ def _say(text: str) -> None:
     _host.say(text, sender=_sender)
 
 
-def _start_autoplay_recording(game: str, mode: str) -> None:
-    _host.start_recording(note=f"自动玩 · {mode}")
+def _start_autoplay_recording(game: str, mode: str) -> dict:
+    return _host.start_recording(note=f"自动玩 · {mode}")
 
 
 def _finish_autoplay_recording(result: str = "") -> dict:
     return _host.stop_recording(result)
+
+
+# 每局一个视频：OBS 一直录的话，一晚上连播十几局会全塞进同一个文件。
+# 换 run_id 时收尾旧录像、开新的一段；OBS 万一开不了，隔几秒重试一次。
+_rec_run_id: str | None = None
+_rec_game = ""
+_rec_mode = ""
+_rec_pending = 0.0
+
+
+def _maybe_split_recording(state: dict) -> None:
+    global _rec_run_id, _rec_pending
+    rid = str((state.get("run") or {}).get("run_id") or "")
+    if not rid:
+        return
+    if _rec_run_id is None:
+        _rec_run_id = rid          # 启动时接的是哪一局，就跟着这一局录
+        return
+    if rid == _rec_run_id:
+        if _rec_pending and time.time() >= _rec_pending and not _state.get("recording"):
+            _rec_pending = 0.0
+            res = _start_autoplay_recording(_rec_game, _rec_mode)
+            _log("record_retry", ok=bool(res.get("ok")),
+                 error=str(res.get("error") or "")[:120])
+        return
+    if _rec_run_id == "":
+        # 上一局在 GAME_OVER 时已经收尾；新一局的第一屏到了，开新视频。
+        _rec_run_id = rid
+        res = _start_autoplay_recording(_rec_game, _rec_mode)
+        _log("record_start_run", ok=bool(res.get("ok")), floor=_num((state.get("run") or {}).get("floor"), 0),
+             path=str(res.get("path") or ""), error=str(res.get("error") or "")[:120])
+        if not res.get("ok"):
+            _rec_pending = time.time() + 6.0
+        return
+    _rec_run_id = rid
+    floor = _num((state.get("run") or {}).get("floor"), 0)
+    if not _state.get("recording"):
+        # 这一段本来就没在录（OBS 未就绪等）：下一局直接尝试开，别指望上一段收尾。
+        res = _start_autoplay_recording(_rec_game, _rec_mode)
+        _log("record_new_run", ok=bool(res.get("ok")), floor=floor,
+             path=str(res.get("path") or ""), error=str(res.get("error") or "")[:120])
+        return
+    stop = _finish_autoplay_recording("run_end")
+    res = _start_autoplay_recording(_rec_game, _rec_mode)
+    if res.get("ok"):
+        _log("record_split", run_id=rid, floor=floor,
+             path=str(res.get("path") or ""))
+    else:
+        _rec_pending = time.time() + 6.0
+        _log("record_split_failed", run_id=rid, floor=floor,
+             stop_ok=bool(stop.get("ok")), error=str(res.get("error") or "")[:160])
 
 
 def _settings() -> tuple[str, str]:
@@ -1368,10 +1419,15 @@ def _wait_game(sts2, timeout: float = 120.0) -> dict | None:
 
 def _run(game: str, mode: str = "local") -> None:
     global _thread, _speech_until, _rollback_tried, _sl_used, _sl_last
+    global _rec_run_id, _rec_game, _rec_mode, _rec_pending
     _rollback_tried = False
     _sl_used = 0
     _sl_last = 0.0
     _sl_done.clear()
+    _rec_run_id = None
+    _rec_game = game
+    _rec_mode = mode
+    _rec_pending = 0.0
     _deck_clicks.clear()
     sts2 = advisor = llm_tools = llm_planner = screen_planner = None
     try:
@@ -1485,6 +1541,12 @@ def _run(game: str, mode: str = "local") -> None:
                 _sl_used = 0
                 _sl_last = 0.0
                 _sl_done.clear()
+                # 每局一个视频：死亡就收尾，等新一局第一屏再开新录像。
+                if _state.get("recording"):
+                    _rec_run_id = ""
+                    stop = _finish_autoplay_recording("run_end")
+                    _log("record_split", reason="game_over",
+                         stop_ok=bool(stop.get("ok")))
                 _say("这局结束了，我回主菜单再来一局。")
                 _write_status(last="GAME_OVER，回主菜单", route_seq="",
                               route_option=None, route_note="", route_floor=0)
@@ -1533,6 +1595,7 @@ def _run(game: str, mode: str = "local") -> None:
                 fresh = state
                 _log("state_refresh_failed", error=f"{type(exc).__name__}: {exc}")
             _set_from_state(fresh, last)
+            _maybe_split_recording(fresh)
             _write_status(step=step, error="" if not last.startswith("ERROR") else _state.get("error", ""))
             _log("step", step=step, last=last)
             if last.startswith("UNKNOWN") or last.endswith("unknown"):
