@@ -1299,6 +1299,17 @@ def test_preempt_busy_record_noop_when_obs_idle(monkeypatch):
     assert recording_auto._preempt_busy_record() == {"ok": True, "stopped": False}
 
 
+# ---------------------------------------------------------------- 多选哨兵值
+def test_selection_need_clamps_any_number_sentinel_to_card_count():
+    sel = {"max_select": 999999999, "min_select": 0,
+           "prompt": "[center]选择任意张牌进行替换。[/center]"}
+    assert play._selection_need(sel, 2) == 2
+    sel2 = {"max_select": 3, "min_select": 0, "prompt": "选择 3 张牌"}
+    assert play._selection_need(sel2, 10) == 3
+    sel3 = {"max_select": 0, "min_select": 0, "prompt": "选择 2 张牌"}
+    assert play._selection_need(sel3, 8) == 2
+
+
 # ---------------------------------------------------------------- 锻造/升级选牌不撞键
 def _smith_state(floor, cards, selected=0):
     return {

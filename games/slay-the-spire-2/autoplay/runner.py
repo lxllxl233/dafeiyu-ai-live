@@ -1001,22 +1001,30 @@ def _reward(sts2, state: dict) -> str:
         return "REWARD unknown"
 
 
-def _selection_need(sel: dict) -> int:
+def _selection_need(sel: dict, n_cards: int = 0) -> int:
     """这一屏要选几张。
 
     游戏在「选 2 张普通牌」里会把 min/max 都给 0，只能从 prompt 读；
     旧实现固定只点第一张，选完还停在 CARD_SELECTION，一屏能卡 20 步。
+    「选择任意张」用 max_select=999999999 当哨兵：必须按实际牌数封顶，
+    否则一直点满不了，卡到 stalled（run-0040 f9 就是这么停的）。
     """
+    need = 0
     for key in ("max_select", "max", "min_select", "min"):
         try:
             n = int(sel.get(key) or 0)
         except (TypeError, ValueError):
             n = 0
         if n > 0:
-            return n
-    prompt = re.sub(r"\[[^\]]*\]", "", str(sel.get("prompt") or ""))
-    m = re.search(r"选择\s*(\d+)\s*张", prompt)
-    return int(m.group(1)) if m else 1
+            need = n
+            break
+    if not need:
+        prompt = re.sub(r"\[[^\]]*\]", "", str(sel.get("prompt") or ""))
+        m = re.search(r"选择\s*(\d+)\s*张", prompt)
+        need = int(m.group(1)) if m else 1
+    if n_cards and need > n_cards:
+        need = n_cards
+    return max(1, need)
 
 
 def _blind_selection(sel: dict) -> bool:
@@ -1116,7 +1124,7 @@ def _card_selection(sts2, state: dict) -> str:
             sts2.act("skip_reward_cards")
             return "CARD skip+leave" if _reward_leave(sts2) else "CARD skip"
     if "select_deck_card" in acts and cards:
-        need = _selection_need(sel)
+        need = _selection_need(sel, len(cards))
         # mod 0.8.0 起牌组多选屏（「移除/升级 N 张」）支持 confirm_selection：
         # 点一次 = 选一张，重复点同一张会取消。用本地计数保证按 0、1、2… 点不同
         # 的牌，点满 need 张再确认；selected_count 只在它更大时用来同步（旧 mod
@@ -1448,7 +1456,7 @@ def _recover_blind_screen(sts2, state: dict, last: str) -> bool:
     if _rollback_tried or not str(last).startswith(("CARD ui wait", "CARD wait")):
         return False
     sel = state.get("selection") or {}
-    need = _selection_need(sel)
+    need = _selection_need(sel, len(sel.get("cards") or []))
     try:
         selected = int(sel.get("selected_count") or sel.get("selected") or 0)
     except (TypeError, ValueError):

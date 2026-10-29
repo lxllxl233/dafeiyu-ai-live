@@ -30,6 +30,10 @@
 - **台词每回合只说一句**：`say` 数组只允许 1 个元素——提示词写死「say 只放 1 句」，
   `decision/act.py` 的 `normalize` 只保留第一条（战斗回合），界面决策也只播第一条，
   多余的记 `say_truncated` 日志。
+- **「选择任意张牌」不再卡死**：mod 对这类多选给 `max_select=999999999` 当哨兵，
+  `_selection_need` 以前直接拿它当目标张数，点满不了就 `CARD wait` 到 stalled
+  （run-0040 f9「选择任意张牌进行替换」只选 3 张就停了）。现在按实际牌数封顶，
+  选满即可 `confirm_selection`。
 - **宝箱遗物必须拿走**：宝箱里 `has_relic_been_claimed=false` 时，`proceed` /
   `collect_rewards_and_proceed` / 领金币这类动作会被 `actions.check` 拒绝并提示
   「先 choose_treasure_relic」；拿完才放行。奖励没领完同样不许走（遗物有时挂在
