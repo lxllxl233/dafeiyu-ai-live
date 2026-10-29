@@ -47,6 +47,8 @@ _deck_clicks: dict[str, int] = {}
 _timeline_prev: dict = {"screen": "", "floor": 0, "run_id": ""}
 # 最近说过的台词（文本 → 时间）；同句 4 分钟内不再重复推给 overlay。
 _recent_speech: dict[str, float] = {}
+# 最近说过的开头（前 12 字 → 时间）；同一开场白 3 分钟内不再重复。
+_recent_openers: dict[str, float] = {}
 
 
 def bind_host(host: AutoplayHost) -> AutoplayHost:
@@ -248,7 +250,19 @@ def _say_screen(sts2, text: str, screen: str, state: dict | None = None) -> None
     if last is not None and now - last < 240:
         _log("speech_repeat_skipped", screen=screen, text=text[:60])
         return
+    # 「卡组还是 C 级，缺防缺 AOE…」这种状态开场白，换了句尾也会连着刷：
+    # 同一个开头 2 分钟内只说一次（开口 6 字），后面的屏换个说法（或直说这屏的取舍）。
+    opener = text[:6]
+    seen = _recent_openers.get(opener)
+    if seen is not None and now - seen < 120:
+        _log("speech_opener_skipped", screen=screen, text=text[:60])
+        return
     _recent_speech[text] = now
+    _recent_openers[opener] = now
+    if len(_recent_openers) > 200:
+        for line, ts in list(_recent_openers.items()):
+            if now - ts > 900:
+                _recent_openers.pop(line, None)
     if len(_recent_speech) > 200:
         for line, ts in list(_recent_speech.items()):
             if now - ts > 900:

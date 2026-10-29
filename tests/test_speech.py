@@ -67,7 +67,8 @@ def test_system_prompt_bans_hp_recital_and_allows_sighs():
     assert "别念血条" in prompts.SYSTEM_PROMPT
     assert "唉" in prompts.SYSTEM_PROMPT
     assert "1–2 句" in prompts.SYSTEM_PROMPT
-    assert "别念 HP/金币流水账" in prompts.NONCOMBAT_PROMPT
+    assert "别念 HP/金币/卡组等级流水账" in prompts.NONCOMBAT_PROMPT
+    assert "卡组还是C级" in prompts.NONCOMBAT_PROMPT
 
 
 def test_lint_flags_hp_recital_and_accepts_emotional_line():
@@ -98,6 +99,39 @@ def test_tidy_say_strips_hp_but_keeps_prices_and_punctuation():
     # 整句只有血条：宁可不说，也不念血条
     assert tidy("HP 64/80") == ""
     assert tidy("") == ""
+
+
+def test_tidy_say_drops_deck_grade_boasting():
+    speech = GameRegistry().load_game_module("slay-the-spire-2", "decision.speech")
+    tidy = speech.tidy_say
+    # 实机刷屏的开场白：「卡组还是X级」+ 卡组状态
+    assert tidy("卡组还是D级，缺防缺AOE，先花37金拿张巨像补点格挡。") == \
+        "缺防缺AOE，先花37金拿张巨像补点格挡。"
+    assert tidy("血只剩四成出头，卡组还是C档，先去营火睡一觉保命要紧。") == \
+        "血只剩四成出头，先去营火睡一觉保命要紧。"
+    assert tidy("这卡组还是D级，先删牌。") == "先删牌。"
+    assert tidy("卡组状态不错，这波能打。") == "这波能打。"
+    # 整句只有状态播报：不说
+    assert tidy("卡组还是C级。") == ""
+    # 有内容的「卡组缺AOE」保留
+    assert tidy("卡组缺AOE，先拿张顺劈。") == "卡组缺AOE，先拿张顺劈。"
+
+
+def test_say_screen_skips_repeated_opener(monkeypatch):
+    said: list[str] = []
+
+    class FakeSts2:
+        def overlay_say(self, *args, **kw):  # noqa: ANN002, ANN003
+            said.append(args[1])
+
+    monkeypatch.setattr(play, "_remember_speech", lambda text: None)
+    play._recent_speech.clear()
+    play._recent_openers.clear()
+    play._say_screen(FakeSts2(), "缺防缺AOE，先拿顺劈。", "MAP", {})
+    play._say_screen(FakeSts2(), "缺防缺AOE，先删牌。", "SHOP", {})
+    assert len(said) == 1
+    play._say_screen(FakeSts2(), "去营火睡一觉。", "REST", {})
+    assert len(said) == 2
 
 
 def test_tidy_say_handles_combat_style_lines():
