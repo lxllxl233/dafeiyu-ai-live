@@ -340,11 +340,31 @@ def test_screen_llm_invalid_plan_is_asked_again():
     assert "不能执行" in calls[1]
 
 
+def test_blind_deck_multi_select_clicks_different_cards(monkeypatch):
+    """牌组多选要一张一张换着点：重复点 0 会取消选择（run-0113 的 6 小时空转）。"""
+    monkeypatch.setattr(play, "_deck_clicks", {})
+    state = {"screen": "CARD_SELECTION", "run_id": "runA",
+             "available_actions": ["select_deck_card"],
+             "selection": {"prompt": "选择 2 张牌来移除", "min_select": 0,
+                           "max_select": 0,
+                           "cards": [{"card_id": f"C{i}", "name": f"牌{i}"}
+                                     for i in range(10)]}}
+    fake = _FakeSts2([state])
+    first = play._card_selection(fake, state)
+    second = play._card_selection(fake, state)
+    third = play._card_selection(fake, state)
+    assert [c[0] for c in fake.calls] == ["select_deck_card", "select_deck_card"]
+    assert fake.calls[0][1] == {"option_index": 0}
+    assert fake.calls[1][1] == {"option_index": 1}
+    assert (first, second) == ("CARD select 1/2", "CARD select 2/2")
+    assert third == "CARD wait 2/2"
+
+
 def test_blind_deck_multi_select_skips_llm_and_does_not_click():
     """run-0113：删牌多选屏只有 pending，模型点了 1332 次、烧 530 万 token。
 
-    识别出「min/max 都是 0 的多选」后不再问模型，也不空点，直接标成 ui wait
-    交给卡住守卫（守卫会先尝试自动回滚）。
+    识别出「min/max 都是 0 的多选」后不再问模型，也不空点 1000 次，交给本地
+    逐张点选；点完仍不推进就由卡住守卫回滚。
     """
     called = []
 
@@ -353,7 +373,8 @@ def test_blind_deck_multi_select_skips_llm_and_does_not_click():
             called.append(1)
             return {"ok": True, "plan": {"act": "select_deck_card", "i": 0}}
 
-    state = {"screen": "CARD_SELECTION", "available_actions": ["select_deck_card"],
+    state = {"screen": "CARD_SELECTION", "run_id": "runB",
+             "available_actions": ["select_deck_card"],
              "selection": {"prompt": "选择 2 张牌来移除", "min_select": 0,
                            "max_select": 0,
                            "cards": [{"card_id": f"C{i}", "name": f"牌{i}"}

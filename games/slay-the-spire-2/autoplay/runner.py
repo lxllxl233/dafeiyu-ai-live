@@ -41,6 +41,9 @@ _state = _host.state
 _speech_until = 0.0
 _thread: threading.Thread | None = None
 _ui_picks: set[str] = set()
+# 牌组多选屏已经点到第几张：mod 每点一次选一张，重复点同一张会取消，
+# 所以必须 0、1、2… 顺序点（run-0113 的 6 小时空转就是一直点 0）。
+_deck_clicks: dict[str, int] = {}
 _timeline_prev: dict = {"screen": "", "floor": 0, "run_id": ""}
 # 最近说过的台词（文本 → 时间）；同句 4 分钟内不再重复推给 overlay。
 _recent_speech: dict[str, float] = {}
@@ -636,6 +639,13 @@ def _blind_selection(sel: dict) -> bool:
     return mn == 0 and mx == 0 and _selection_need(sel) >= 2
 
 
+def _deck_select_key(state: dict, sel: dict, cards: list[dict]) -> str:
+    """同一屏牌组多选的身份：换局/换提示/换牌表就重新计数。"""
+    ids = ",".join(str(c.get("card_id") or c.get("name") or "") for c in cards)
+    return "|".join((str(state.get("run_id") or ""),
+                     str(sel.get("prompt") or ""), ids[:200]))
+
+
 def _card_selection(sts2, state: dict) -> str:
     acts = _acts(state)
     sel = state.get("selection") or {}
@@ -657,6 +667,35 @@ def _card_selection(sts2, state: dict) -> str:
             already = int(sel.get("selected_count") or sel.get("selected") or 0)
         except (TypeError, ValueError):
             already = 0
+        if _blind_selection(sel) and not hasattr(sts2, "ui_pick_cards"):
+            # mod 的牌组多选：点一次 = 选一张（内部会点预览确认）；重复点同一张
+            # 会把它取消掉（run-0113 卡 6 小时就是这么来的）。按 0、1、2… 顺序点，
+            # 点满 need 张后再看要不要确认，实在不推进就交给卡住守卫回滚。
+            key = _deck_select_key(state, sel, cards)
+            done = _deck_clicks.get(key, 0)
+            if done >= need:
+                try:
+                    now = sts2.get_state()
+                except Exception:
+                    now = state
+                if "confirm_selection" in _acts(now):
+                    sts2.act("confirm_selection")
+                    return "CARD confirm"
+                if _screen(now) != "CARD_SELECTION":
+                    return f"CARD -> {_screen(now)}"
+                return f"CARD wait {done}/{need}"
+            if done >= len(cards):
+                return f"CARD wait {done}/{need}"
+            if len(_deck_clicks) > 40:
+                _deck_clicks.clear()
+            _deck_clicks[key] = done + 1
+            try:
+                sts2.act("select_deck_card", option_index=int(done))
+                return f"CARD select {done + 1}/{need}"
+            except Exception as exc:  # noqa: BLE001
+                _log("deck_select_failed", i=done,
+                     error=f"{type(exc).__name__}: {exc}")
+                return "CARD select failed"
         if _blind_selection(sel) and hasattr(sts2, "ui_pick_cards"):
             key = f"{state.get('run_id','')}|{sel.get('prompt','')}|" \
                   f"{','.join(str(c.get('card_id') or c.get('name') or '') for c in cards)}"
@@ -948,7 +987,7 @@ _rollback_tried = False
 def _recover_blind_screen(sts2, state: dict, last: str) -> bool:
     """多选卡死时回滚一次；返回 True 表示已经回滚，主循环应重读局面继续。"""
     global _rollback_tried
-    if _rollback_tried or not str(last).startswith("CARD ui wait"):
+    if _rollback_tried or not str(last).startswith(("CARD ui wait", "CARD wait")):
         return False
     _rollback_tried = True
     prompt = str((state.get("selection") or {}).get("prompt") or "")[:60]
@@ -997,6 +1036,7 @@ def _wait_game(sts2, timeout: float = 120.0) -> dict | None:
 def _run(game: str, mode: str = "local") -> None:
     global _thread, _speech_until, _rollback_tried
     _rollback_tried = False
+    _deck_clicks.clear()
     sts2 = advisor = llm_tools = llm_planner = screen_planner = None
     try:
         sts2, advisor = _import_tools()

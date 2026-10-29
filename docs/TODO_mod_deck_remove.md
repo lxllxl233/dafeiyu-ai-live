@@ -12,7 +12,30 @@
 - 涅奥的「精准剪刀 / 松动羊毛剪」（移除 2 张）用不了 → 删牌这个最强开局直接损失。
 - 其它走「从牌组选 N 张」的事件/遗物（如需要挑选牌组的遗物）可能同样中招。
 
-**猜测根因**
+**猜测根因（已用游戏自带 `sts2.xml` 文档核对）**
+- `CardSelectCmd.FromDeckForRemoval` 打开的是 `NDeckCardSelectScreen`（继承/等价于
+  `NCardGridSelectionScreen`，mod 只按后者处理）。
+- 这类屏的确认按钮是 `NDeckCardSelectScreen._previewConfirmButton`，
+  确认方法是 `NDeckCardSelectScreen.ConfirmSelection`；mod 的
+  `ConfirmDeckSelectionAsync` 只找 `%PreviewContainer/%PreviewConfirm/%Confirm`，
+  对不上 → 永远不点确认。
+- 状态里的 `selection.min_select/max_select/selected_count/can_confirm` 在
+  `BuildSelectionPayload` 里**只从战斗手牌选择（NPlayerHand）读取**，牌组屏一律是
+  0/0/0/false → 客户端误以为一张都没选、于是反复点同一张（还被取消）。
+- 正确修法（3 处，都在 mod 里）：
+  1. `BuildSelectionPayload`：牌组屏从 `CardSelectorPrefs`/屏自己的 `_selectedCards`
+     读 min/max/selected，并给每张卡带 `selected` 标记；
+  2. `CanConfirmSelection` + `ExecuteConfirmSelectionAsync`：牌组屏改用
+     `_previewConfirmButton`/`ConfirmSelection`；
+  3. `select_deck_card`：点已选中的卡改为不重复点（或明确 deselect）。
+- 现状：mod 是第三方 DLL + 反编译快照，仓库里没有 `Server/` 源码和工程文件，
+  **没法直接重编**；要么拿完整工程重编，要么用 Cecil 打 IL 补丁（本机有 VS Build
+  Tools 的 csc/MSBuild）。
+
+**注意**：`ui_pick_cards`（真实鼠标点 5+2 布局）在牌组满 12+ 张时不适用——
+`NDeckCardSelectScreen` 是 5 列多页网格，坐标对不上，所以那条兜底也点不动。
+
+**临时绕过（已写进 LESSONS.md / SKILL.md）**
 mod 里 `select_deck_card` 的点击路径大概只接了「手牌/奖励三选一」的按钮，
 没有接 deck view（牌组浏览界面）里的卡片对象，所以点击落到无效区域，`selected_count` 不更新。
 而且这个 selection 类型的 `min/max` 没从 UI 读出来（都是 0），说明这个 screen 根本没被识别。
