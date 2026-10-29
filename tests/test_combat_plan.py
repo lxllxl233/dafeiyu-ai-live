@@ -203,3 +203,12 @@ def test_midnight_gets_cheaper_with_exhausts():
     sm = sim.Sim.from_state(state([MIDNIGHT], energy=12))
     sm.exhaust_pile = 3
     assert sm.cost_of(sm.hand[0]) == 9
+
+
+def test_stale_site_text_for_key_cards_is_overridden():
+    """db/sts2.db 是旧版站点数据；奖励/商店按它选牌会把跃跃欲试当格挡牌。"""
+    sts2 = sys.modules["sts2_compat"]
+    expect = sts2.CARD_DB["EXPECT_A_FIGHT"]
+    assert expect["cost"] == 2 and "1点能量" in expect["description"]
+    assert "16" in sts2.CARD_DB["HOWL_FROM_BEYOND"]["description"]
+    assert "≥3" in sts2.CARD_DB["PACTS_END"]["description"]

@@ -116,6 +116,20 @@ CARD_DB = _merge_db(
     _load_db("cards.json"),
     _load_sqlite("cards", extra=("cost", "target", "type", "rarity")),
 )
+# db/sts2.db 是站点重抓的 Early Access 数据，个别卡效果是旧版（跃跃欲试被写成
+# 「按力量加格挡」、彼岸咆哮写成「回合结束」…），而游戏包 corpus/data/eng 与引擎
+# 一致。奖励/商店会直接读 CARD_DB.description，这里按 id 覆盖，别再按旧效果选牌。
+_CARD_FIX = {
+    "EXPECT_A_FIGHT": ("跃跃欲试", "手中每有1张攻击牌，获得1点能量。", 2),
+    "HOWL_FROM_BEYOND": ("彼岸咆哮", "对所有敌人造成16点伤害。在你的回合开始时，若这张牌在消耗牌堆中，则从那里打出。", 3),
+    "PACTS_END": ("契约终结", "消耗牌堆≥3张才能打出；对所有敌人造成17点伤害。", 0),
+    "FORGOTTEN_RITUAL": ("被遗忘的仪式", "若本回合消耗过牌，获得3点能量。", 1),
+    "FEEL_NO_PAIN": ("无惧疼痛", "每当一张牌被消耗，获得3点格挡。", 1),
+    "MIDNIGHT": ("午夜", "造成60点伤害。本场战斗每消耗过1张牌，费用减1。", 12),
+}
+for _cid, (_name, _desc, _cost) in _CARD_FIX.items():
+    _item = CARD_DB.setdefault(_cid, {})
+    _item.update({"name": _name, "description": _desc, "cost": _cost})
 RELIC_DB = _merge_db(_load_db("relics.json"), _load_sqlite("relics"))
 POTION_DB = _merge_db(_load_db("potions.json"), _load_sqlite("potions"))
 MONSTER_DB = _load_db("monsters.json")
