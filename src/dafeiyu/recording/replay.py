@@ -223,6 +223,16 @@ def stop_recording(run_dir: Path, result: str = "", note: str = "",
     return finalize(run_dir, out or None, result=result, note=note)
 
 
+def is_recording() -> bool:
+    """OBS 现在是否在录；不看本进程有没有 session（跨进程判断用）。"""
+    obs = _obs()
+    try:
+        st = obs.status()
+    finally:
+        obs.close()
+    return bool((st or {}).get("outputActive"))
+
+
 # ---------------------------------------------------------------- 索引
 def scan(game: str | None = None) -> list[dict]:
     rows = []
@@ -335,6 +345,6 @@ def migrate_legacy(force: bool = False) -> list[str]:
 __all__ = [
     "ROOT", "RECORDINGS", "game_id", "game_dir", "runs", "next_number", "create_run",
     "set_current", "get_current", "clear_current", "video_path", "finalize",
-    "start_recording", "stop_recording", "scan", "render_index", "write_index",
+    "start_recording", "stop_recording", "is_recording", "scan", "render_index", "write_index",
     "migrate_legacy", "human_size", "read_meta", "write_meta", "run_number",
 ]

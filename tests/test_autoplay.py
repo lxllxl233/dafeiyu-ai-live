@@ -379,8 +379,14 @@ def test_stop_in_same_process_finalizes_recording(monkeypatch, tmp_path):
     monkeypatch.setattr(play, "status", lambda: {
         "running": True, "pid": os.getpid(), "mode": "llm", "last": "LLM 思考…"})
     finalized = []
-    monkeypatch.setattr(play, "_finish_autoplay_recording",
-                        lambda result: finalized.append(result) or {"ok": True})
+
+    def fake_force_stop(result="stopped"):
+        finalized.append(result)
+        return {"ok": True}
+
+    from dafeiyu.recording import auto as recording_auto
+
+    monkeypatch.setattr(recording_auto, "force_stop", fake_force_stop)
     writes = []
 
     def fake_write(**kw):

@@ -8,7 +8,14 @@
   GAME_OVER 自动重开下一局也接着录，一晚上十几局会全在一个 mp4 里。
   现在死亡收尾旧录像，等新一局第一屏出现再开新的一段（`recordings/<game>/run-XXXX/`）；
   SL 回档属于同一局，不切段。OBS 万一开录失败会在 6 秒后重试一次，不阻断自动玩。
-  日志新增 `record_split` / `record_start_run` / `record_retry` / `record_split_failed`。
+  日志新增 `record_split` / `record_new_run` / `record_retry` / `record_split_failed`。
+
+### Fixed
+
+- **强杀进程后 OBS 还在录**：`play --stop` 在 CLI 进程里没有录像 session，
+  以前只回「已停」而不去停真正的 OBS，结果旧视频一直变长、下次开录报
+  `StartRecord failed: code=500`。现在按 OBS 实际状态 + `.current.json` 收尾上一段；
+  新会话启动前也会自动收掉上一进程留下的 `status=recording` 残留。
 
 ## [2.4.0] - 2026-10-29
 

@@ -157,42 +157,36 @@ def _maybe_split_recording(state: dict) -> None:
     rid = str((state.get("run") or {}).get("run_id") or "")
     if not rid:
         return
+    floor = _num((state.get("run") or {}).get("floor"), 0)
     if _rec_run_id is None:
         _rec_run_id = rid          # 启动时接的是哪一局，就跟着这一局录
-        return
-    if rid == _rec_run_id:
-        if _rec_pending and time.time() >= _rec_pending and not _state.get("recording"):
-            _rec_pending = 0.0
-            res = _start_autoplay_recording(_rec_game, _rec_mode)
-            _log("record_retry", ok=bool(res.get("ok")),
-                 error=str(res.get("error") or "")[:120])
-        return
-    if _rec_run_id == "":
-        # 上一局在 GAME_OVER 时已经收尾；新一局的第一屏到了，开新视频。
+    elif rid != _rec_run_id:
         _rec_run_id = rid
-        res = _start_autoplay_recording(_rec_game, _rec_mode)
-        _log("record_start_run", ok=bool(res.get("ok")), floor=_num((state.get("run") or {}).get("floor"), 0),
-             path=str(res.get("path") or ""), error=str(res.get("error") or "")[:120])
+        if _state.get("recording"):
+            stop = _finish_autoplay_recording("run_end") or {}
+            res = _start_autoplay_recording(_rec_game, _rec_mode) or {}
+            if res.get("ok"):
+                _log("record_split", run_id=rid, floor=floor,
+                     path=str(res.get("path") or ""))
+            else:
+                _log("record_split_failed", run_id=rid, floor=floor,
+                     stop_ok=bool(stop.get("ok")),
+                     error=str(res.get("error") or "")[:160])
+        else:
+            # 上一段本来就没在录（OBS 未就绪等）：直接开新的，不等收尾。
+            res = _start_autoplay_recording(_rec_game, _rec_mode) or {}
+            _log("record_new_run", ok=bool(res.get("ok")), floor=floor,
+                 path=str(res.get("path") or ""), error=str(res.get("error") or "")[:120])
         if not res.get("ok"):
             _rec_pending = time.time() + 6.0
-        return
-    _rec_run_id = rid
-    floor = _num((state.get("run") or {}).get("floor"), 0)
-    if not _state.get("recording"):
-        # 这一段本来就没在录（OBS 未就绪等）：下一局直接尝试开，别指望上一段收尾。
-        res = _start_autoplay_recording(_rec_game, _rec_mode)
-        _log("record_new_run", ok=bool(res.get("ok")), floor=floor,
-             path=str(res.get("path") or ""), error=str(res.get("error") or "")[:120])
-        return
-    stop = _finish_autoplay_recording("run_end")
-    res = _start_autoplay_recording(_rec_game, _rec_mode)
-    if res.get("ok"):
-        _log("record_split", run_id=rid, floor=floor,
-             path=str(res.get("path") or ""))
-    else:
-        _rec_pending = time.time() + 6.0
-        _log("record_split_failed", run_id=rid, floor=floor,
-             stop_ok=bool(stop.get("ok")), error=str(res.get("error") or "")[:160])
+    # 开录失败（OBS 500 / 还没落盘）不阻断自动玩，隔几秒再试。
+    if _rec_pending and time.time() >= _rec_pending and not _state.get("recording"):
+        _rec_pending = 0.0
+        res = _start_autoplay_recording(_rec_game, _rec_mode) or {}
+        _log("record_retry", ok=bool(res.get("ok")),
+             error=str(res.get("error") or "")[:120])
+        if not res.get("ok"):
+            _rec_pending = time.time() + 6.0
 
 
 def _settings() -> tuple[str, str]:
@@ -1465,7 +1459,9 @@ def _run(game: str, mode: str = "local") -> None:
         _write_status(running=True, game=game, error="", step=0, mode=mode,
                       started_at=time.time(), last="启动游戏…")
         if not _stopping():
-            _start_autoplay_recording(game, mode)
+            res = _start_autoplay_recording(game, mode) or {}
+            if not res.get("ok"):
+                _rec_pending = time.time() + 6.0   # OBS 没起来就过几秒再试，别让整局没录像
         if _stopping():
             _write_status(last="已停手")
             return
@@ -1747,9 +1743,12 @@ def stop_autoplay() -> dict:
         _write_status(last="正在停手…", stopping=True)
     else:
         _write_status(running=False, last="已停手", stopping=False)
-    # 先停 OBS，避免用户点了停手录像还在后台继续。
+    # 先停 OBS，避免用户点了停手录像还在后台继续。CLI 进程通常没有 session，
+    # 这里要按 OBS 状态把上一段收尾，否则重启时 StartRecord 会 500、旧视频一直变长。
     try:
-        _finish_autoplay_recording("stopped")
+        from dafeiyu.recording import auto  # noqa: PLC0415
+
+        auto.force_stop("stopped")
     except Exception:
         pass
     th = _thread

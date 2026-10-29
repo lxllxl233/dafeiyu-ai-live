@@ -209,6 +209,37 @@ def write_timeline(run_dir: Path, video: Path | None = None) -> dict:
     return {"events": len(events), "chapters": len(chapters)}
 
 
+def _stale_session() -> Path | None:
+    """上一进程被强杀后留下的 active 录像：本进程没 session，但 OBS 还在录。"""
+    cur = replay.get_current()
+    if not cur:
+        return None
+    meta = replay.read_meta(cur)
+    if str(meta.get("status") or "") != "recording":
+        return None
+    return cur
+
+
+def _recover_stale_recording() -> dict:
+    """把上一进程没收尾的录像停掉并归档；失败不阻断新录像。"""
+    cur = _stale_session()
+    if not cur:
+        return {"ok": True, "recovered": False}
+    try:
+        if not replay.is_recording():
+            return {"ok": True, "recovered": False}
+        dst = replay.stop_recording(cur, result="stale")
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+    try:
+        write_timeline(cur, dst)
+        replay.write_index()
+        replay.clear_current()
+    except Exception:  # noqa: BLE001
+        pass
+    return {"ok": True, "recovered": True, "path": str(dst)}
+
+
 def start_session(game: str = "", note: str = "") -> dict:
     """开一局自动玩录像；失败返回 ok=False，不阻断自动玩。"""
     global _session
@@ -226,6 +257,7 @@ def start_session(game: str = "", note: str = "") -> dict:
         if free and free < MIN_FREE_BYTES:
             return {"ok": False,
                     "error": f"录像磁盘只剩 {replay.human_size(free)}，先不录了（游戏照打）"}
+        _recover_stale_recording()   # 上一次被强杀的话，先在录的那段先收尾
         ok, why = ensure_obs(game=game)
         if not ok:
             return {"ok": False, "error": why}
@@ -294,6 +326,17 @@ def stop_session(result: str = "") -> dict:
             "size": replay.human_size(size), "timeline": timeline}
 
 
+def force_stop(result: str = "stopped") -> dict:
+    """跨进程停录：本进程有 session 就正常收尾，否则按 OBS 状态收上一段。
+
+    主要给 ``play --stop`` 用：CLI 进程没有 session，以前只返回「已停」，
+    实际 OBS 还在录，于是重启后 StartRecord 报 500、旧视频越录越长。
+    """
+    if status().get("active"):
+        return stop_session(result=result)
+    return _recover_stale_recording() if result else {"ok": True, "active": False}
+
+
 def status() -> dict:
     with _lock:
         if not _session:
@@ -302,5 +345,5 @@ def status() -> dict:
                 "started_at": _session.get("started_at", 0)}
 
 
-__all__ = ["ensure_obs", "record_event", "start_session", "stop_session", "status",
-           "write_timeline"]
+__all__ = ["ensure_obs", "record_event", "start_session", "stop_session", "force_stop",
+           "status", "write_timeline"]
