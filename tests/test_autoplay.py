@@ -1089,6 +1089,9 @@ def test_shop_menu_hides_used_or_unaffordable_removal():
 def test_shop_toggle_counts_as_no_progress():
     assert play._stall_key("SHOP", "SHOP open") == ("SHOP", "SHOP toggle")
     assert play._stall_key("SHOP", "SHOP close") == ("SHOP", "SHOP toggle")
+    # LLM 菜单走 actions.label：SHOP open_shop_inventory / close_shop_inventory
+    assert play._stall_key("SHOP", "SHOP open_shop_inventory") == ("SHOP", "SHOP toggle")
+    assert play._stall_key("SHOP", "SHOP close_shop_inventory") == ("SHOP", "SHOP toggle")
 
 
 def test_shop_model_can_buy_card_removal(monkeypatch):

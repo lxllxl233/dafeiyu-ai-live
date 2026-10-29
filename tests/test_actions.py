@@ -102,6 +102,25 @@ def test_shop_menu_drops_unaffordable_items_and_offers_proceed():
         ("buy_card", 0), ("proceed", None)]
 
 
+def test_shop_hides_shelf_when_nothing_is_affordable():
+    """一样都买不起时别再给「看货架」：模型会开/关货架来回切（实机 90 金）。"""
+    state = {"screen": "SHOP", "run": {"gold": 30},
+             "available_actions": ["open_shop_inventory", "proceed"],
+             "shop": {"is_open": False,
+                      "cards": [{"name": "恶魔形态", "price": 300, "available": True}],
+                      "card_removal": {"price": 100, "available": True, "used": False}}}
+    assert [(e["a"], e["i"]) for e in actions.available(state)] == [("proceed", None)]
+
+
+def test_shop_keeps_shelf_when_removal_is_affordable():
+    state = {"screen": "SHOP", "run": {"gold": 120},
+             "available_actions": ["open_shop_inventory", "proceed"],
+             "shop": {"is_open": False,
+                      "cards": [{"name": "恶魔形态", "price": 300, "available": True}],
+                      "card_removal": {"price": 100, "available": True, "used": False}}}
+    assert [e["a"] for e in actions.available(state)] == ["open_shop_inventory", "proceed"]
+
+
 def test_shop_menu_lists_close_shelf_while_open():
     """货架开着只有 close_shop_inventory（run-0111 卡死就是缺这条菜单）。"""
     state = {"screen": "SHOP", "run": {"gold": 200},

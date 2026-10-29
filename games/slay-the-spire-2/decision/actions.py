@@ -147,7 +147,17 @@ def _shop_menu(state: dict) -> list[dict]:
     gold = _int(_run(state).get("gold"), 0)
     out = []
     if "open_shop_inventory" in acts:
-        out.append({"a": "open_shop_inventory", "i": None, "n": "看货架", "fx": ""})
+        # 货架关着时：如果一样都买不起、删牌也付不起，就别给「看货架」——
+        # 模型会反复开/关（实机 90 金买不起祭品，来回切了十几步）。
+        cr0 = sh.get("card_removal") or {}
+        buyable = any(_int(it.get("price"), 0) <= gold
+                      for sec in ("cards", "relics", "potions")
+                      for it in (sh.get(sec) or [])
+                      if isinstance(it, dict) and it.get("available", True))
+        removable = bool(cr0.get("available") and not cr0.get("used")
+                         and _int(cr0.get("price"), 0) <= gold)
+        if buyable or removable:
+            out.append({"a": "open_shop_inventory", "i": None, "n": "看货架", "fx": ""})
     # 货架打开时游戏只给 close_shop_inventory，不给 leave_shop；不列这一项，
     # 模型和本地兜底都没有出口，商店就卡死了（实机 run-0111）。
     if "close_shop_inventory" in acts:
