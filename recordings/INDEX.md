@@ -7,7 +7,8 @@
 
 | 局 | 角色 | 进阶 | 结果 | 大小 | 文件 |
 |---|---|---|---|---|---|
-| 6 | — | — | 自动玩 · llm | 0.0 B | `slay-the-spire-2/run-0006/` |
+| 8 | — | — | run_end | 190.9 MB | `slay-the-spire-2/run-0008/run.mp4` |
+| 7 | — | — | autoplay_end | 480.1 MB | `slay-the-spire-2/run-0007/run.mp4` |
 | 5 | — | — | stopped | 950.4 MB | `slay-the-spire-2/run-0005/run.mp4` |
 | 4 | — | — | 自动玩 · llm | 0.0 B | `slay-the-spire-2/run-0004/` |
 | 3 | — | — | 自动玩 · llm | 0.0 B | `slay-the-spire-2/run-0003/` |

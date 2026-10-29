@@ -136,12 +136,24 @@ def _say(text: str) -> None:
     _host.say(text, sender=_sender)
 
 
+# 录像是否在录，以这里为准：状态文件可能被别的进程 reset 掉（实机见过
+# recording=False/record_path="" 但 OBS 还在录），拿它做切段判断会漏停。
+_rec_active = False
+
+
 def _start_autoplay_recording(game: str, mode: str) -> dict:
-    return _host.start_recording(note=f"自动玩 · {mode}")
+    global _rec_active
+    res = _host.start_recording(note=f"自动玩 · {mode}")
+    _rec_active = bool((res or {}).get("ok"))
+    return res
 
 
 def _finish_autoplay_recording(result: str = "") -> dict:
-    return _host.stop_recording(result)
+    global _rec_active
+    res = _host.stop_recording(result)
+    if (res or {}).get("ok"):
+        _rec_active = False
+    return res
 
 
 # 每局一个视频：OBS 一直录的话，一晚上连播十几局会全塞进同一个文件。
@@ -153,16 +165,26 @@ _rec_pending = 0.0
 
 
 def _maybe_split_recording(state: dict) -> None:
-    global _rec_run_id, _rec_pending
+    global _rec_run_id, _rec_pending, _rec_active
+    # 开录失败（OBS 500 / 还没落盘）不阻断自动玩，隔几秒再试。
+    if _rec_pending and time.time() >= _rec_pending and not _rec_active:
+        _rec_pending = 0.0
+        res = _start_autoplay_recording(_rec_game, _rec_mode) or {}
+        _log("record_retry", ok=bool(res.get("ok")),
+             error=str(res.get("error") or "")[:120])
+        if not res.get("ok"):
+            _rec_pending = time.time() + 6.0
     rid = str((state.get("run") or {}).get("run_id") or "")
     if not rid:
+        # STS2 mod 的状态里没有 run_id（只有 floor/角色/卡组）。切段以
+        # GAME_OVER 为界，在死亡重开那一支里换新视频，别指望这个字段。
         return
     floor = _num((state.get("run") or {}).get("floor"), 0)
     if _rec_run_id is None:
         _rec_run_id = rid          # 启动时接的是哪一局，就跟着这一局录
     elif rid != _rec_run_id:
         _rec_run_id = rid
-        if _state.get("recording"):
+        if _rec_active:
             stop = _finish_autoplay_recording("run_end") or {}
             res = _start_autoplay_recording(_rec_game, _rec_mode) or {}
             if res.get("ok"):
@@ -179,14 +201,15 @@ def _maybe_split_recording(state: dict) -> None:
                  path=str(res.get("path") or ""), error=str(res.get("error") or "")[:120])
         if not res.get("ok"):
             _rec_pending = time.time() + 6.0
-    # 开录失败（OBS 500 / 还没落盘）不阻断自动玩，隔几秒再试。
-    if _rec_pending and time.time() >= _rec_pending and not _state.get("recording"):
-        _rec_pending = 0.0
-        res = _start_autoplay_recording(_rec_game, _rec_mode) or {}
-        _log("record_retry", ok=bool(res.get("ok")),
-             error=str(res.get("error") or "")[:120])
-        if not res.get("ok"):
-            _rec_pending = time.time() + 6.0
+
+
+def _record_new_run() -> None:
+    """死亡重开新一局：换一个新视频（每局一个视频）。"""
+    global _rec_pending
+    res = _start_autoplay_recording(_rec_game, _rec_mode) or {}
+    _log("record_new_run", ok=bool(res.get("ok")),
+         path=str(res.get("path") or ""), error=str(res.get("error") or "")[:120])
+    _rec_pending = 0.0 if res.get("ok") else time.time() + 6.0
 
 
 def _settings() -> tuple[str, str]:
@@ -1413,7 +1436,7 @@ def _wait_game(sts2, timeout: float = 120.0) -> dict | None:
 
 def _run(game: str, mode: str = "local") -> None:
     global _thread, _speech_until, _rollback_tried, _sl_used, _sl_last
-    global _rec_run_id, _rec_game, _rec_mode, _rec_pending
+    global _rec_run_id, _rec_game, _rec_mode, _rec_pending, _rec_active
     _rollback_tried = False
     _sl_used = 0
     _sl_last = 0.0
@@ -1422,6 +1445,7 @@ def _run(game: str, mode: str = "local") -> None:
     _rec_game = game
     _rec_mode = mode
     _rec_pending = 0.0
+    _rec_active = False
     _deck_clicks.clear()
     sts2 = advisor = llm_tools = llm_planner = screen_planner = None
     try:
@@ -1538,9 +1562,9 @@ def _run(game: str, mode: str = "local") -> None:
                 _sl_last = 0.0
                 _sl_done.clear()
                 # 每局一个视频：死亡就收尾，等新一局第一屏再开新录像。
-                if _state.get("recording"):
+                if _rec_active:
                     _rec_run_id = ""
-                    stop = _finish_autoplay_recording("run_end")
+                    stop = _finish_autoplay_recording("run_end") or {}
                     _log("record_split", reason="game_over",
                          stop_ok=bool(stop.get("ok")))
                 _say("这局结束了，我回主菜单再来一局。")
@@ -1563,6 +1587,7 @@ def _run(game: str, mode: str = "local") -> None:
                     time.sleep(1.2)
                 if new_state:
                     _set_from_state(new_state, "新一局")
+                    _record_new_run()      # 新一局 = 新视频
                     _log("restart_run")
                     continue
                 _write_status(running=False, error="GAME_OVER 无法返回主菜单",
