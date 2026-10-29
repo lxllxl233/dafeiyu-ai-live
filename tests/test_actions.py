@@ -110,8 +110,18 @@ def test_chest_relic_must_be_taken_before_leaving():
 
 def test_chest_allows_leaving_after_relic_claimed():
     taken = {**CHEST_STATE,
+             "chest": {"has_relic_been_claimed": True, "relic_options": []},
+             "reward": {"rewards": []}}
+    entry, err = actions.check({"act": "proceed"}, taken)
+    assert entry and not err
+
+
+def test_chest_blocks_leaving_with_unclaimed_rewards():
+    taken = {**CHEST_STATE,
              "chest": {"has_relic_been_claimed": True, "relic_options": []}}
     entry, err = actions.check({"act": "proceed"}, taken)
+    assert entry is None and "奖励" in err
+    entry, err = actions.check({"act": "claim_reward", "i": 0}, taken)
     assert entry and not err
 
 

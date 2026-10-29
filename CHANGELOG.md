@@ -32,7 +32,14 @@
   多余的记 `say_truncated` 日志。
 - **宝箱遗物必须拿走**：宝箱里 `has_relic_been_claimed=false` 时，`proceed` /
   `collect_rewards_and_proceed` / 领金币这类动作会被 `actions.check` 拒绝并提示
-  「先 choose_treasure_relic」；拿完才放行。
+  「先 choose_treasure_relic」；拿完才放行。奖励没领完同样不许走（遗物有时挂在
+  `reward.rewards` 里）。CHEST 屏会记 `chest_state`（acts/opened/claimed/relics/
+  rewards），下次再漏就能直接定位是没动作还是标记提前为 true。
+- **消耗（Exhaust）牌序**：契约终结消耗堆 <3 张时不可打（不再当 0 费空过）；
+  邪眼/被遗忘的仪式按「本回合是否消耗过」结算（先消耗再打）；午夜按消耗堆逐张减费；
+  跃跃欲试不再当成防御牌——2 费（+1 费），手里每张攻击回 1 能，所以要先打。
+  `prompts.py` 和 `OS.md` 都补了「消耗序」；`references/cards.md` 里跃跃欲试、
+  彼岸咆哮、契约终结、午夜、无惧疼痛、被遗忘的仪式 6 张按引擎数据更正。
 - **OBS 残留录制导致新一局开录失败**：上一段录制没停（手工开的、或 current 指针已清），
   `StartRecord` 一直报 `code=500`，状态显示没在录、文件却越录越长。现在开新一局前先
   `stop_recording_now()` 收掉残留段并记 `record_preempt`，再建本局目录开录。

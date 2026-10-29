@@ -190,7 +190,7 @@ def parse_card(card: dict, idx: int | None = None) -> dict:
         draw = sts2._int(db.get("cards_draw"), 0)
     if draw:
         out["draw"] = int(draw)
-    en = _dyn(card, "Energy")
+    en = _dyn(card, "Energy", "CalculatedEnergy")
     if en is None:
         en = sts2._int(db.get("energy_gain"), 0)
     if en and out["t"] in ("P", "S") and ("回合开始时" in text or "被消耗时" in text):
@@ -223,6 +223,8 @@ def parse_card(card: dict, idx: int | None = None) -> dict:
     cm = _cost_mod(text, cid)
     if cm:
         out["cm"] = cm
+    # 消耗牌：打出去就进消耗牌堆。契约终结/邪眼/被遗忘的仪式/午夜都吃「消耗过几张」，
+    # 所以这几张的牌序必须排在消耗源之后（实机反馈：老是先打支付牌，白亏）。
     if "消耗" in text and ("消耗。" in text or text.endswith("消耗") or "消耗。" in text):
         out["exh"] = 1
     # 加牌：只关心「加入手牌」的即时张数
@@ -697,6 +699,9 @@ class Sim:
             c = max(0, c + cm["self+"])
         if cm.get("self-"):
             c = max(0, c - cm["self-"])
+        # 午夜：本场战斗每消耗过一张牌，费用 -1（消耗牌堆 + 本回合已消耗）。
+        if card.get("id") == "MIDNIGHT":
+            c = max(0, c - (self.exhaust_pile + self.exhausts))
         return c
 
     def incoming(self) -> int:
@@ -850,6 +855,9 @@ class Sim:
     def play(self, card: dict, target: int | None = None) -> dict | None:
         if not card.get("play", True) or card.get("_played"):
             return None
+        # 契约终结：消耗牌堆不足 3 张时根本不可打（不能当成 0 费空过）。
+        if card.get("id") == "PACTS_END" and self.exhaust_pile + self.exhausts < 3:
+            return None
         cost = self.cost_of(card)
         if cost > self.energy:
             return None
@@ -892,8 +900,22 @@ class Sim:
             if self.rupture and d:
                 self.str_bonus += self.rupture
         if card.get("en"):
-            self.energy = min(self.e_max + 10, self.energy + card["en"])
-            step["en"] = card["en"]
+            amount = card["en"]
+            # 被遗忘的仪式：本回合没消耗过牌 → 不给能量（牌面 Energy 是条件值 3）。
+            if card["id"] == "FORGOTTEN_RITUAL" and self.exhausts <= 0:
+                amount = 0
+            if amount:
+                self.energy = min(self.e_max + 10, self.energy + amount)
+                step["en"] = amount
+        if card["id"] == "EXPECT_A_FIGHT":
+            # 跃跃欲试：手里每张攻击牌回 1 费（引擎 CalculatedEnergy 缺失时本地数）。
+            gain = card.get("en")
+            if not gain:
+                gain = len([x for x in self.hand if x is not card
+                            and not x.get("_played") and x.get("t") == "A"])
+            if gain:
+                self.energy = min(self.e_max + 10, self.energy + gain)
+                step["en"] = step.get("en", 0) + gain
         if card.get("draw"):
             self.draws += card["draw"]
             step["draw"] = card["draw"]
@@ -913,6 +935,9 @@ class Sim:
                 # 所以这里只补**批内新加**的敏捷，不能再乘一次 0.75（run86 f12t2 就是这么把
                 # 4 点入伤预测成 6 点的）。
                 gain = max(0, card["blk"] + self._dex_block())
+            # 邪眼：本回合消耗过牌 → 再给一份（引擎 Block 只报基础值）。
+            if card.get("id") == "EVIL_EYE" and self.exhausts > 0:
+                gain += max(0, card.get("blk", 0))
             self.block += gain
             step["blk"] = gain
         # 狂怒：本回合每打一张攻击牌 +N 格挡（引擎实测生效，老版本漏算）

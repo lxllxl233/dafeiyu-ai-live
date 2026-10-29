@@ -146,3 +146,60 @@ def test_stoke_must_be_played_alone_then_reread_hand():
     # 连 end 都不许接：先读完新 ctx，再决定要不要结束回合。
     ok3, err3, _sm, _steps = sim.validate(st, [{"c": "STOKE"}, {"end": 1}])
     assert not ok3 and "生成边界" in err3
+
+
+# ---------------------------------------------------------------- 消耗联动
+EXPECT = card("EXPECT_A_FIGHT", 2, text="手中每有1张攻击牌，获得1点能量。", ctype="Skill")
+PACT = card("PACTS_END", 0, dmg=17, text="消耗牌堆≥3张才能打出；对所有敌人造成17点伤害。")
+RITUAL = card("FORGOTTEN_RITUAL", 1, text="若本回合消耗过牌，获得3点能量。", ctype="Skill",
+              dyn=[{"name": "Energy", "current_value": 3}])
+EVIL = card("EVIL_EYE", 1, blk=8, text="获得8点格挡。若本回合消耗过牌，再获得8点格挡。",
+            ctype="Skill", dyn=[{"name": "Block", "current_value": 8}])
+MIDNIGHT = card("MIDNIGHT", 12, dmg=60, text="造成60点伤害。每消耗过1张牌费用减1。")
+
+
+def test_expect_a_fight_counts_attacks_in_hand_for_energy():
+    st = state([EXPECT, STRIKE, STRIKE], energy=3)
+    sm = sim.Sim.from_state(st)
+    step = sm.play([c for c in sm.hand if c["id"] == "EXPECT_A_FIGHT"][0])
+    assert step is not None and step.get("en") == 2
+    assert sm.energy == 3      # 3 - 2 费 + 2 攻击 = 3
+    # 攻击先打光再打它 → 回 0 能
+    sm2 = sim.Sim.from_state(state([EXPECT, STRIKE], energy=3))
+    sm2.play([c for c in sm2.hand if c["id"] == "STRIKE_IRONCLAD"][0])
+    step2 = sm2.play([c for c in sm2.hand if c["id"] == "EXPECT_A_FIGHT"][0])
+    assert step2.get("en") in (0, None)
+
+
+def test_pacts_end_needs_three_in_exhaust_pile():
+    sm = sim.Sim.from_state(state([PACT], energy=3))
+    assert sm.play(sm.hand[0]) is None
+    sm.exhaust_pile = 3
+    step = sm.play(sm.hand[0])
+    assert step is not None and step["d"] == 17
+
+
+def test_forgotten_ritual_pays_only_after_an_exhaust():
+    sm = sim.Sim.from_state(state([RITUAL], energy=1))
+    sm.play(sm.hand[0])
+    assert sm.energy == 0      # 1 - 1 费，没有消耗 → 不回能
+    sm2 = sim.Sim.from_state(state([RITUAL], energy=1))
+    sm2.exhausts = 1
+    sm2.play(sm2.hand[0])
+    assert sm2.energy == 3     # 1 - 1 + 3
+
+
+def test_evil_eye_doubles_block_after_exhaust():
+    sm = sim.Sim.from_state(state([EVIL], energy=3))
+    sm.play(sm.hand[0])
+    assert sm.block == 8
+    sm2 = sim.Sim.from_state(state([EVIL], energy=3))
+    sm2.exhausts = 1
+    sm2.play(sm2.hand[0])
+    assert sm2.block == 16
+
+
+def test_midnight_gets_cheaper_with_exhausts():
+    sm = sim.Sim.from_state(state([MIDNIGHT], energy=12))
+    sm.exhaust_pile = 3
+    assert sm.cost_of(sm.hand[0]) == 9

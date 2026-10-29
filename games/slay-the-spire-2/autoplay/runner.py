@@ -901,6 +901,22 @@ def _screen_llm(sts2, planner, state: dict, screen: str) -> str:
         _log("screen_llm_unavailable", error=f"{type(exc).__name__}: {exc}")
         return ""
     menu = actions.available(state)
+    if screen == "CHEST":
+        # 实机反馈「宝箱遗物老是忘了拿」：把 mod 真实给的宝箱字段记下来，
+        # 才能分清是没这个动作、还是 has_relic_been_claimed 提前变 true。
+        ch = state.get("chest") or {}
+        _log("chest_state", screen=screen, acts=sorted(_acts(state)),
+             open=ch.get("is_open"), claimed=ch.get("has_relic_been_claimed"),
+             relics=[str(r.get("name") or "") for r in (ch.get("relic_options") or [])
+                     if isinstance(r, dict)],
+             run_relics=len((state.get("run") or {}).get("relics") or []),
+             rewards=[{"type": str(r.get("reward_type") or ""),
+                       "name": str(r.get("name") or ""),
+                       "claimable": r.get("claimable"),
+                       "claimed": r.get("claimed")}
+                      for r in ((state.get("reward") or {}).get("rewards") or [])
+                      if isinstance(r, dict)],
+             menu=[{"a": e["a"], "i": e["i"], "n": e.get("n")} for e in menu])
     if screen == "REST":
         # 营火「没有锻造」时要能回查：是游戏没给/禁用了，还是菜单漏了。
         _log("rest_menu", items=[{"a": e["a"], "i": e["i"], "n": e.get("n")}

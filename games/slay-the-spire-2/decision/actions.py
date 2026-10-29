@@ -315,16 +315,21 @@ def _menu_names(menu: list[dict], limit: int = 8) -> str:
 
 
 def _chest_guard(state: dict, entry: dict) -> str:
-    """宝箱里还有没拿的遗物时，不许 proceed/跑路（实机反馈：老是忘了捡）。"""
+    """宝箱里还有没拿的遗物/奖励时，不许 proceed/跑路（实机反馈：老是忘了捡）。"""
     if str(state.get("screen") or "").upper() != "CHEST":
         return ""
     ch = state.get("chest") or {}
     acts = _acts(state)
-    if "choose_treasure_relic" not in acts or ch.get("has_relic_been_claimed"):
-        return ""
-    if entry.get("a") in ("choose_treasure_relic", "open_chest"):
-        return ""
-    return "宝箱里还有遗物没拿：先 choose_treasure_relic（i=0）拿完再继续"
+    a = entry.get("a")
+    if "choose_treasure_relic" in acts and not ch.get("has_relic_been_claimed") \
+            and a not in ("choose_treasure_relic", "open_chest"):
+        return "宝箱里还有遗物没拿：先 choose_treasure_relic（i=0）拿完再继续"
+    # 遗物也可能作为奖励挂在 reward.rewards 里：没领完不许走。
+    rewards = [r for r in ((state.get("reward") or {}).get("rewards") or [])
+               if isinstance(r, dict) and r.get("claimable") is not False and not r.get("claimed")]
+    if rewards and a in ("proceed", "collect_rewards_and_proceed", "close_chest"):
+        return "宝箱里还有没领的奖励（含遗物）：先 claim_reward 领完再继续"
+    return ""
 
 
 def check(plan: dict, state: dict) -> tuple[dict | None, str]:
