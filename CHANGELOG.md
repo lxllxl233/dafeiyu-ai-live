@@ -16,9 +16,29 @@
   不认这个字段时自动去掉重试。`llm_usage` 行和 Token 面板每一步都多一个耗时 `ms`。
 - **界面决策改为「先说话再操作」**：`_say_screen` 从 `actions.execute` 之后移到之前，
   和战斗回合一致（`cmd_batch` 本来就是先推字幕再出牌）；观众先听到理由再看到画面变化。
+- **牌组多选（移除/升级 N 张）改为逐张点不同牌**：不再依赖 mod 的 `selected_count`
+  （旧 mod 恒 0，点第二次会把第一张取消），本地按 0、1、2… 顺序点，点满 `need` 张
+  后调 `confirm_selection`；`--mode llm` 下这一屏直接本地处理（模型看不到已选张数，
+  只会重复点同一张，run-0113 一晚烧了 530 万 token）。删掉不适用于 12+ 张牌组的
+  `ui_pick_cards` 鼠标坐标兜底。
 
 ### Fixed
 
+- **「从牌组移除 N 张」终于能确认（mod 重编）**：根因在 mod，不在客户端。
+  `NDeckCardSelectScreen` 的确认按钮是私有字段 `_confirmButton` /
+  `_previewConfirmButton`，v0.8.0 的 `ConfirmDeckSelectionAsync` 只找
+  `%PreviewConfirm` / `%Confirm` 节点 → 永远点不到；`select_deck_card` 只回
+  `pending`，`min/max/selected_count` 也一律 0。现在用 .NET 9 SDK 从
+  `lxllxl233/STS2-Agent` v0.8.0 源码重编（分支 `compat/v0.107.1`），补丁：
+  ① `Player.CanUseOrRemovePotions` 在 v0.107.1 已删除，改回 `true`（原先靠 IL 补丁）；
+  ② 反射私有确认按钮，并把牌组屏接进 `CanConfirmSelection` /
+  `ExecuteConfirmSelectionAsync`；
+  ③ 从提示文本解析 min/max（先去掉 BBCode），已选张数读 `_previewCards`；
+  ④ 点确认前用游戏自己的 `CheckIfSelectionComplete` 把关（选不满就点确认，游戏会
+  只移除已选张数并直接结束事件）；
+  ⑤ `select_deck_card` 不再自动确认，交给 `confirm_selection`。
+  实测（2026-10-29，游戏 v0.107.1）：涅奥「松动羊毛剪」（移除 2 张）`min/max=2`，
+  点 1 张时 `confirm_selection` 不出现、点满 2 张才出现，确认后回到事件、牌组 11→9。
 - **删牌多选屏空转一晚上（run-0113）**：涅奥「移除 2 张牌」把游戏带进
   `CARD_SELECTION`，mod 的 `select_deck_card` 只回 `pending`、`selected_count`
   永远 0；LLM 每 13 秒回一次「选牌 select_deck_card 0」，从 03:51 卡到 09:58，

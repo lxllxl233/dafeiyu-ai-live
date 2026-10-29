@@ -154,6 +154,7 @@ def test_card_selection_picks_each_required_card_once():
     ready = {**base, "available_actions": ["confirm_selection"],
              "selection": {**base["selection"], "selected_count": 2,
                            "requires_confirmation": True, "can_confirm": True}}
+    play._deck_clicks.clear()
     fake = _FakeSts2([base, selected, ready])
     assert play._selection_need(base["selection"]) == 2
     assert play._card_selection(fake, base) == "CARD select 1/2"
@@ -165,7 +166,9 @@ def test_card_selection_picks_each_required_card_once():
     assert fake.calls[-1] == ("confirm_selection", {})
 
 
-def test_blind_multi_select_uses_ui_fallback(monkeypatch):
+def test_blind_multi_select_clicks_then_confirms(monkeypatch):
+    """mod 修好后牌组多选不再走鼠标坐标兜底：逐张点不同牌，再 confirm_selection。"""
+    monkeypatch.setattr(play, "_deck_clicks", {})
     base = {
         "run_id": "RUN1",
         "screen": "CARD_SELECTION",
@@ -177,19 +180,18 @@ def test_blind_multi_select_uses_ui_fallback(monkeypatch):
             "cards": [{"index": 0, "card_id": "A"}, {"index": 1, "card_id": "B"}],
         },
     }
-    fake = _FakeSts2([base, {"screen": "EVENT", "available_actions": ["choose_event_option"]}])
-
-    def ui_pick(n):
-        assert n == 2
-        fake.i = 1
-        return True
-
-    fake.ui_pick_cards = ui_pick
-    monkeypatch.setattr(play.time, "sleep", lambda *_: None)
-    play._ui_picks.clear()
+    ready = {**base, "available_actions": ["confirm_selection"],
+             "selection": {**base["selection"], "selected_count": 2,
+                           "requires_confirmation": True, "can_confirm": True}}
+    fake = _FakeSts2([base, ready])
     assert play._blind_selection(base["selection"]) is True
-    assert play._card_selection(fake, base) == "CARD ui 2 -> EVENT"
-    assert fake.calls == []
+    assert play._card_selection(fake, base) == "CARD select 1/2"
+    assert play._card_selection(fake, base) == "CARD select 2/2"
+    assert play._card_selection(fake, ready) == "CARD confirm"
+    assert [c[0] for c in fake.calls] == [
+        "select_deck_card", "select_deck_card", "confirm_selection"]
+    assert fake.calls[0][1] == {"option_index": 0}
+    assert fake.calls[1][1] == {"option_index": 1}
 
 
 def test_llm_usage_accumulates():

@@ -40,7 +40,6 @@ _stop = _host.stop_event
 _state = _host.state
 _speech_until = 0.0
 _thread: threading.Thread | None = None
-_ui_picks: set[str] = set()
 # 牌组多选屏已经点到第几张：mod 每点一次选一张，重复点同一张会取消，
 # 所以必须 0、1、2… 顺序点（run-0113 的 6 小时空转就是一直点 0）。
 _deck_clicks: dict[str, int] = {}
@@ -663,76 +662,39 @@ def _card_selection(sts2, state: dict) -> str:
             return "CARD skip"
     if "select_deck_card" in acts and cards:
         need = _selection_need(sel)
+        # mod 0.8.0 起牌组多选屏（「移除/升级 N 张」）支持 confirm_selection：
+        # 点一次 = 选一张，重复点同一张会取消。用本地计数保证按 0、1、2… 点不同
+        # 的牌，点满 need 张再确认；selected_count 只在它更大时用来同步（旧 mod
+        # 永远回 0，run-0113 就是这么卡了 6 小时）。
+        key = _deck_select_key(state, sel, cards)
+        done = _deck_clicks.get(key, 0)
         try:
             already = int(sel.get("selected_count") or sel.get("selected") or 0)
         except (TypeError, ValueError):
             already = 0
-        if _blind_selection(sel) and not hasattr(sts2, "ui_pick_cards"):
-            # mod 的牌组多选：点一次 = 选一张（内部会点预览确认）；重复点同一张
-            # 会把它取消掉（run-0113 卡 6 小时就是这么来的）。按 0、1、2… 顺序点，
-            # 点满 need 张后再看要不要确认，实在不推进就交给卡住守卫回滚。
-            key = _deck_select_key(state, sel, cards)
-            done = _deck_clicks.get(key, 0)
-            if done >= need:
-                try:
-                    now = sts2.get_state()
-                except Exception:
-                    now = state
-                if "confirm_selection" in _acts(now):
-                    sts2.act("confirm_selection")
-                    return "CARD confirm"
-                if _screen(now) != "CARD_SELECTION":
-                    return f"CARD -> {_screen(now)}"
-                return f"CARD wait {done}/{need}"
-            if done >= len(cards):
-                return f"CARD wait {done}/{need}"
-            if len(_deck_clicks) > 40:
-                _deck_clicks.clear()
-            _deck_clicks[key] = done + 1
+        done = max(done, already)
+        if done >= need:
             try:
-                sts2.act("select_deck_card", option_index=int(done))
-                return f"CARD select {done + 1}/{need}"
-            except Exception as exc:  # noqa: BLE001
-                _log("deck_select_failed", i=done,
-                     error=f"{type(exc).__name__}: {exc}")
-                return "CARD select failed"
-        if _blind_selection(sel) and hasattr(sts2, "ui_pick_cards"):
-            key = f"{state.get('run_id','')}|{sel.get('prompt','')}|" \
-                  f"{','.join(str(c.get('card_id') or c.get('name') or '') for c in cards)}"
-            if key not in _ui_picks:
-                if len(_ui_picks) > 40:
-                    _ui_picks.clear()
-                _ui_picks.add(key)
-                try:
-                    clicked = bool(sts2.ui_pick_cards(need))
-                except Exception:
-                    clicked = False
-                if clicked:
-                    time.sleep(0.8)
-                    now = sts2.get_state()
-                    if "confirm_selection" in _acts(now):
-                        sts2.act("confirm_selection")
-                        now = sts2.get_state()
-                    if _screen(now) != "CARD_SELECTION":
-                        return f"CARD ui {need} -> {_screen(now)}"
-                    _log("ui_pick_still_selection", need=need)
-                    return f"CARD ui wait {need}"
-        if already < need:
-            # 一次只点一张，下一轮重新读 selected_count；一屏要选 2 张时
-            # 不能重复点 index 0（旧实现就是这样原地打转）。
-            idx = min(already, len(cards) - 1)
-            try:
-                sts2.act("select_deck_card", option_index=int(idx))
-                return f"CARD select {already + 1}/{need}"
+                now = sts2.get_state()
             except Exception:
-                return "CARD select failed"
-        now = sts2.get_state()
-        if "confirm_selection" in _acts(now):
-            sts2.act("confirm_selection")
-            return "CARD confirm"
-        if _screen(now) != "CARD_SELECTION":
-            return f"CARD -> {_screen(now)}"
-        return f"CARD wait {already}/{need}"
+                now = state
+            if "confirm_selection" in _acts(now):
+                sts2.act("confirm_selection")
+                return "CARD confirm"
+            if _screen(now) != "CARD_SELECTION":
+                return f"CARD -> {_screen(now)}"
+            return f"CARD wait {done}/{need}"
+        if done >= len(cards):
+            return f"CARD wait {done}/{need}"
+        if len(_deck_clicks) > 40:
+            _deck_clicks.clear()
+        _deck_clicks[key] = done + 1
+        try:
+            sts2.act("select_deck_card", option_index=int(done))
+            return f"CARD select {done + 1}/{need}"
+        except Exception as exc:  # noqa: BLE001
+            _log("deck_select_failed", i=done, error=f"{type(exc).__name__}: {exc}")
+            return "CARD select failed"
     if "confirm_selection" in acts:
         sts2.act("confirm_selection")
         return "CARD confirm"
@@ -888,12 +850,11 @@ def _one_step(sts2, advisor, state: dict, *, mode: str = "local",
         return _combat(sts2, advisor, state, mode=mode, llm_tools=llm_tools,
                        llm_planner=llm_planner, game=game)
     if mode == "llm" and screen_planner is not None and screen in LLM_SCREENS:
-        # 牌组多选（「选择 N 张牌来移除/升级」）是 mod 的已知 blocker：点击只回
-        # pending，selected_count 永远 0。让模型点只会把一句话重复上千遍
-        # （run-0113 一晚烧掉 530 万 token），直接走本地：先试一次 UI 坐标点选，
-        # 不行就交给卡住守卫回滚。
-        if screen == "CARD_SELECTION" and _blind_selection(state.get("selection") or {}):
-            _log("blind_selection_local", need=_selection_need(state.get("selection") or {}))
+        # 牌组多选（「选择 N 张牌来移除/升级」）走本地：mod 的 selected_count 不可靠，
+        # 让模型点只会重复点同一张（run-0113 一晚烧掉 530 万 token）。本地按
+        # 0、1、2… 顺序点不同牌，点满后用 confirm_selection 确认（mod 已修）。
+        if screen == "CARD_SELECTION" and "select_deck_card" in _acts(state):
+            _log("deck_selection_local", need=_selection_need(state.get("selection") or {}))
         else:
             out = _screen_llm(sts2, screen_planner, state, screen)
             if out:

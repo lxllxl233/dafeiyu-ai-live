@@ -1,4 +1,35 @@
-# TODO：修 mod 的「从牌组移除 N 张」多选点击（blocker）
+# TODO：修 mod 的「从牌组移除 N 张」多选点击（已修复，2026-10-29）
+
+**状态：已修复**。mod 已用 .NET 9 SDK 从 `lxllxl233/STS2-Agent` v0.8.0 源码重编
+（分支 `compat/v0.107.1`，本仓库 `games/slay-the-spire-2/compat/mod/STS2AIAgent.dll`
+就是这份构建），客户端在 `runner._card_selection` 里改为逐张点不同牌 + `confirm_selection`。
+
+补丁（都在 mod 源码里）：
+1. `Player.CanUseOrRemovePotions` 在游戏 v0.107.1 已删除 → `IsPotionDiscardable` 返回 `true`
+   （以前靠 IL 补丁，现在源码层）。
+2. `NDeckCardSelectScreen` 的确认按钮是私有字段 `_confirmButton` / `_previewConfirmButton`，
+   不是 `%Confirm` 节点 → `TryGetDeckScreenConfirmButton` 反射取字段（预览打开时优先预览确认），
+   `CanConfirmSelection` / `ExecuteConfirmSelectionAsync` 接上牌组屏，暴露 `confirm_selection`。
+3. `BuildSelectionPayload`：`min/max` 从提示文本解析（先去掉 `[blue]` 这类 BBCode），
+   已选张数读 `_previewCards`；不再一律 0/0/0。
+4. 点确认前用游戏自己的 `CheckIfSelectionComplete` 把关：实测选 1/2 时就点确认，
+   游戏会**只移除 1 张并直接结束事件**（`松动羊毛剪` 变相废掉）。
+5. `select_deck_card` 只负责点牌、不再自动确认；`confirm_selection` 单独驱动。
+
+实测（2026-10-29，游戏 v0.107.1 / mod 0.8.0 重编）：
+- 涅奥「精准剪刀」（移除 1 张）：`min=max=1`，点 1 张后 `confirm_selection` 可用，
+  确认后回到事件，牌组减少。
+- 涅奥「松动羊毛剪」（移除 2 张）：选 1 张后确认**不可用**（门控生效），选满 2 张后才可用。
+
+客户端侧：
+- `runner._card_selection` 用 `_deck_clicks` 本地计数，按 0、1、2… 点不同牌，
+  `selected_count` 只在更大时同步；点满 `need` 后调 `confirm_selection`，
+  不推进再交给卡住守卫回滚。
+- `--mode llm` 下牌组多选屏（有 `select_deck_card`）直接本地处理，不再问模型
+  （模型看不见已选张数，只会重复点同一张；run-0113 一晚烧 530 万 token）。
+- 删掉 `ui_pick_cards` 鼠标坐标兜底（12+ 张牌组的网格坐标对不上）。
+
+## 历史记录（修复前）
 
 **现象**（2026-10-27 06:35，run75 涅奥选项 `松动羊毛剪`）
 - 选完后进 `CARD_SELECTION`，提示「选择 2 张牌来移除」。
