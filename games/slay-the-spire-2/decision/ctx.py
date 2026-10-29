@@ -479,7 +479,9 @@ def _calc(state: dict, st: sim.Sim, hand: list[dict], potions: list[dict]) -> tu
     net = max(0, inc + tax_dmg - blk) + tax_hp + tick
     full = net == 0
     lethal = sim.lethal_targets(state)
-    out = {"n": len(st.alive()), "inc": inc, "blk": blk, "net": net, "full": full}
+    # 回合末血量直接给死：模型自己减经常差 5（run-0114 写 74、账本 69 被打回）。
+    out = {"n": len(st.alive()), "inc": inc, "blk": blk, "net": net, "full": full,
+           "hp": st.hp, "hp_after": max(0, st.hp - net)}
     if tick:
         out["tick"] = tick
     if tax:
@@ -782,6 +784,8 @@ def _calc_line(hp: int, maxhp: int, calc: dict) -> str:
     """
     parts = [f"血{hp}/{maxhp}", f"本回合最多挡{calc.get('blk', 0)}",
              f"挨{calc.get('inc', 0)}", f"净{calc.get('net', 0)}"]
+    if calc.get("hp_after") is not None:
+        parts.append(f"回合末血{calc['hp_after']}")
     if calc.get("full"):
         parts.append("可全挡")
     if calc.get("lethal"):

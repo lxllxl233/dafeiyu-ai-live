@@ -328,6 +328,14 @@ def test_validate_says_unplayable_not_999():
     assert "本回合不能打" in err
 
 
+def test_calc_line_reports_end_hp():
+    """模型自己减血量老差 5（run-0114 写 74、账本 69）；把回合末血直接写进 calc.line。"""
+    ctx = _decision_module("ctx")
+    line = ctx._calc_line(64, 85, {"blk": 13, "inc": 19, "net": 6,
+                                   "hp": 64, "hp_after": 58})
+    assert "回合末血58" in line
+
+
 def test_llm_usage_accumulates():
     with play._lock:
         for key, value in (("tokens_in", 0), ("tokens_out", 0),

@@ -38,6 +38,8 @@
 - **血量以战斗中的真实值为准**：`_run_meta` 在 COMBAT 下优先用
   `combat.player.current_hp`（`run.current_hp` 偶尔慢一拍，overlay/字幕会显示旧血量），
   两者不一致时记 `hp_mismatch`；战斗目标文本也改用这份 HP。
+  另外 `calc.line` 直接给出「回合末血」（`calc.hp_after`），提示词要求 `fx.hp` 照抄它，
+  别自己减——run-0114 里模型写 74、账本 69 被反复打回。
 - **「从牌组移除 N 张」终于能确认（mod 重编）**：根因在 mod，不在客户端。
   `NDeckCardSelectScreen` 的确认按钮是私有字段 `_confirmButton` /
   `_previewConfirmButton`，v0.8.0 的 `ConfirmDeckSelectionAsync` 只找
