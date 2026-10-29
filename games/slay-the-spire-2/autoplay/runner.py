@@ -25,6 +25,7 @@ from pathlib import Path
 from dafeiyu import paths
 from dafeiyu.agent.host import AutoplayHost
 
+from ..decision.speech import tidy_say as _tidy_say
 from ..decision.prompts import (NONCOMBAT_PROMPT, SYSTEM_PROMPT, combat_goal,
                                 noncombat_goal, screen_label)
 
@@ -733,6 +734,11 @@ def _screen_llm(sts2, planner, state: dict, screen: str) -> str:
         say = plan.get("say")
         text = (" ".join(str(x) for x in say if str(x).strip())
                 if isinstance(say, list) else str(say or ""))
+        # 模型偶尔还是会把 ctx 里的「HP 64/80」抄进 say：播出去前统一摘掉血条。
+        tidy = _tidy_say(text)
+        if tidy != text:
+            _log("say_trimmed", screen=screen, before=text[:80], after=tidy[:80])
+            text = tidy
         _add_llm_usage(res.get("usage"), note=f"{screen_label(screen)} {actions.label(entry)}")
         if text:
             # 先说话再点：观众先听到「为什么」，再看到画面变化（和战斗回合一致）。

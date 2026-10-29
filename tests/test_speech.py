@@ -86,3 +86,22 @@ def test_mambo_reads_sigh_lines_softer(tmp_path):
     assert voice._delivery("它 21，挡满。") == (1.0, "")
     voice.cfg["sigh_speed"] = 0.9
     assert voice._delivery("唔")[0] == 0.9
+
+
+def test_tidy_say_strips_hp_but_keeps_prices_and_punctuation():
+    speech = GameRegistry().load_game_module("slay-the-spire-2", "decision.speech")
+    tidy = speech.tidy_say
+    assert tidy("涅奥事件只剩继续，HP 64/80 状态良好，直接前进。") == "涅奥事件只剩继续，状态良好，直接前进。"
+    assert tidy("HP 64/80（80%）安全，先走事件。") == "安全，先走事件。"
+    assert tidy("删一张打击 100 金币，值。") == "删一张打击 100 金币，值。"
+    assert tidy("这波稳了。") == "这波稳了。"
+    # 整句只有血条：宁可不说，也不念血条
+    assert tidy("HP 64/80") == ""
+    assert tidy("") == ""
+
+
+def test_tidy_say_handles_combat_style_lines():
+    speech = GameRegistry().load_game_module("slay-the-spire-2", "decision.speech")
+    for line in ("它 21，我 0 甲，HP 61/80。", "我 61 血，先挡。", "HP 61/80，这波我算过了。"):
+        assert "HP" not in speech.tidy_say(line)
+        assert not re.search(r"我\s*\d+\s*血", speech.tidy_say(line))

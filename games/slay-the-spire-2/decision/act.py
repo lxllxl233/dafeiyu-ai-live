@@ -49,7 +49,8 @@ sys.path.insert(0, ROOT)
 sys.path.insert(0, _HERE)
 
 _T_IMPORT = time.time()
-import sts2  # noqa: E402
+import sts2
+from speech import tidy_say as _tidy_say  # noqa: E402
 import ctx as ctxmod  # noqa: E402
 import decision_log  # noqa: E402
 import sim  # noqa: E402
@@ -82,10 +83,10 @@ def normalize(spec: dict) -> tuple[list, list, dict, dict]:
     lines = []
     for x in say:
         if isinstance(x, str):
-            lines.append({"t": x, "m": ""})
+            lines.append({"t": _tidy_say(x), "m": ""})
         elif isinstance(x, dict):
-            lines.append({"t": str(x.get("t") or x.get("thought") or ""),
-                          "m": str(x.get("m") or x.get("meme") or "")})
+            lines.append({"t": _tidy_say(str(x.get("t") or x.get("thought") or "")),
+                          "m": _tidy_say(str(x.get("m") or x.get("meme") or ""))})
     fx = spec.get("fx") or {}
     # 旧提示词写过「药水写 fx.p」，但执行器只认 seq 里的 {"p": 槽位}；fx 只验
     # e/hp/take。为兼容旧习惯，fx 里带 p/potion 时把它挪成一步药水放到最前面，
