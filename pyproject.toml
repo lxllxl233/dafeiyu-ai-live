@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dafeiyu-ai-live"
-version = "2.2.0"
+version = "2.2.1"
 description = "大肥鱼直播姬 · 可换游戏 / 性格 / 声音的 AI 直播工具"
 license = {text = "MIT"}
 authors = [{name = "lxllxl233"}]

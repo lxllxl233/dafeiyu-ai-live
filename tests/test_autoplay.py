@@ -1185,3 +1185,136 @@ def test_run0110_model_asking_for_the_disabled_smith_falls_back_to_heal(monkeypa
     assert last == "REST choose_rest_option 0"
     assert fake.calls == [("choose_rest_option", {"option_index": 0})]
     assert len(planner.calls) == 2  # 重问一次后才兜底
+
+# ---------------------------------------------------------------- 战斗执行/指纹（P0 修复）
+_COMBAT_STATE = {
+    "screen": "COMBAT", "turn": 3, "run_id": "r-exec",
+    "run": {"floor": 5, "current_hp": 60, "max_hp": 80, "potions": [],
+            "deck": [], "relics": []},
+    "available_actions": ["play_card", "end_turn", "use_potion"],
+    "combat": {
+        "player": {"current_hp": 60, "max_hp": 80, "block": 0, "energy": 3,
+                   "max_energy": 3, "powers": []},
+        "hand": [{"card_id": "STRIKE_IRONCLAD", "name": "打击", "energy_cost": 1,
+                  "card_type": "Attack", "playable": True,
+                  "resolved_rules_text": "造成6点伤害。",
+                  "dynamic_values": [{"name": "Damage", "current_value": 6}]}],
+        "enemies": [{"index": 0, "enemy_id": "JAW_WORM", "name": "大颚虫",
+                     "current_hp": 40, "max_hp": 44, "block": 0, "powers": [],
+                     "intents": [{"intent_type": "Attack", "total_damage": 9}]}],
+    },
+}
+
+
+class _BatchFake(_FakeSts2):
+    def __init__(self, states, out="done", fail=False):
+        super().__init__(states)
+        self.out = out
+        self.fail = fail
+        self.specs = []
+
+    def cmd_batch(self, spec):
+        self.specs.append(json.loads(spec))
+        if self.fail:
+            raise RuntimeError("cmd_batch exit 3")
+        return self.out
+
+
+def _tools():
+    return play._import_tools()
+
+
+def test_combat_batch_spec_skips_budget_and_ends_turn():
+    """费用已由 sim 逐步算过：spec 必须带 skip_budget，end_turn 只能最后出现一次。"""
+    sts2, advisor = _tools()
+    fake = _BatchFake([_COMBAT_STATE])
+    out = play._combat(fake, advisor, _COMBAT_STATE, mode="local")
+    assert out.startswith("COMBAT")
+    spec = fake.specs[0]
+    assert spec["skip_budget"] is True
+    acts = [a["action"] for a in spec["actions"]]
+    assert acts.count("end_turn") == 1 and acts[-1] == "end_turn"
+    assert "play_card" in acts
+
+
+def test_combat_batch_failure_is_not_reported_as_success():
+    """回执 BATCH STOP、局面又没变：不能当成打出去了。"""
+    _sts2, advisor = _tools()
+    fake = _BatchFake([_COMBAT_STATE], out="BATCH STOP at 1: card not playable")
+    out = play._combat(fake, advisor, _COMBAT_STATE, mode="local")
+    assert out == "COMBAT no-progress"
+
+
+def test_combat_exec_exception_keeps_the_run_alive():
+    """SystemExit/RuntimeError 不能变成整局 fatal。"""
+    _sts2, advisor = _tools()
+    fake = _BatchFake([_COMBAT_STATE], fail=True)
+    out = play._combat(fake, advisor, _COMBAT_STATE, mode="local")
+    assert out == "COMBAT exec-failed"
+    assert play._stall_key("COMBAT", out) == ("COMBAT", "COMBAT exec-failed")
+
+
+def test_fingerprint_sees_block_only_change():
+    """0 费防御只加格挡：指纹必须变，否则会等到 timeout 还被判「没动作」。"""
+    sts2, _advisor = _tools()
+    after = json.loads(json.dumps(_COMBAT_STATE))
+    after["combat"]["player"]["block"] = 5
+    assert sts2._fingerprint(_COMBAT_STATE) != sts2._fingerprint(after)
+
+    buff = json.loads(json.dumps(_COMBAT_STATE))
+    buff["combat"]["player"]["powers"] = [{"power_id": "RAGE", "amount": 3}]
+    assert sts2._fingerprint(_COMBAT_STATE) != sts2._fingerprint(buff)
+
+    potion = json.loads(json.dumps(_COMBAT_STATE))
+    potion["run"]["potions"] = [{"slot": 0, "potion_id": "FIRE_POTION"}]
+    assert sts2._fingerprint(_COMBAT_STATE) != sts2._fingerprint(potion)
+
+
+# ---------------------------------------------------------------- 锻造/升级选牌不撞键
+def _smith_state(floor, cards, selected=0):
+    return {
+        "screen": "CARD_SELECTION", "run_id": "r-smith",
+        "run": {"floor": floor, "current_hp": 56, "max_hp": 80},
+        "available_actions": ["select_deck_card", "discard_potion"],
+        "selection": {"kind": "deck_upgrade_select", "prompt": "选择1张牌来升级。",
+                      "min_select": 1, "max_select": 1,
+                      "selected_count": selected, "requires_confirmation": False,
+                      "can_confirm": False, "cards": cards},
+    }
+
+
+def _smith_cards():
+    return [{"index": i, "card_id": "STRIKE_IRONCLAD", "name": "打击",
+             "upgraded": False, "card_type": "Attack", "energy_cost": 1,
+             "dynamic_values": [{"name": "Damage", "current_value": 6}]}
+            for i in range(3)]
+
+
+def test_same_prompt_on_a_later_floor_clicks_again():
+    """f13 锻造点过一张，f16 同一提示/同一牌表还得再点（旧实现直接 CARD wait）。"""
+    fake = _FakeSts2([_smith_state(13, _smith_cards()),
+                      _smith_state(16, _smith_cards())])
+    assert play._card_selection(fake, fake.get_state()) == "CARD select 1/1"
+    assert play._card_selection(fake, fake.get_state()) == "CARD select 1/1"
+    assert [c[0] for c in fake.calls] == ["select_deck_card", "select_deck_card"]
+
+
+def test_stale_counter_on_an_auto_confirm_screen_resets_and_clicks():
+    """同一层重开同一屏：计数残留 1 但游戏没收到选择（selected_count=0）→ 重点。"""
+    state = _smith_state(16, _smith_cards())
+    fake = _FakeSts2([state])
+    play._deck_clicks.clear()
+    play._deck_clicks[play._deck_select_key(state, state["selection"],
+                                            state["selection"]["cards"])] = 1
+    out = play._card_selection(fake, state)
+    assert out == "CARD select 1/1"
+    assert [c[0] for c in fake.calls] == ["select_deck_card"]
+
+
+def test_no_rollback_for_a_normal_upgrade_selection(monkeypatch):
+    """普通升级选牌等过场时不能 save_and_quit 丢掉整局。"""
+    monkeypatch.setattr(play, "_write_status", lambda **kw: dict(play._state, **kw))
+    state = _smith_state(16, _smith_cards())
+    fake = _FakeSts2([state])
+    assert play._recover_blind_screen(fake, state, "CARD wait 1/1") is False
+    assert fake.calls == []

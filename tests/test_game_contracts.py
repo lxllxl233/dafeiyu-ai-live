@@ -135,7 +135,7 @@ def test_registry_exposes_contract_and_issues():
     pack = registry.get("slay-the-spire-2")
     assert pack is not None
     assert pack.contract is not None
-    assert pack.contract.version == "2.2.0"
+    assert pack.contract.version == "2.2.1"
     assert pack.contract.capabilities.autoplay is True
     assert pack.contract.errors == ()
     assert pack.contract.entry == "plugin.py:Sts2Plugin"

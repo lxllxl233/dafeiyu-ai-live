@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [2.2.1] - 2026-10-29
 
 ### Changed
 
@@ -27,6 +27,28 @@
   核心牌 +36 优先。评估失败才退回原顺序。
 
 ### Fixed
+
+- **战斗规划/费用统一到 `sim`（P0）**：`advisor.build_plan` 以前自己维护一份静态费用模型
+  （只读当前 `energy_cost`、只看伤害/格挡/易伤/虚弱），和 `sim.validate`、执行层各算一套：
+  回能牌不进候选、引擎把整手攻击报 0 费时当成全免费、抽牌/变费后的手牌不参与排序。
+  现在本地计划直接取 `sim.search` 的候选与逐步费用（`cost_of`/`play`），
+  `spec_from_plan` 带 `skip_budget`，不再让 `cmd_batch` 按初始手牌预扣费误拒合法序列。
+- **战斗执行结果必须核对（P0）**：`_combat_local` 以前只要 `cmd_batch` 返回就记
+  `COMBAT Ndmg`，`BATCH STOP`/`PLAN_OVER_BUDGET`/动画没落地都会被当成打赢，卡住检测
+  也看不出来。现在解析回执里的失败标记并对比前后局面指纹（回合/能量/手牌/双方血量/
+  格挡/敌 HP），没有推进就落 `combat_no_progress` 并记 `COMBAT no-progress`；
+  `SystemExit`/`RuntimeError` 只记 `combat_exec_failed`，不再把整局判死。
+- **等待指纹补全（P1）**：`sts2._fingerprint` 增加玩家血量/格挡/关键 Buff、敌方格挡与
+  Buff、药水槽；0 费防御只加格挡、吃 Buff 药水这类「能量不变」的动作以前被当成没变化，
+  一直等到 timeout。
+- **狂怒格挡不再虚报（P1）**：`sim.max_block` 只按「剩下能量真的打得出去」的攻击牌算
+  狂怒补甲（2 张 1 费攻击只剩 1 费时以前会 +6）。
+- **清场后多写的动作前置拒绝（P1）**：`sim.validate` 在斩杀那一步后还有动作时直接报
+  「已经清场，后面还有 N 步」，不再打到一半才失败。
+- **锻造/升级选牌撞键卡死（run-0009 f16）**：`_deck_clicks` 的键只有 run+提示+牌表，
+  同一局两次「锻造选 1 张」且牌表没变时会以为已经选满，整屏 `CARD wait 1/1`；
+  键补上楼层，且发现计数残留（`selected_count=0`、屏上不需要确认）时清零重按，
+  不再 `save_and_quit` 丢掉正在打的整局。
 
 - **BOSS 眩晕卡死（run-0114）**：眩晕回合手牌全部 `playable=false`，模型还在排
   「COLOSSUS」「STRIKE」等牌，执行层 `sts2.py` 用 `sys.exit(3)` 拒绝，`SystemExit`

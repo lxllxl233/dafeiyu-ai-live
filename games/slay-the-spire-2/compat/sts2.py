@@ -2409,7 +2409,16 @@ def _fingerprint(s: dict):
     hand = c.get("hand") or []
     ids = tuple((x.get("card_id") or x.get("id"), x.get("energy_cost", x.get("cost"))) for x in hand if isinstance(x, dict))
     p = c.get("player") or {}
-    enemies = tuple((e.get("enemy_id") or e.get("name"), e.get("current_hp")) for e in (c.get("enemies") or []) if isinstance(e, dict))
+    powers = tuple(sorted(
+        (str(x.get("power_id") or x.get("id") or ""), _int(x.get("amount"), 0))
+        for x in (p.get("powers") or []) if isinstance(x, dict)))
+    enemies = tuple(
+        (e.get("enemy_id") or e.get("name"), e.get("current_hp"), _int(e.get("block"), 0),
+         tuple(sorted((str(x.get("power_id") or x.get("id") or ""), _int(x.get("amount"), 0))
+                      for x in (e.get("powers") or []) if isinstance(x, dict))))
+        for e in (c.get("enemies") or []) if isinstance(e, dict))
+    potions = tuple((x.get("potion_id"), bool(x.get("potion_id")))
+                    for x in ((s.get("run") or {}).get("potions") or []) if isinstance(x, dict))
     # 多选界面：进度变化必须进指纹，否则 wait_stable 会把「选中/取消」误判成已稳定。
     sel = s.get("selection") or {}
     sel_cards = sel.get("cards") or []
@@ -2422,10 +2431,16 @@ def _fingerprint(s: dict):
         s.get("screen"),
         s.get("turn"),
         p.get("energy"),
+        # 零费防御只改变格挡/血量/Buff：不纳入指纹就会一直等到 timeout，
+        # 执行层还会以为动作没落地（run-0116 商店/战斗的误判）。
+        p.get("current_hp"),
+        p.get("block"),
+        powers,
         ids,
         enemies,
         len(s.get("available_actions") or []),
         sel_fp,
+        potions,
     )
 
 

@@ -1273,6 +1273,27 @@ def search(state: dict, max_cards: int = 6, max_plans: int = 5,
 
 
 # -------------------------------------------------------------------- 速算
+def _rage_block(s: "Sim") -> int:
+    """狂怒还能补多少甲：只算「剩下能量真的打得出去」的攻击牌。
+
+    旧实现把所有没打出的攻击牌都当成已经打出去，2 张 1 费攻击只剩 1 费时会
+    虚报 +rage 的格挡，进而低估入伤（ctx.calc.blk / net 跟着错）。
+    """
+    if not s.rage:
+        return 0
+    budget = s.energy
+    attacks = 0
+    for c in sorted((x for x in s.hand
+                     if x.get("t") == "A" and x.get("play", True) and not x.get("_played")),
+                    key=lambda x: s.cost_of(x)):
+        cost = s.cost_of(c)
+        if cost > budget:
+            continue
+        budget -= cost
+        attacks += 1
+    return s.rage * attacks
+
+
 def max_block(state: dict) -> int:
     """当前手牌在费用内最多能叠多少甲（含覆甲/金属化），用于 full_block 判断。"""
     s = Sim.from_state(state)
@@ -1282,8 +1303,7 @@ def max_block(state: dict) -> int:
     for c in cards:
         if s.cost_of(c) <= s.energy:
             s.play(c, None)
-    return s.block + s.metallicize + s.plating + s.rage * len(
-        [c for c in s.hand if c.get("t") == "A" and c.get("play", True) and not c.get("_played")])
+    return s.block + s.metallicize + s.plating + _rage_block(s)
 
 
 def lethal_targets(state: dict) -> list[dict]:
@@ -1494,4 +1514,8 @@ def validate(state: dict, seq: list) -> tuple[bool, str, Sim, list]:
         used.add(card["i"])
         steps.append(step)
         sim._mark_cleared(n)
+        if not sim.alive() and n != len(seq) - 1:
+            # 清场后多写的动作会落到结算/新回合，前置拒绝比打到一半报错干净。
+            return (False, (f"第{n + 1}步已经清场，后面还有 {len(seq) - n - 1} 步；"
+                            "清场就停在清场那张牌"), sim, steps)
     return True, "", sim, steps

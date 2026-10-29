@@ -506,6 +506,47 @@ def _combat_llm(tools, planner, state: dict, game: str) -> str:
     return f"LLM {len(seq or [])}步"
 
 
+_BATCH_FAIL_LINES = ("BATCH STOP", "BATCH_FIX", "BATCH PARTIAL", "BATCH_EMPTY",
+                     "BATCH_BAD_JSON", "PLAN_OVER_BUDGET")
+
+
+def _num(value, default: int = -1) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _combat_signature(state: dict | None) -> tuple:
+    c = (state or {}).get("combat") or {}
+    p = c.get("player") or {}
+    hand = tuple((str(x.get("card_id") or x.get("id") or ""),
+                  _num(x.get("energy_cost", x.get("cost"))))
+                 for x in (c.get("hand") or []) if isinstance(x, dict))
+    enemies = tuple((str(e.get("enemy_id") or e.get("name") or ""),
+                     _num(e.get("current_hp")), _num(e.get("block")))
+                    for e in (c.get("enemies") or []) if isinstance(e, dict))
+    return ((state or {}).get("screen"), (state or {}).get("turn"),
+            _num(p.get("energy")), _num(p.get("current_hp")),
+            _num(p.get("block")), hand, enemies)
+
+
+def _combat_progressed(before: dict, after: dict | None, out: str) -> tuple[bool, str]:
+    """一批动作到底有没有推进局面：只看输出会把失败当成功，然后无限重放同一手。"""
+    if not isinstance(after, dict) or not after.get("screen"):
+        return False, "执行后读不到局面"
+    if after.get("screen") != "COMBAT":
+        return True, "离开战斗"
+    if _combat_signature(before) != _combat_signature(after):
+        return True, "局面变化"
+    if str(after.get("turn")) != str(before.get("turn")):
+        return True, "回合推进"
+    for line in _BATCH_FAIL_LINES:
+        if line in (out or ""):
+            return False, f"回执失败：{line}"
+    return False, "局面没有变化"
+
+
 def _combat_pass_required(state: dict) -> bool:
     """本回合不能出牌（BOSS 的眩晕/跳过回合）：只有 end_turn 是合法动作。"""
     acts = set(_acts(state))
@@ -536,9 +577,28 @@ def _combat_local(sts2, advisor, state: dict) -> str:
             meme = cands[0] if cands else ""
         spec = advisor.spec_from_plan(plan, thought, meme)
         _remember_speech(" ".join(x for x in (thought, meme) if x))
-        _, out = _call(sts2, sts2.cmd_batch, json.dumps(spec, ensure_ascii=False))
+        try:
+            _, out = _call(sts2, sts2.cmd_batch, json.dumps(spec, ensure_ascii=False))
+        except BaseException as exc:  # noqa: BLE001
+            # 以前 SystemExit / RuntimeError 会一路冲到主循环当 fatal 整局停掉。
+            _log("combat_exec_failed", kind=plan.get("kind"),
+                 error=f"{type(exc).__name__}: {exc}")
+            return "COMBAT exec-failed"
         _log("combat", dmg=plan.get("dmg"), taken=plan.get("taken"),
              kills=plan.get("kills"), out=out.strip().splitlines()[-1:] or [""])
+        # 回执 + 前后状态都要核对：cmd_batch 返回了输出不等于牌真的打出去了
+        # （BATCH STOP / PLAN_OVER_BUDGET / 动画帧都可能什么都没做）。
+        try:
+            after = sts2.get_state()
+        except Exception as exc:  # noqa: BLE001
+            _log("combat_state_failed", error=f"{type(exc).__name__}: {exc}")
+            after = None
+        ok, why = _combat_progressed(state, after, out)
+        if not ok:
+            _log("combat_no_progress", why=why, kind=plan.get("kind"),
+                 steps=len(plan.get("steps") or []),
+                 out=(out or "").strip().splitlines()[-3:])
+            return "COMBAT no-progress"
         return f"COMBAT {plan.get('dmg', 0)}dmg"
     # 没有可打计划：结束回合（只在合法时）。
     if "end_turn" in acts:
@@ -697,9 +757,15 @@ def _blind_selection(sel: dict) -> bool:
 
 
 def _deck_select_key(state: dict, sel: dict, cards: list[dict]) -> str:
-    """同一屏牌组多选的身份：换局/换提示/换牌表就重新计数。"""
+    """同一屏牌组多选的身份：换局/换层/换提示/换牌表就重新计数。
+
+    只按 run+提示+牌表做键时，同一局里两次「锻造选 1 张」且牌表没变会撞键：
+    f13 点过一张、f16 再开同一屏时会以为已经选满，直接卡在 ``CARD wait 1/1``
+    （实机 run-0009 f16，退出前整局被判「删牌界面卡死」）。
+    """
     ids = ",".join(str(c.get("card_id") or c.get("name") or "") for c in cards)
-    return "|".join((str(state.get("run_id") or ""),
+    run = state.get("run") or {}
+    return "|".join((str(state.get("run_id") or ""), str(run.get("floor") or ""),
                      str(sel.get("prompt") or ""), ids[:200]))
 
 
@@ -777,7 +843,18 @@ def _card_selection(sts2, state: dict) -> str:
                 return "CARD confirm"
             if _screen(now) != "CARD_SELECTION":
                 return f"CARD -> {_screen(now)}"
-            return f"CARD wait {done}/{need}"
+            now_sel = now.get("selection") or {}
+            auto = now_sel.get("requires_confirmation") is False
+            if auto or (not _blind_selection(now_sel)
+                        and already == 0 and now_sel.get("can_confirm") is not True):
+                # 这一屏选完立刻生效（没有确认键），或本地计数是上一屏残留：
+                # 清掉重新点，别死等一个永远不会出现的 confirm。
+                _log("deck_counter_reset", key=key[:80], done=done, need=need,
+                     selected=already, auto=bool(auto))
+                _deck_clicks[key] = 0
+                done = 0
+            else:
+                return f"CARD wait {done}/{need}"
         if done >= len(cards):
             return f"CARD wait {done}/{need}"
         if len(_deck_clicks) > 40:
@@ -1029,6 +1106,9 @@ def _stall_key(screen: str, last: str) -> tuple[str, str] | None:
                         "CARD_SELECTION choose_reward_card")):
         # 模型点同一张牌：界面没变（换了牌下标就不同，不会累计）。
         return (screen, last)
+    if last in ("COMBAT no-progress", "COMBAT exec-failed"):
+        # 这批动作没推进局面（回执失败/状态没变）：同一画面重复出现就是卡住。
+        return (screen, last)
     if last.startswith("WAIT_"):
         return (screen, last.split(" ", 1)[0])
     if last in ("SHOP open", "SHOP close",
@@ -1071,6 +1151,16 @@ def _recover_blind_screen(sts2, state: dict, last: str) -> bool:
     """多选卡死时回滚一次；返回 True 表示已经回滚，主循环应重读局面继续。"""
     global _rollback_tried
     if _rollback_tried or not str(last).startswith(("CARD ui wait", "CARD wait")):
+        return False
+    sel = state.get("selection") or {}
+    need = _selection_need(sel)
+    try:
+        selected = int(sel.get("selected_count") or sel.get("selected") or 0)
+    except (TypeError, ValueError):
+        selected = 0
+    if not (_blind_selection(sel) or (selected >= need and need > 0)):
+        # 普通「锻造/移除选 1 张」屏没有确认键是正常的（选完就生效），
+        # 这一步只是在等过场；回滚会把正在打的整局丢掉（run-0009 f16）。
         return False
     _rollback_tried = True
     prompt = str((state.get("selection") or {}).get("prompt") or "")[:60]

@@ -29,6 +29,7 @@ sys.path.insert(0, ROOT)
 sys.path.insert(0, _HERE)
 
 import sts2  # noqa: E402
+import sim as sim_mod  # noqa: E402
 
 
 def _live_enemies(c):
@@ -142,51 +143,116 @@ def _best_target_hint(plan):
     return ""
 
 
-def build_plan(state):
+def _pick_sim_plan(plans: list[dict]) -> dict | None:
+    """优先 best；best 是自杀线时退到能活下来的 kill/guard，最后才 maxdmg。"""
+    by_kind = {p.get("k"): p for p in plans if isinstance(p, dict)}
+    for kind in ("best", "kill", "guard", "potion", "maxdmg"):
+        plan = by_kind.get(kind)
+        if plan and not plan.get("risk"):
+            return plan
+    return plans[0] if plans else None
+
+
+def _legacy_from_sim(state: dict, plan: dict) -> dict:
+    """把 sim 的计划翻译成旧 build_plan 的字段（台词/渲染还在用）。"""
     c = state.get("combat") or {}
     p = c.get("player") or {}
-    hand = c.get("hand") or []
     energy = sts2._int(p.get("energy"), 0)
     hp = sts2._int(p.get("current_hp", p.get("hp")), 0)
-    block = sts2._int(p.get("block"), 0)
     enemies = _live_enemies(c)
-    models = [m for m in (_card_model(i, card) for i, card in enumerate(hand)) if m]
-    playable = [m for m in models if m["cost"] <= energy]
-    incoming = sts2.combat_incoming(state)
-
-    best = None
-    for policy in ("threat", "finish"):
-        for k in range(0, min(len(playable), 5) + 1):
-            for combo in itertools.permutations(playable, k):
-                if sum(m["cost"] for m in combo) > energy:
-                    continue
-                res = _simulate(combo, enemies, hp, block, energy, policy)
-                sc = _score(res, energy)
-                if best is None or sc > best[0]:
-                    best = (sc, res, combo, policy)
-
-    sc, res, combo, policy = best
+    seq = plan.get("seq") or []
+    steps = []
+    for item in seq:
+        if isinstance(item, (list, tuple)) and item:
+            cid = str(item[0])
+            tgt = item[1] if len(item) > 1 else None
+        else:
+            cid, tgt = str(item), None
+        steps.append({"id": cid, "t": tgt, "d": 0})
+    kills = [sts2._int(x, -1) for x in (plan.get("kill") or [])]
+    atk = {i: sts2._intent_damage(e) for i, e, _h in enemies}
+    blk_played = 0
+    try:
+        ok, _err, _sm, sim_steps = sim_mod.validate(
+            state,
+            [({"p": sts2._int(x["id"][1:], 0)} if x["id"].startswith("@")
+              else {"c": x["id"]}) | ({"t": x["t"]} if x["t"] is not None else {})
+             for x in steps])
+        if ok:
+            blk_played = sum(sts2._int(x.get("blk"), 0) for x in sim_steps
+                             if isinstance(x, dict))
+    except Exception:
+        pass
     return {
-        "energy": energy, "hp": hp, "block": block, "incoming": incoming,
+        "energy": energy, "hp": hp, "block": sts2._int(p.get("block"), 0),
+        "incoming": sts2.combat_incoming(state),
         "enemies": [{"i": i, "hp": h, "atk": sts2._intent_damage(e),
                      "name": str(e.get("enemy_id") or e.get("name") or "?")}
                     for i, e, h in enemies],
-        "combo": combo, "steps": res["steps"], "dmg": res["dmg"], "kills": res["kills"],
-        "kills_atk": res["kills_atk"], "taken": res["taken"], "spent": res["spent"],
-        "hp_after": res["php"], "score": sc, "policy": policy,
-        "block_played": sum(m["block"] for m in combo),
+        "combo": [], "steps": steps,
+        "dmg": sts2._int(plan.get("dmg"), 0), "kills": len(kills),
+        "kills_atk": sum(atk.get(i, 0) for i in kills),
+        "taken": sts2._int(plan.get("taken"), 0),
+        "spent": max(0, energy - sts2._int(plan.get("e"), energy)),
+        "hp_after": sts2._int(plan.get("hp"), hp),
+        "score": plan.get("score", 0.0), "policy": "sim",
+        "kind": plan.get("k", "best"), "block_played": blk_played,
     }
 
 
-def spec_from_plan(plan, thought="", meme=""):
-    acts = [{"action": "play_card", "card_id": s["id"], "target_index": s["t"]}
-            for s in plan["steps"]]
+def build_plan(state):
+    """本地出牌计划：直接复用 sim 的逐步费用/回能/免费攻击/变费模型。
+
+    旧实现自己维护 `_card_model` + `_simulate`（静态 `energy_cost`、只看伤害/格挡/
+    易伤/虚弱），和 `sim.validate`、执行层各算一套：回能牌不进候选、免费攻击被当成
+    整手全免、抽牌后的手牌不参与排序。现在候选顺序 = `sim.search` 的 DFS 顺序，
+    执行前还会用 `sim.validate` 逐步校验，三处口径统一。
+    """
+    plans = sim_mod.search(state, max_cards=6, max_plans=6, time_limit=1.0)
+    plan = _pick_sim_plan(plans)
+    if not plan:
+        # 一张都打不出去：返回空 steps，调用方会 end_turn。
+        c = state.get("combat") or {}
+        p = c.get("player") or {}
+        return {"energy": sts2._int(p.get("energy"), 0),
+                "hp": sts2._int(p.get("current_hp", p.get("hp")), 0),
+                "block": sts2._int(p.get("block"), 0),
+                "incoming": sts2.combat_incoming(state),
+                "enemies": [{"i": i, "hp": h, "atk": sts2._intent_damage(e),
+                             "name": str(e.get("enemy_id") or e.get("name") or "?")}
+                            for i, e, h in _live_enemies(c)],
+                "combo": [], "steps": [], "dmg": 0, "kills": 0, "kills_atk": 0,
+                "taken": 0, "spent": 0, "hp_after": sts2._int(p.get("current_hp", p.get("hp")), 0),
+                "score": 0.0, "policy": "sim", "kind": "end", "block_played": 0}
+    return _legacy_from_sim(state, plan)
+
+
+def spec_from_plan(plan, thought="", meme="", skip_budget: bool = True):
+    """把计划变成 batch spec。
+
+    `skip_budget=True`：费用已经由 sim 逐步算过（含回能/变费/免费攻击），
+    cmd_batch 的「整手按初始费用预扣」粗检会误拒绝合法序列，必须跳过。
+    """
+    acts = []
+    for s in plan.get("steps") or []:
+        cid = str(s.get("id") or "")
+        tgt = s.get("t")
+        if cid.startswith("@"):
+            item = {"action": "use_potion", "option_index": sts2._int(cid[1:], 0)}
+        else:
+            item = {"action": "play_card", "card_id": cid}
+        if tgt is not None:
+            item["target_index"] = int(tgt)
+        acts.append(item)
     acts.append({"action": "end_turn"})
     if thought:
         acts[-1]["thought"] = thought
     if meme:
         acts[-1]["meme"] = meme
-    return {"actions": acts}
+    spec = {"actions": acts}
+    if skip_budget:
+        spec["skip_budget"] = True
+    return spec
 
 
 def candidates(plan):

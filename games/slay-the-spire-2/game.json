@@ -5,7 +5,7 @@
   "platform": "Steam · 2868840",
   "status": "ready",
   "schema": 2,
-  "version": "2.2.0",
+  "version": "2.2.1",
   "aliases": ["sts2", "spire2"],
   "capabilities": {
     "observe": true,

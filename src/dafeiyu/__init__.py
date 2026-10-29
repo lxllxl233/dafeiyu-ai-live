@@ -14,7 +14,7 @@
 
 from __future__ import annotations
 
-__version__ = "2.2.0"
+__version__ = "2.2.1"
 __product__ = "大肥鱼直播姬"
 __codename__ = "dafeiyu-ai-live"
 
