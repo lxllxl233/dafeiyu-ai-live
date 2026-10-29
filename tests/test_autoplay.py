@@ -952,6 +952,44 @@ def test_menu_only_uses_real_mod_actions():
     assert used <= _MOD_SCREEN_ACTIONS, sorted(used - _MOD_SCREEN_ACTIONS)
 
 
+_REST_STATE = {
+    "screen": "REST", "run_id": "r1",
+    "run": {"floor": 33, "act_id": "0", "current_hp": 70, "max_hp": 80, "gold": 200,
+            "deck": [], "relics": [], "potions": []},
+    "available_actions": ["choose_rest_option", "proceed"],
+    "rest": {"options": [
+        {"index": 0, "option_id": "HEAL", "title": "休息", "is_enabled": True},
+        {"index": 1, "option_id": "SMITH", "title": "锻造", "is_enabled": True}]},
+}
+
+
+def test_rest_menu_lists_forge_option():
+    """锻造不是独立动作：和休息一样走 choose_rest_option，靠 i 区分。"""
+    actions = _decision_module("actions")
+    menu = actions.available(_REST_STATE)
+    assert [(e["a"], e["i"], e["n"]) for e in menu] == [
+        ("choose_rest_option", 0, "休息"), ("choose_rest_option", 1, "锻造")]
+    entry, err = actions.check({"act": "choose_rest_option", "i": 1}, _REST_STATE)
+    assert err == "" and entry["i"] == 1
+
+
+def test_rest_menu_hides_disabled_forge():
+    st = {"screen": "REST", "run": {"current_hp": 80, "max_hp": 80},
+          "available_actions": ["choose_rest_option", "proceed"],
+          "rest": {"options": [
+              {"index": 0, "option_id": "HEAL", "title": "休息", "is_enabled": True},
+              {"index": 1, "option_id": "SMITH", "title": "锻造", "is_enabled": False}]}}
+    actions = _decision_module("actions")
+    assert [e["n"] for e in actions.available(st)] == ["休息"]
+
+
+def test_local_rest_prefers_forge_when_healthy(monkeypatch):
+    monkeypatch.setattr(play, "_remember_speech", lambda t: None)
+    fake = _FakeSts2([_REST_STATE])
+    assert play._one_step(fake, None, _REST_STATE, mode="local") == "REST choose_rest_option 1"
+    assert fake.calls == [("choose_rest_option", {"option_index": 1})]
+
+
 def test_bundle_ctx_has_card_text():
     ctx = _decision_module("ctx")
     ch = ctx._choice(_BUNDLE_STATE)

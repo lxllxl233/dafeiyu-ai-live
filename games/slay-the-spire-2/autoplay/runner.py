@@ -594,6 +594,14 @@ def _screen_llm(sts2, planner, state: dict, screen: str) -> str:
         _log("screen_llm_unavailable", error=f"{type(exc).__name__}: {exc}")
         return ""
     menu = actions.available(state)
+    if screen == "REST":
+        # 营火「没有锻造」时要能回查：是游戏没给/禁用了，还是菜单漏了。
+        _log("rest_menu", items=[{"a": e["a"], "i": e["i"], "n": e.get("n")}
+                                 for e in menu],
+             opts=[{"i": i, "n": str(o.get("title") or o.get("name") or ""),
+                    "ok": _rest_option_enabled(o), "id": str(o.get("option_id") or "")}
+                   for i, o in enumerate((state.get("rest") or {}).get("options") or [])
+                   if isinstance(o, dict)])
     if not menu:
         return ""
     try:
