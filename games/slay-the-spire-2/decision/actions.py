@@ -110,6 +110,19 @@ def _reward_menu(state: dict) -> list[dict]:
     return out
 
 
+def _db_note(sec: str, item: dict) -> str:
+    """商店里的遗物/药水只有名字和价格，效果文本从本地库补（模型凭名字猜不准）。"""
+    cid = str(item.get("relic_id") or item.get("potion_id") or item.get("id") or "")
+    if not cid or sec not in ("relics", "potions"):
+        return ""
+    try:
+        import sts2  # 决策目录在 sys.path 里时可用；拿不到就退化为空
+        db = sts2.RELIC_DB if sec == "relics" else sts2.POTION_DB
+        return _short((db.get(cid) or {}).get("description") or "", 70)
+    except Exception:
+        return ""
+
+
 def _shop_menu(state: dict) -> list[dict]:
     acts = _acts(state)
     sh = state.get("shop") or {}
@@ -129,9 +142,13 @@ def _shop_menu(state: dict) -> list[dict]:
             if not it.get("available", True):
                 continue
             price = _int(it.get("price"), 0)
+            fx = (_short(it.get("description") or it.get("resolved_rules_text") or "", 70)
+                  or _db_note(sec, it))
+            if sec == "potions" and str(it.get("usage") or "") == "CombatOnly":
+                fx = (fx + "｜仅战斗") if fx else "仅战斗"
             out.append({"a": act, "i": i,
                         "n": f"{_short(it.get('name') or '?', 24)} {price}金",
-                        "fx": _short(it.get("description") or "", 70),
+                        "fx": fx,
                         "ok": price <= gold})
     # 删牌服务：不进菜单时模型只能开/关货架，商店原地打转 18 分钟（实机 run-0116）。
     # 模组的 remove_card_at_shop 不收参数，所以 i 必须是 None（别传 option_index）。

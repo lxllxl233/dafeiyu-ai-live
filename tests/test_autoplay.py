@@ -873,6 +873,46 @@ def test_shop_menu_offers_card_removal():
     assert err == "" and entry["a"] == "remove_card_at_shop"
 
 
+_SHOP_INFO_STATE = {
+    "screen": "SHOP", "run_id": "r1",
+    "run": {"floor": 30, "act_id": "1", "current_hp": 82, "max_hp": 95, "gold": 446,
+            "deck": [], "relics": [], "potions": [{"potion_id": None}]},
+    "available_actions": ["close_shop_inventory", "buy_card", "buy_relic", "buy_potion"],
+    "shop": {"is_open": True,
+             "cards": [{"name": "无情猛攻", "card_id": "UNRELENTING", "price": 76,
+                        "available": True,
+                        "resolved_rules_text": "造成14点伤害。"}],
+             "relics": [{"relic_id": "RIPPLE_BASIN", "name": "波纹水盆",
+                         "price": 208, "available": True}],
+             "potions": [{"potion_id": "CLARITY", "name": "明晰提取物", "price": 76,
+                          "available": True, "usage": "CombatOnly"}]},
+}
+
+
+def test_shop_ctx_shows_relic_and_potion_effects():
+    """商店 payload 只有名字/价格；不补效果，模型只能凭名字猜（历史上一件遗物都没买过）。"""
+    ctx = _decision_module("ctx")
+    ch = ctx._choice(_SHOP_INFO_STATE)
+    relic = [x for x in ch["items"] if x["sec"] == "relics"][0]
+    potion = [x for x in ch["items"] if x["sec"] == "potions"][0]
+    card = [x for x in ch["items"] if x["sec"] == "cards"][0]
+    assert "格挡" in relic["fx"]           # 从 RELIC_DB 补的
+    assert potion["fx"]                    # 从 POTION_DB 补的
+    assert potion["use"] == "仅战斗"
+    assert card["fx"] == "造成14点伤害。"
+
+
+def test_shop_menu_labels_relic_and_potion_effects():
+    actions = _decision_module("actions")
+    menu = actions.available(_SHOP_INFO_STATE)
+    relic = [x for x in menu if x["a"] == "buy_relic"][0]
+    potion = [x for x in menu if x["a"] == "buy_potion"][0]
+    card = [x for x in menu if x["a"] == "buy_card"][0]
+    assert "格挡" in relic["fx"]
+    assert "仅战斗" in potion["fx"]
+    assert card["fx"] == "造成14点伤害。"
+
+
 def test_shop_menu_hides_used_or_unaffordable_removal():
     actions = _decision_module("actions")
     used = {**_SHOP_REMOVAL_STATE,

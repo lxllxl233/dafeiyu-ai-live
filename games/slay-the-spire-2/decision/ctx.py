@@ -869,8 +869,14 @@ def _choice(state: dict) -> dict:
                 if cid:
                     item["id"] = cid
                 fx = _short(it.get("description") or it.get("resolved_rules_text") or "", 48)
+                if not fx and cid and sec in ("relics", "potions"):
+                    # 商店 payload 只给名字和价格，效果得从本地卡库补；不然模型只能凭名字猜。
+                    db = sts2.RELIC_DB if sec == "relics" else sts2.POTION_DB
+                    fx = _short((db.get(cid) or {}).get("description") or "", 60)
                 if fx:
                     item["fx"] = fx
+                if sec == "potions" and str(it.get("usage") or "") == "CombatOnly":
+                    item["use"] = "仅战斗"
                 out["items"].append(item)
         rem = sh.get("card_removal") or {}
         if rem:
