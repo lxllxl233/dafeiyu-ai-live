@@ -157,8 +157,10 @@ def sync_memes_db(items: list[dict], db_path: Path) -> int:
 
 
 def _atomic_write(path: Path, text: str) -> None:
+    # 按字节写：Path.write_text 默认会把 \n 翻成 \r\n，控制台保存一次就整文件变行尾，
+    # git diff 全是噪音。
     tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(text, encoding="utf-8")
+    tmp.write_bytes(text.encode("utf-8"))
     os.replace(tmp, path)
 
 

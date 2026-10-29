@@ -84,3 +84,9 @@ def test_game_declares_memes_db():
     mod = GameRegistry().load_game_module("slay-the-spire-2", "memes")
     assert mod is not None
     assert mod.DB.exists() and mod.JSON.exists()
+
+def test_atomic_write_keeps_lf(tmp_path):
+    p = tmp_path / "card.json"
+    studio._atomic_write(p, '{\n  "id": "dafeiyu"\n}\n')
+    assert b"\r\n" not in p.read_bytes()
+    assert p.read_text(encoding="utf-8").endswith("}\n")
