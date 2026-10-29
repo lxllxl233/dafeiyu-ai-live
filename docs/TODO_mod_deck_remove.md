@@ -16,6 +16,10 @@
    游戏会**只移除 1 张并直接结束事件**（`松动羊毛剪` 变相废掉）。
 5. `select_deck_card` 只负责点牌、不再自动确认；`confirm_selection` 单独驱动。
 
+5. `GetCardRulesText` 先走 `GetDescriptionForPile`（带正确数值），避免每张牌每次
+   `/state` 都触发游戏的 `Localization formatting error` 堆栈（实测一次会话
+   `godot.log` 写到 14 GB）。
+
 实测（2026-10-29，游戏 v0.107.1 / mod 0.8.0 重编）：
 - 涅奥「精准剪刀」（移除 1 张）：`min=max=1`，点 1 张后 `confirm_selection` 可用，
   确认后回到事件，牌组减少。
