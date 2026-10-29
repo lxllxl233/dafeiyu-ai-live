@@ -265,6 +265,8 @@
         <i>▦</i><span>游戏</span><b id="navGame">—</b></button>
       <button class="nav-item" type="button" data-view="persona">
         <i>✎</i><span>人设配置</span><b id="navPersona">—</b></button>
+      <button class="nav-item" type="button" data-view="skill">
+        <i>▤</i><span>对战手册</span><b id="navSkill">—</b></button>
       <div class="nav-group">直播</div>
       <button class="nav-item" type="button" data-view="room">
         <i>◉</i><span>直播间</span><b id="navRoom">—</b></button>
@@ -414,6 +416,31 @@
               <button class="btn ghost" type="button" onclick="loadPersonaFile()">还原</button>
               <button class="btn ghost" type="button" onclick="reloadPersona()">重载人设</button>
               <span class="hint" id="pEditState"></span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="view" data-view="skill" id="view-skill">
+      <div class="view-head">
+        <div>
+          <span class="eyebrow">SKILL / PLAYBOOK</span>
+          <h2>对战手册</h2>
+          <p>改游戏包里的知识文档（决策手册 / 卡表 / 敌人 / 主播稿）。保存前按字节 / 行 / token 限额校验，超限拒绝。</p>
+        </div>
+      </div>
+      <div class="grid wide">
+        <div class="card" style="grid-column:1/-1">
+          <h2>编辑手册 <span>Markdown · 保存即写盘</span></h2>
+          <div class="editor">
+            <select id="sEditFile" onchange="loadSkillFile()"></select>
+            <textarea id="sEditText" spellcheck="false" placeholder="选择一篇手册开始编辑…"></textarea>
+            <div class="meta" id="sEditHint">OS.md 上限 15000 字节 / 215 行 / 4600 token；实时战斗提示词仍是 prompts.py，不走这里。</div>
+            <div class="row" style="margin-top:0">
+              <button class="btn" type="button" onclick="saveSkillFile()">保存</button>
+              <button class="btn ghost" type="button" onclick="loadSkillFile()">还原</button>
+              <span class="hint" id="sEditState"></span>
             </div>
           </div>
         </div>
@@ -765,6 +792,65 @@ async function reloadPersona(){
     await loadPersona();
   }catch(e){
     toast("重载失败：" + e.message, true);
+  }
+}
+
+let SKILL = null;
+
+async function loadSkill(){
+  try{
+    const r = await fetch("/api/skill", {cache:"no-store"});
+    if(!r.ok) throw new Error("HTTP " + r.status);
+    SKILL = await r.json();
+    if(!SKILL.ok) throw new Error(SKILL.error || "没有手册");
+    const sel = $("#sEditFile");
+    const cur = sel.value;
+    sel.innerHTML = (SKILL.files || []).map(f =>
+      `<option value="${esc(f.name)}">${esc(f.label || f.name)}</option>`).join("");
+    if(cur && (SKILL.files || []).some(f => f.name === cur)) sel.value = cur;
+    loadSkillFile();
+  }catch(e){
+    $("#sEditHint").textContent = "手册加载失败：" + e.message;
+  }
+}
+
+function loadSkillFile(){
+  const name = $("#sEditFile").value;
+  if(!SKILL || !name) return;
+  const text = (SKILL.texts || {})[name] || "";
+  $("#sEditText").value = text;
+  renderSkillHint(name, text);
+  $("#sEditState").textContent = "";
+}
+
+function renderSkillHint(name, text){
+  const f = (SKILL?.files || []).find(x => x.name === name) || {};
+  const lim = f.limit || {};
+  const bytes = new TextEncoder().encode(text).length;
+  const lines = text ? text.split("\n").length : 0;
+  const caps = lim.bytes ? ` · 上限 ${lim.bytes}B / ${lim.lines} 行 / ${lim.tokens} token` : "";
+  $("#sEditHint").innerHTML = `<b>${esc(name)}</b> · ${bytes} 字节 · ${lines} 行${caps}`;
+}
+
+async function saveSkillFile(){
+  const name = $("#sEditFile").value;
+  if(!name){ toast("先选一篇手册"); return; }
+  const text = $("#sEditText").value;
+  $("#sEditState").textContent = "保存中…";
+  try{
+    const r = await fetch("/api/skill", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({name, text}),
+    });
+    const d = await r.json();
+    if(!r.ok || !d.ok) throw new Error(d.error || ("HTTP " + r.status));
+    toast(d.message || "手册已保存");
+    $("#sEditState").textContent = d.message || "已保存";
+    await loadSkill();
+  }catch(e){
+    $("#sEditState").textContent = "";
+    toast("保存失败：" + e.message, true);
   }
 }
 
@@ -1470,6 +1556,7 @@ setView(location.hash.replace(/^#/, ""), false);
 setCounter();
 refresh();
 loadPersona();
+loadSkill();
 setInterval(refresh, 3000);
 </script>
 </body>

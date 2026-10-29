@@ -543,6 +543,51 @@ class StudioRuntime:
         self.persona = Persona.load(self.cfg.persona)
         return {"ok": True, "message": "人设已重载", "persona": self.persona.to_dict()}
 
+    # ---------------------------------------------------------------- 对战手册
+    def _game_skills(self):
+        """手册文件清单由游戏包声明（核心不硬编码知识库路径）。"""
+        try:
+            return self.registry.load_game_module(self.cfg.game, "skills")
+        except Exception:
+            return None
+
+    def skill_payload(self) -> dict:
+        """控制台「对战手册」页：可编辑的知识文档 + 当前内容。"""
+        self._sync_config()
+        mod = self._game_skills()
+        if mod is None:
+            return {"ok": False, "error": "当前游戏没有可编辑的手册文档",
+                    "game": self.cfg.game, "files": [], "texts": {}}
+        files = mod.files()
+        texts: dict[str, str] = {}
+        for item in files:
+            try:
+                texts[item["name"]] = (mod.ROOT / item["name"]).read_text(encoding="utf-8")
+            except OSError:
+                texts[item["name"]] = ""
+        return {"ok": True, "game": self.cfg.game, "files": files, "texts": texts}
+
+    def save_skill(self, name: str, text: str) -> dict:
+        """保存一篇手册；超过限额/路径不合法直接拒绝，写坏回滚。"""
+        self._sync_config()
+        mod = self._game_skills()
+        if mod is None:
+            raise ValueError("当前游戏没有可编辑的手册文档")
+        body = str(text or "")
+        err = mod.validate(name, body)
+        if err:
+            raise ValueError(f"手册校验失败：{err}")
+        path = mod.path_of(name)
+        old = path.read_text(encoding="utf-8") if path.exists() else ""
+        try:
+            _atomic_write(path, body)
+        except Exception as exc:
+            _atomic_write(path, old)
+            raise ValueError(f"保存失败，已回滚：{exc}") from exc
+        return {"ok": True, "name": name, "bytes": len(body.encode("utf-8")),
+                "tokens": mod.est_tokens(body),
+                "message": "手册已保存（按需读取时生效；实时提示词仍是 prompts.py）"}
+
     # ---------------------------------------------------------------- 说话
     def say(self, body: dict, add_comment: Callable[[dict], Any], *,
             await_voice: bool = False) -> dict:

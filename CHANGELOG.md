@@ -1,5 +1,24 @@
 # Changelog
 
+## [2.5.0] - 2026-10-29
+
+### Added
+
+- **控制台编辑对战手册**：新增「对战手册」页，可编辑游戏包里的知识文档——
+  `decision/knowledge/ironclad/OS.md`（决策手册）、`references/*.md`（卡表 / 敌人 /
+  药水 / 教训 / 流派）、`defect/OS.md` 和 `persona/*.md`（主播稿）。保存前按
+  OS.md 的 15000 字节 / 215 行 / 4600 token 限额校验，超限直接拒绝并说明；路径
+  白名单（不能写 `prompts.py` 或包外文件），写入按字节 + LF，写坏自动回滚。
+  接口是 `GET/POST /api/skill`，实现放在 `games/slay-the-spire-2/skills.py`
+  （核心不硬编码知识库路径）。
+
+### Fixed
+
+- **添柴随机换手牌后重新读局面**：`STOKE` 这类「消耗所有手牌 + 随机生成」的牌，
+  以前打完还按旧手牌续排，随机给的牌等于没看。现在 sim 把它记成手牌未知，
+  `validate` 在生成边界拒绝后续预排（连 `end` 也不让接）：只打这张、不写 end，
+  读新 ctx 看完新手牌再决定；提示词和 OS.md 也补了这条规则。
+
 ## [2.4.1] - 2026-10-29
 
 ### Changed

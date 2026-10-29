@@ -597,6 +597,17 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(500, json.dumps({"ok": False, "error": f"{type(exc).__name__}: {exc}"},
                                            ensure_ascii=False).encode("utf-8"),
                            "application/json; charset=utf-8")
+        elif path == "/api/skill":
+            try:
+                from dafeiyu.ui.studio import get_runtime
+
+                body = json.dumps(get_runtime().skill_payload(),
+                                  ensure_ascii=False).encode("utf-8")
+                self._send(200, body, "application/json; charset=utf-8")
+            except Exception as exc:
+                self._send(500, json.dumps({"ok": False, "error": f"{type(exc).__name__}: {exc}"},
+                                           ensure_ascii=False).encode("utf-8"),
+                           "application/json; charset=utf-8")
         elif path == "/api/games":
             try:
                 from dafeiyu.ui.studio import get_runtime
@@ -722,6 +733,26 @@ class Handler(BaseHTTPRequestHandler):
                 else:
                     result = get_runtime().save_persona(str(payload.get("name") or ""),
                                                         str(payload.get("text") or ""))
+                self._send(200, json.dumps(result, ensure_ascii=False).encode("utf-8"),
+                           "application/json; charset=utf-8")
+            except ValueError as exc:
+                self._send(400, json.dumps({"ok": False, "error": str(exc)},
+                                           ensure_ascii=False).encode("utf-8"),
+                           "application/json; charset=utf-8")
+            except Exception as exc:
+                self._send(500, json.dumps({"ok": False, "error": f"{type(exc).__name__}: {exc}"},
+                                           ensure_ascii=False).encode("utf-8"),
+                           "application/json; charset=utf-8")
+            return
+        if self.path == "/api/skill":
+            try:
+                n = int(self.headers.get("Content-Length", "0") or 0)
+                payload = json.loads(self.rfile.read(n) or b"{}") if n else {}
+                payload = payload if isinstance(payload, dict) else {}
+                from dafeiyu.ui.studio import get_runtime
+
+                result = get_runtime().save_skill(str(payload.get("name") or ""),
+                                                  str(payload.get("text") or ""))
                 self._send(200, json.dumps(result, ensure_ascii=False).encode("utf-8"),
                            "application/json; charset=utf-8")
             except ValueError as exc:

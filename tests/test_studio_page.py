@@ -36,6 +36,8 @@ REQUIRED = {
     "tokKinds", "tokApiHint",
     # 人设/梗编辑
     "pEditFile", "pEditText", "pEditHint", "pEditState",
+    # 对战手册
+    "sEditFile", "sEditText", "sEditHint", "sEditState",
 }
 
 
@@ -69,6 +71,14 @@ def test_persona_editor_is_wired():
     assert "savePersonaFile" in HTML and "loadPersonaFile" in HTML
     assert "reloadPersona" in HTML
     assert "梗列表" in HTML
+
+
+def test_skill_editor_is_wired():
+    assert "/api/skill" in HTML
+    assert "saveSkillFile" in HTML and "loadSkillFile" in HTML
+    assert 'data-view="skill"' in HTML
+    assert "对战手册" in HTML
+    assert "4600 token" in HTML
 
 
 def test_token_card_is_wired_to_api_payload():

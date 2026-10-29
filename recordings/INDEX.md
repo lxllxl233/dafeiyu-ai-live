@@ -7,6 +7,7 @@
 
 | 局 | 角色 | 进阶 | 结果 | 大小 | 文件 |
 |---|---|---|---|---|---|
+| 10 | — | — | autoplay_end | 1.4 GB | `slay-the-spire-2/run-0010/run.mp4` |
 | 9 | — | — | autoplay_end | 180.8 MB | `slay-the-spire-2/run-0009/run.mp4` |
 | 8 | — | — | run_end | 190.9 MB | `slay-the-spire-2/run-0008/run.mp4` |
 | 7 | — | — | autoplay_end | 480.1 MB | `slay-the-spire-2/run-0007/run.mp4` |
