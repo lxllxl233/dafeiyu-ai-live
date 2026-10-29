@@ -88,6 +88,12 @@ def _with_liveness(updates: dict) -> dict:
     if alive and "running" not in out and not _stopping():
         out["running"] = True
         out.setdefault("pid", os.getpid())
+    # 别的进程/控制台 reset 会把 recording 清成 false/空路径；本进程还在录就补回来，
+    # 免得看板显示没录、实际 OBS 一直在写。
+    if alive and _rec_active:
+        out.setdefault("recording", True)
+        if _rec_path:
+            out.setdefault("record_path", _rec_path)
     return out
 
 
@@ -139,20 +145,24 @@ def _say(text: str) -> None:
 # 录像是否在录，以这里为准：状态文件可能被别的进程 reset 掉（实机见过
 # recording=False/record_path="" 但 OBS 还在录），拿它做切段判断会漏停。
 _rec_active = False
+_rec_path = ""
 
 
 def _start_autoplay_recording(game: str, mode: str) -> dict:
-    global _rec_active
+    global _rec_active, _rec_path
     res = _host.start_recording(note=f"自动玩 · {mode}")
     _rec_active = bool((res or {}).get("ok"))
+    if _rec_active:
+        _rec_path = str((res or {}).get("path") or "")
     return res
 
 
 def _finish_autoplay_recording(result: str = "") -> dict:
-    global _rec_active
+    global _rec_active, _rec_path
     res = _host.stop_recording(result)
     if (res or {}).get("ok"):
         _rec_active = False
+        _rec_path = ""
     return res
 
 
@@ -1460,7 +1470,7 @@ def _wait_game(sts2, timeout: float = 120.0) -> dict | None:
 
 def _run(game: str, mode: str = "local") -> None:
     global _thread, _speech_until, _rollback_tried, _sl_used, _sl_last
-    global _rec_run_id, _rec_game, _rec_mode, _rec_pending, _rec_active
+    global _rec_run_id, _rec_game, _rec_mode, _rec_pending, _rec_active, _rec_path
     _rollback_tried = False
     _sl_used = 0
     _sl_last = 0.0
@@ -1470,6 +1480,7 @@ def _run(game: str, mode: str = "local") -> None:
     _rec_mode = mode
     _rec_pending = 0.0
     _rec_active = False
+    _rec_path = ""
     _deck_clicks.clear()
     sts2 = advisor = llm_tools = llm_planner = screen_planner = None
     try:

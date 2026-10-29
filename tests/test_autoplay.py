@@ -1539,3 +1539,17 @@ def test_card_skip_without_collect_action_falls_back():
     fake = _FakeSts2([card_state, stuck])
     assert play._card_selection(fake, card_state) == "CARD skip"
     assert fake.calls == [("skip_reward_cards", {})]
+
+def test_status_repairs_recording_flag_after_foreign_reset(monkeypatch):
+    """别的进程 reset 状态后，看板别把正在录的录像显示成没录。"""
+    class _Live:
+        def is_alive(self):
+            return True
+
+    monkeypatch.setattr(play, "_thread", _Live())
+    monkeypatch.setattr(play, "_stopping", lambda: False)
+    monkeypatch.setattr(play, "_rec_active", True)
+    monkeypatch.setattr(play, "_rec_path", r"D:\rec\run-0001")
+    out = play._with_liveness({"last": "REWARD claim_reward 0"})
+    assert out["recording"] is True
+    assert out["record_path"] == r"D:\rec\run-0001"
