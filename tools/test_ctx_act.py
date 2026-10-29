@@ -88,7 +88,7 @@ check("手牌同名牌合并 q=2", [x for x in d["hand"] if x["id"] == "STRIKE_I
 check("can.en 看到放血", d["can"]["en"]["by"][0]["id"], "BLOODLETTING")
 check("calc.chain 杀0晕1", d["calc"].get("chain", [{}])[0].get("stun"), 1)
 check("enemy 有当前意图", d["enemies"][0]["it"]["tot"], 11)
-check("瘦身：<3KB", len(s) < 3000, True)
+check("瘦身：<3.2KB", len(s) < 3200, True)   # 药水提醒/plan_note 加进来后约 3.1KB
 
 print()
 print("=== 2) ctx 意图记忆：下一次意图 ===")

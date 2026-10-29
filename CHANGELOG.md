@@ -16,10 +16,36 @@
 
 ### Fixed
 
+- **拿了奖励却说没拿（卡牌奖励 / 涅奥选牌）**：`71f1acb` 把「屏幕里有
+  `select_deck_card`」一律当牌组多选、跳过模型走本地——可 mod 的卡牌奖励屏和
+  「三选一」的涅奥祝福也带这个动作，于是模型再也看不到自己拿了哪张牌；紧接着的
+  奖励屏 `reward.card_options` 又是空的，ctx 还写着「没有卡牌选项」，台词就变成
+  「奖励没牌可拿 / 涅奥没给好处」。现在只有「从牌组挑 N 张」（移除/升级/变化/附魔，
+  或 `min/max=0` 的盲选）才走本地，卡牌奖励和单张选牌交回模型。
+- **`collect_rewards_and_proceed` 静默塞牌**：奖励屏上还有没打开的 Card 奖励时
+  （`pending_card_choice=false`），直接 collect 会让 mod 把**第一张**牌塞进牌组，
+  而台词说的是「卡牌就不贪了」。现在 `actions.check` 会拦下来，提示先
+  `claim_reward` 打开、再 `choose_reward_card` / `skip_reward_cards`；CLI 路径
+  （`sts2.unclaimed_card_reward`）早就这么拦了，LLM 菜单路径补上。
+- **奖励屏 ctx 不再误报「没有卡牌选项」**：奖励列表里的 `Card` 只是一个没打开的
+  卡牌奖励，`reward_eval` 现在给它标 `claim_first` 并提示「先 claim_reward 再看牌」，
+  不再返回 `skip:true / 没有卡牌选项`；奖励菜单的名称也退到 mod 真正发送的
+  `description`（之前只有 "Card"/"Gold"）。
 - **奖励屏「跳过选牌」死循环**：mod 的 `skip_reward_cards` 只关掉选牌，Card 奖励
   仍留在奖励列表里 `claimable`，下一步又从奖励屏点 `claim_reward` 打开同一张牌，
   REWARD→CARD→REWARD 无限循环（run-0005 f1 实测卡了 300+ 步）。现在跳过选牌后
   自动 `collect_rewards_and_proceed` 收掉奖励屏；LLM 直接选「跳过选牌」时也补这一步。
+- **Boss 战 / 重大损失还是不用药水**：Boss 战经常「两瓶药水带进棺材」——run
+  `75S0RYFKEH` f17 打到 18 血才交迅捷、5 血才交赌徒，已经救不回来。三层修复：
+  1. `act._guard_potion` 执行层硬拦：这一手会致死，或 Boss 战净掉 ≥18% / 普通战
+     ≥28% 最大生命（或 ≥40%/50% 当前生命）且手里还有**能减伤**的药水（格挡/回血/
+     抽牌/虚弱/易伤；缚魂药水实测无效、灰水只消耗手牌，都不算）时，拒绝「空手 end」，
+     回执里点名槽位和数值；确认要留药可写 `{"allow_take":1}` 并在 say 说明；
+  2. `ctx` 观察侧加 `POTION` 警告（全挡也只能压到净 X 时，直接列出槽位）；
+  3. `sim.search` 的 `useful` 补上 `draw`（迅捷药水这类抽牌药之前根本进不了候选线），
+     ctx 在有药水线时加一句图例：`@N` = 药水槽 N，要写 `{"p": N}`。
+  `sim.is_boss_fight` 用「每幕 17 层的 Boss 层」+ 怪 id 词根（THE_KIN_BOSS /
+  KIN_PRIEST）识别 Boss 战，不能只看整幕都有的 `run.boss_id`。
 - **添柴随机换手牌后重新读局面**：`STOKE` 这类「消耗所有手牌 + 随机生成」的牌，
   以前打完还按旧手牌续排，随机给的牌等于没看。现在 sim 把它记成手牌未知，
   `validate` 在生成边界拒绝后续预排（连 `end` 也不让接）：只打这张、不写 end，

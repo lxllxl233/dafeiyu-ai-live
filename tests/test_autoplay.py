@@ -10,6 +10,8 @@ from dafeiyu.games.registry import GameRegistry
 
 play = GameRegistry().load_game_module("slay-the-spire-2", "autoplay.runner")
 assert play is not None
+actions = GameRegistry().load_game_module("slay-the-spire-2", "decision.actions")
+assert actions is not None
 
 import pytest
 
@@ -543,6 +545,107 @@ def test_repeated_same_card_click_counts_as_stall():
     same = play._stall_key("CARD_SELECTION", "CARD_SELECTION select_deck_card 0")
     other = play._stall_key("CARD_SELECTION", "CARD_SELECTION select_deck_card 1")
     assert same is not None and same != other
+
+
+# ---------------------------------------------------------------- 卡牌奖励/捏奥选牌交给模型
+def _reward_card_state():
+    """mod 的卡牌奖励屏：choose_reward_card 和 select_deck_card 同时出现。"""
+    return {
+        "screen": "CARD_SELECTION", "run_id": "r-reward",
+        "run": {"floor": 15, "act_id": 0, "current_hp": 61, "max_hp": 80,
+                "deck": [{"card_id": "STRIKE_IRONCLAD", "name": "打击",
+                          "energy_cost": 1}], "relics": [], "potions": []},
+        "available_actions": ["save_and_quit", "resolve_rewards",
+                              "collect_rewards_and_proceed", "choose_reward_card",
+                              "skip_reward_cards", "select_deck_card"],
+        "selection": {"kind": "deck_card_select", "prompt": "对所有敌人造成5点伤害X次。",
+                      "min_select": 0, "max_select": 0,
+                      "cards": [{"index": 0, "card_id": "WHIRLWIND", "name": "旋风斩"},
+                                {"index": 1, "card_id": "ANGER", "name": "愤怒"}]},
+        "reward": {"pending_card_choice": True,
+                   "card_options": [{"index": 0, "card_id": "WHIRLWIND", "name": "旋风斩"},
+                                    {"index": 1, "card_id": "ANGER", "name": "愤怒"}]},
+    }
+
+
+def test_card_reward_goes_to_llm_even_with_select_deck_card():
+    """71f1acb 把「有 select_deck_card」当牌组多选，卡牌奖励也被本地吞掉：
+    模型没看见拿了哪张，紧接着奖励屏就说「没牌可拿」（实机反馈「拿了说没拿」）。"""
+    called = []
+
+    class _Planner:
+        def plan(self, brief, feedback="", goal=""):
+            called.append(brief)
+            return {"ok": True, "plan": {"act": "choose_reward_card", "i": 1,
+                                         "say": ["愤怒 0 费，先补一张低费输出。"]}}
+
+    state = _reward_card_state()
+    fake = _FakeSts2([state])
+    last = play._one_step(fake, None, state, mode="llm", llm_tools=object(),
+                          llm_planner=object(), screen_planner=_Planner(),
+                          game=play.GAME_ID)
+    assert called, "卡牌奖励必须让模型决定"
+    assert last == "CARD_SELECTION choose_reward_card 1"
+    assert fake.calls == [("choose_reward_card", {"option_index": 1})]
+    # 菜单里不能同时出现 select_deck_card（点错那套界面不动）
+    assert [(e["a"], e["i"]) for e in actions.available(state)] == [
+        ("choose_reward_card", 0), ("choose_reward_card", 1),
+        ("skip_reward_cards", None)]
+
+
+def test_single_card_choice_such_as_neow_blessing_goes_to_llm():
+    """捏奥「三选一稀有牌」只有 select_deck_card，但它是玩家决策，不该本地静默拿。"""
+    called = []
+
+    class _Planner:
+        def plan(self, brief, feedback="", goal=""):
+            called.append(brief)
+            return {"ok": True, "plan": {"act": "select_deck_card", "i": 1,
+                                         "say": ["耸肩无视补防，先拿它。"]}}
+
+    state = {
+        "screen": "CARD_SELECTION", "run_id": "r-neow",
+        "run": {"floor": 1, "act_id": 0, "current_hp": 64, "max_hp": 80,
+                "deck": [{"card_id": "STRIKE_IRONCLAD", "name": "打击",
+                          "energy_cost": 1}], "relics": [], "potions": []},
+        "available_actions": ["select_deck_card"],
+        "selection": {"kind": "choose_card_select", "prompt": "选择一张牌",
+                      "min_select": 0, "max_select": 0,
+                      "cards": [{"index": 0, "card_id": "BASH", "name": "痛击"},
+                                {"index": 1, "card_id": "SHRUG_IT_OFF",
+                                 "name": "耸肩无视"}]},
+    }
+    fake = _FakeSts2([state])
+    last = play._one_step(fake, None, state, mode="llm", llm_tools=object(),
+                          llm_planner=object(), screen_planner=_Planner(),
+                          game=play.GAME_ID)
+    assert called, "捏奥的三选一必须让模型决定"
+    assert last == "CARD_SELECTION select_deck_card 1"
+    assert fake.calls == [("select_deck_card", {"option_index": 1})]
+
+
+def test_two_card_deck_edit_still_goes_local():
+    """真正的牌组多选（移除 2 张）仍走本地：mod 的 selected_count 不可靠。"""
+    called = []
+
+    class _Planner:
+        def plan(self, *a, **k):
+            called.append(1)
+            return {"ok": True, "plan": {"act": "select_deck_card", "i": 0}}
+
+    state = {"screen": "CARD_SELECTION", "run_id": "r-remove",
+             "available_actions": ["select_deck_card"],
+             "selection": {"kind": "deck_card_select", "prompt": "选择 2 张牌来移除",
+                           "min_select": 2, "max_select": 2,
+                           "cards": [{"index": 0, "name": "打击"},
+                                     {"index": 1, "name": "防御"}]}}
+    fake = _FakeSts2([state])
+    last = play._one_step(fake, None, state, mode="llm", llm_tools=object(),
+                          llm_planner=object(), screen_planner=_Planner(),
+                          game=play.GAME_ID)
+    assert called == []
+    assert last == "CARD select 1/2"
+    assert fake.calls == [("select_deck_card", {"option_index": 0})]
 
 
 def test_blind_selection_rolls_back_only_once(monkeypatch):

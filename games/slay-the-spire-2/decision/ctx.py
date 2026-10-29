@@ -697,6 +697,10 @@ def _combat(state: dict, mem: dict) -> dict:
             p_out["self_why"] = f"血{hp}/{maxhp}（{100 * hp / maxhp:.0f}%）交{'/'.join(selfs)}会自扣血"
         plan_out.append(p_out)
     out["plans"] = plan_out
+    if any(any(str(x[0]).startswith("@") for x in pl["seq"] if x) for pl in plans):
+        # 账本里的药水步长这样：["@1", 0]。模型不知道 @ 是什么，抄成 {"c":"@1"}
+        # 会被 validate 拒（历史 4 次）。写一句图例，成本只在有药水线时付。
+        out["plan_note"] = "plans[].s 的 @N=药水槽；照抄成 {\"p\": N}，别写进 c"
 
     # 单体局面：直接给出「这张牌打出去实际掉多少血」（已扣敌方格挡、含易伤），
     # 免得把 hand[].dmg（卡面）或 plans[].d（整套合计）当成单卡伤害。
@@ -738,7 +742,18 @@ def _combat(state: dict, mem: dict) -> dict:
         warns.append(f"cannot_full_block(-{calc['net']})")
     if calc["net"] >= hp:
         warns.append("incoming>=hp：必须全挡/斩杀/喝药")
-        warns.append("SL_INSURANCE：本回合可能致死——先 `python tools/sts2.py do save_and_quit` 再 `continue_run` 回档到战斗开始，再打这一手（死透了就没 SL 可用）")
+        warns.append("SL_INSURANCE：可能致死——先 save_and_quit 再 continue_run 回档到战斗开始（死透没 SL）")
+    # 药水闸的观察侧：Boss 战/重大损失时把「还剩哪几瓶」直接摆出来，别让模型
+    # 翻 run.potions 再自己算。执行层 act._guard_potion 会拦「空手过」。
+    _boss = sim.is_boss_fight(state)
+    _usable = [x for x in potions if x.get("use")]
+    _net = calc.get("net", 0) or 0
+    if _usable and _net > 0 and (_net >= max(12 if _boss else 16,
+                                             int(maxhp * (0.18 if _boss else 0.28)))
+                                or _net >= max(10, int(hp * (0.40 if _boss else 0.50)))):
+        _names = "、".join(f"{x['n']}(槽{x['p']})" for x in _usable[:3])
+        warns.append(f"POTION {'Boss战' if _boss else '重大损失'}：净伤 {_net}"
+                     f"（{100 * _net / maxhp:.0f}% 生命），{_names} 未交——先写 {{\"p\": 槽位}}")
     if en_out and not calc["inc"] and not calc.get("tax"):
         warns.append("本回合无入伤：可少起防，全力输出")
     if calc.get("nx_inc") and calc["nx_inc"] >= hp:
@@ -838,16 +853,17 @@ def _choice(state: dict) -> dict:
             opts.append({"i": i, "n": _short(o.get("title") or o.get("text") or "", 40),
                          "d": _short(o.get("description") or "", 120),
                          "locked": bool(o.get("is_locked")), "go": bool(o.get("is_proceed"))})
-        return {"kind": "event", "id": str(ev.get("event_id") or ev.get("id") or ""),
-                "title": _short(ev.get("title") or "", 40),
-                "desc": _short(ev.get("description") or "", 180), "opts": opts}
+        out = {"kind": "event", "id": str(ev.get("event_id") or ev.get("id") or ""),
+               "title": _short(ev.get("title") or "", 40),
+               "desc": _short(ev.get("description") or "", 180), "opts": opts}
+        # 事件已结算时只剩「继续」：标出来，模型才不会把「没有新选项」说成
+        # 「涅奥没给好处/没拿」（奖励已经进 relics/deck，列表就在 ctx 里）。
+        if ev.get("is_finished"):
+            out["done"] = True
+            out["note"] = "事件已结算：奖励已经进 relics/deck，直接继续"
+        return out
     if sc == "REWARD":
         rw = state.get("reward") or {}
-        items = []
-        for i, r in enumerate([x for x in (rw.get("rewards") or []) if isinstance(x, dict)]):
-            items.append({"i": i, "t": str(r.get("reward_type") or r.get("type") or "?"),
-                          "n": _short(r.get("name") or "", 30),
-                          "d": _short(r.get("description") or "", 80)})
         cards = []
         for i, card in enumerate([x for x in (rw.get("card_options") or []) if isinstance(x, dict)]):
             e = sim.parse_card(card, i)
@@ -855,6 +871,17 @@ def _choice(state: dict) -> dict:
             cards.append({k: e[k] for k in ("i", "id", "n", "c", "t", "up", "dmg", "hits", "blk",
                                             "draw", "en", "vuln", "weak", "aoe", "x", "exh")
                           if k in e})
+        items = []
+        for i, r in enumerate([x for x in (rw.get("rewards") or []) if isinstance(x, dict)]):
+            item = {"i": i, "t": str(r.get("reward_type") or r.get("type") or "?"),
+                    "n": _short(r.get("name") or "", 30),
+                    "d": _short(r.get("description") or "", 80)}
+            # 奖励屏上的 Card 条目只是「一个没打开的卡牌奖励」：牌面要 claim 之后
+            # 才在 CARD_SELECTION 里出现。标出来，模型才不会照着空 card_options
+            # 说「奖励没牌可拿」（实机反馈「拿了卡牌也说没拿」）。
+            if "card" in item["t"].lower() and not cards:
+                item["claim_first"] = True
+            items.append(item)
         return {"kind": "reward", "items": items, "cards": cards}
     if sc == "BUNDLE_SELECTION":
         bs = [b for b in (state.get("bundles") or []) if isinstance(b, dict)]
@@ -921,9 +948,15 @@ def _choice(state: dict) -> dict:
             m = re.search(r"选择\s*(\d+)\s*张", prompt)
             if m:
                 mn = mx = int(m.group(1))
-        return {"kind": "select", "prompt": prompt,
-                "min": mn, "max": mx,
-                "cards": cards}
+        out = {"kind": "select", "prompt": prompt, "min": mn, "max": mx, "cards": cards}
+        # 单张选牌交回模型后（锻造/删牌/变化），它要知道「已经选了几张、能不能确认」，
+        # 否则会在确认屏上继续点牌把人选取消掉。
+        picked = _int(sel.get("selected_count"), 0)
+        if picked:
+            out["sel"] = picked
+        if sel.get("can_confirm"):
+            out["confirm"] = True
+        return out
     if sc == "CHEST":
         ch = state.get("chest") or {}
         return {"kind": "chest", "open": bool(ch.get("is_open")),

@@ -303,6 +303,14 @@ def reward_eval(choice, st):
         e = card_eval(card, st, idx)
         opts.append(e)
     if not opts:
+        # 奖励屏上的 Card 条目还没 claim：这时 card_options 必然是空的，不能说
+        # 「没有卡牌选项」——模型会照着这句说「奖励没牌可拿」，可实际上有牌，
+        # 而且直接 collect 会被 mod 静默塞第一张进牌组（实机反馈「拿了也说没拿」）。
+        has_card_item = any("card" in str(x.get("t") or "").lower()
+                            for x in (choice.get("items") or []) if isinstance(x, dict))
+        if has_card_item:
+            return {"mode": "reward", "opts": [], "best": None, "skip": False,
+                    "bar": 0, "why": "卡牌奖励还没打开：先 claim_reward 再看牌/跳过"}
         return {"mode": "reward", "opts": [], "best": None, "skip": True,
                 "bar": 0, "why": "没有卡牌选项"}
     best = max(opts, key=lambda x: (x["sc"], -x["i"]))

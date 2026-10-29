@@ -309,6 +309,39 @@ def parse_potion(p: dict) -> dict | None:
     return out
 
 
+def is_boss_fight(state: dict) -> bool:
+    """当前战斗是不是本幕 Boss。
+
+    ``run.boss_id`` 整幕都带着（"VANTOM_BOSS"），不能只看它有没有值。两条判据：
+    1. 本幕 Boss 层：STS2 每幕 17 层，``floor == 17 * (act_id + 1)``；
+    2. 活怪 id 和 boss_id 对得上：多数 Boss 的怪 id 就是去掉 ``_BOSS`` 的遭遇 id；
+       THE_KIN 这种「Boss + 小怪」的遭遇，用 id 词根（KIN）前缀匹配。
+    """
+    run = state.get("run") or {}
+    bid = str(run.get("boss_id") or "").strip().upper()
+    if not bid:
+        return False
+    act = sts2._int(run.get("act_id"), -1)
+    floor = sts2._int(run.get("floor"), -1)
+    if act >= 0 and floor > 0 and floor == 17 * (act + 1):
+        return True
+    enc = bid[:-5] if bid.endswith("_BOSS") else bid
+    toks = [t for t in enc.split("_") if len(t) >= 3 and t != "THE"]
+    for e in ((state.get("combat") or {}).get("enemies") or []):
+        if not isinstance(e, dict):
+            continue
+        if e.get("dead") or sts2._int(e.get("current_hp", e.get("hp")), 1) <= 0:
+            continue
+        eid = str(e.get("enemy_id") or e.get("id") or "").strip().upper()
+        if not eid:
+            continue
+        if eid == bid or bid.startswith(eid + "_") or eid.startswith(bid + "_"):
+            return True
+        if any(eid.startswith(t) or t.startswith(eid) for t in toks):
+            return True
+    return False
+
+
 def _power_ids(powers) -> dict:
     """power_id/中文名 → 层数。"""
     out = {}
@@ -1287,7 +1320,7 @@ def search(state: dict, max_cards: int = 6, max_plans: int = 5,
 
     # 药水线：只试「药水先手」，让回能/斩杀药水能进入候选（用一次扣分，不轻易交）
     useful = [p for p in base.potions if p.get("use") and any(
-        p.get(k) for k in ("dmg", "blk", "blk_mul", "en", "heal", "vuln", "weak",
+        p.get(k) for k in ("dmg", "blk", "blk_mul", "en", "heal", "draw", "vuln", "weak",
                            "str", "dex"))]
     for p in useful[:2]:
         for policy, focus in _policies(base):

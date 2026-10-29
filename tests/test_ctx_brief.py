@@ -60,6 +60,21 @@ def test_combat_brief_has_one_line_account(monkeypatch):
     assert len(brief.get("rules") or []) == 5
 
 
+def test_boss_major_hit_warns_to_drink_potion():
+    """Boss 战净掉 ≥12% 最大生命且手里有药水：ctx 要直接点名槽位。
+    执行层 act._guard_potion 会拦「空手过」，观察侧先给一次纠偏机会。"""
+    state = _combat(hp=70)
+    state["run"]["boss_id"] = "JAW_WORM_BOSS"
+    state["run"]["potions"] = [{"index": 0, "occupied": True,
+                                "potion_id": "BLOCK_POTION", "name": "格挡药水",
+                                "description": "获得12点格挡。", "can_use": True,
+                                "requires_target": False}]
+    state["combat"]["enemies"][0]["intents"][0].update({"damage": 20,
+                                                       "total_damage": 20})
+    warns = ctx.build(state).get("warn") or []
+    assert any("POTION" in w and "槽0" in w for w in warns), warns
+
+
 def test_combat_brief_marks_lethal_line():
     state = _combat(hp=30)
     state["combat"]["enemies"][0]["current_hp"] = 12
@@ -84,3 +99,48 @@ def test_noncombat_brief_has_menu_and_no_calc():
     assert brief.get("choice", {}).get("opts")
     assert "calc" not in brief
     assert len(brief.get("rules") or []) == 5
+
+
+def test_finished_event_brief_says_reward_already_granted():
+    """涅奥这类事件结算完只剩「继续」；ctx 要写明奖励已进 relics/deck，
+    否则模型会照着空选项说「涅奥没给好处/没拿」（实机反馈）。"""
+    state = {
+        "screen": "EVENT", "run_id": "r-neow",
+        "run": {"floor": 1, "act_id": "0", "current_hp": 64, "max_hp": 80, "gold": 99,
+                "deck": [{"card_id": "STRIKE_IRONCLAD", "name": "打击",
+                          "energy_cost": 1}],
+                "relics": [{"relic_id": "HEFTY_TABLET", "name": "沉重石板"}],
+                "potions": []},
+        "available_actions": ["choose_event_option"],
+        "event": {"event_id": "NEOW", "title": "涅奥", "is_finished": True,
+                  "options": [{"title": "Proceed", "is_proceed": True}]},
+    }
+    choice = ctx.build(state)["choice"]
+    assert choice["done"] is True
+    assert "relics" in choice["note"]
+
+
+def test_reward_brief_does_not_claim_there_is_no_card():
+    """奖励屏只有一个「Card」条目时 card_options 必然是空的；ctx 不能因此说
+    「没有卡牌选项」——模型会照着说「奖励没牌可拿/没拿」（实机反馈）。"""
+    state = {
+        "screen": "REWARD", "run_id": "r-reward",
+        "run": {"floor": 15, "act_id": "0", "current_hp": 40, "max_hp": 80, "gold": 120,
+                "deck": [{"card_id": "STRIKE_IRONCLAD", "name": "打击",
+                          "energy_cost": 1}] * 17, "relics": [], "potions": []},
+        "available_actions": ["claim_reward", "collect_rewards_and_proceed"],
+        "reward": {"pending_card_choice": False, "card_options": [],
+                   "rewards": [{"index": 0, "reward_type": "Gold",
+                                "description": "7金币", "claimable": True},
+                               {"index": 1, "reward_type": "Card",
+                                "description": "将一张牌添加到你的牌组。",
+                                "claimable": True}]},
+    }
+    brief = ctx.build(state)
+    choice = brief["choice"]
+    card_item = [x for x in choice["items"] if x["t"] == "Card"][0]
+    assert card_item.get("claim_first") is True
+    ev = choice["eval"]
+    assert ev["why"] != "没有卡牌选项"
+    assert "claim_reward" in ev["why"]
+    assert ev["skip"] is False

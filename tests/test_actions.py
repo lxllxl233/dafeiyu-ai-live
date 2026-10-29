@@ -206,12 +206,23 @@ def test_chest_menu_can_claim_rewards_and_continue():
         ("claim_reward", 0), ("collect_rewards_and_proceed", None)]
 
 
-def test_chest_menu_hides_claimed_relic():
+def test_chest_menu_hides_relic_after_it_is_gone():
+    state = {"screen": "CHEST",
+             "available_actions": ["choose_treasure_relic", "proceed"],
+             "chest": {"has_relic_been_claimed": True, "relic_options": []}}
+    assert [(e["a"], e["i"]) for e in actions.available(state)] == [("proceed", None)]
+
+
+def test_chest_menu_keeps_relic_when_claimed_flag_lies():
+    # 实机 run-0048 f10：mod 给 claimed=True，但遗物还在 relic_options 里没点。
     state = {"screen": "CHEST",
              "available_actions": ["choose_treasure_relic", "proceed"],
              "chest": {"has_relic_been_claimed": True,
-                       "relic_options": [{"name": "燃烧之血"}]}}
-    assert [(e["a"], e["i"]) for e in actions.available(state)] == [("proceed", None)]
+                       "relic_options": [{"name": "冰淇淋"}]}}
+    assert [(e["a"], e["i"]) for e in actions.available(state)] == [
+        ("choose_treasure_relic", 0), ("proceed", None)]
+    entry, err = actions.check({"act": "proceed"}, state)
+    assert entry is None and "遗物" in err
 
 
 def test_map_menu_only_lists_available_nodes():
@@ -231,3 +242,61 @@ def test_unknown_screen_has_no_menu():
     assert actions.available({"screen": "MAIN_MENU",
                               "available_actions": ["open_character_select"]}) == []
     assert actions.available({"screen": "SOMETHING_NEW"}) == []
+
+
+# ---------------------------------------------------------------- 奖励屏：别静默拿第一张
+REWARD_WITH_CARD = {
+    "screen": "REWARD",
+    "available_actions": ["resolve_rewards", "collect_rewards_and_proceed",
+                          "claim_reward"],
+    "reward": {"pending_card_choice": False,
+               "rewards": [{"index": 0, "reward_type": "Gold", "description": "7金币",
+                            "claimable": True},
+                           {"index": 1, "reward_type": "Card",
+                            "description": "将一张牌添加到你的牌组。", "claimable": True}]},
+}
+
+
+def test_reward_menu_uses_reward_description_as_the_label():
+    """mod 的奖励条目没有 name；旧菜单只剩 "Card"/"Gold"，模型看不出这是什么。"""
+    menu = actions.available(REWARD_WITH_CARD)
+    assert [(e["a"], e["i"], e["n"]) for e in menu] == [
+        ("claim_reward", 0, "7金币"),
+        ("claim_reward", 1, "将一张牌添加到你的牌组。"),
+        ("collect_rewards_and_proceed", None, "收下全部并继续"),
+    ]
+
+
+def test_reward_collect_blocked_while_card_reward_unopened():
+    """collect 会让 mod 静默把第一张牌塞进牌组，台词却说「不拿」——必须先 claim。"""
+    entry, err = actions.check({"act": "collect_rewards_and_proceed"}, REWARD_WITH_CARD)
+    assert entry is None and "卡牌" in err and "claim_reward" in err
+    entry, err = actions.check({"act": "claim_reward", "i": 1}, REWARD_WITH_CARD)
+    assert entry is not None and err == ""
+
+
+def test_reward_collect_allowed_after_card_claimed():
+    taken = {**REWARD_WITH_CARD,
+             "reward": {"pending_card_choice": False,
+                        "rewards": [{"index": 0, "reward_type": "Gold",
+                                     "claimable": True}]}}
+    entry, err = actions.check({"act": "collect_rewards_and_proceed"}, taken)
+    assert entry is not None and err == ""
+    # 已经 claim 过的 Card 也不能再拦
+    claimed = {**REWARD_WITH_CARD,
+               "reward": {"pending_card_choice": False,
+                          "rewards": [{"index": 0, "reward_type": "Card",
+                                       "claimable": False, "claimed": True}]}}
+    assert actions.check({"act": "collect_rewards_and_proceed"}, claimed)[0] is not None
+
+
+def test_card_reward_screen_does_not_offer_deck_select_twice():
+    """卡牌奖励屏同时暴露 select_deck_card；只列 choose_reward_card，避免点错那套。"""
+    state = {"screen": "CARD_SELECTION",
+             "available_actions": ["choose_reward_card", "select_deck_card",
+                                   "skip_reward_cards"],
+             "selection": {"cards": [{"name": "旋风斩"}, {"name": "愤怒"}]},
+             "reward": {"pending_card_choice": True}}
+    assert [(e["a"], e["i"]) for e in actions.available(state)] == [
+        ("choose_reward_card", 0), ("choose_reward_card", 1),
+        ("skip_reward_cards", None)]

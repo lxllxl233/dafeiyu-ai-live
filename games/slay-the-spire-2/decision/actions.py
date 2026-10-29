@@ -108,10 +108,13 @@ def _reward_menu(state: dict) -> list[dict]:
     rw = state.get("reward") or {}
     out = []
     for i, r in enumerate([x for x in (rw.get("rewards") or []) if isinstance(x, dict)]):
-        if r.get("claimable") is False or r.get("claimed"):
+        if r.get("claimable") is False or r.get("claimed") or r.get("is_claimed"):
             continue
+        # mod 的奖励条目没有 name 字段，只有 description（「13金币」「将一张牌添加到
+        # 你的牌组。」）：菜单名必须退到 description，否则模型只能看到 "Card"。
         out.append({"a": "claim_reward", "i": i,
-                    "n": _short(r.get("name") or r.get("reward_type") or "奖励", 30),
+                    "n": _short(r.get("name") or r.get("description")
+                                or r.get("reward_type") or "奖励", 30),
                     "fx": _short(r.get("description") or "", 60)})
     cards = [x for x in (rw.get("card_options") or []) if isinstance(x, dict)]
     for i, c in enumerate(cards):
@@ -200,7 +203,10 @@ def _chest_menu(state: dict) -> list[dict]:
     out = []
     if "open_chest" in acts:
         out.append({"a": "open_chest", "i": None, "n": "打开宝箱", "fx": ""})
-    if "choose_treasure_relic" in acts and not ch.get("has_relic_been_claimed"):
+    if "choose_treasure_relic" in acts:
+        # 不按 has_relic_been_claimed 过滤：mod 在「已开箱、遗物已展示」时也会给
+        # claimed=True，但遗物还挂在 relic_options 里没点（实机 run-0048 f10：
+        # claimed=True + relics=["冰淇淋"] + 只有 proceed，遗物就这么丢了）。
         for i, r in enumerate([x for x in (ch.get("relic_options") or [])
                                if isinstance(x, dict)]):
             out.append({"a": "choose_treasure_relic", "i": i,
@@ -231,7 +237,9 @@ def _select_menu(state: dict) -> list[dict]:
             out.append({"a": "choose_reward_card", "i": i,
                         "n": _short(c.get("name") or c.get("card_id") or "?", 24),
                         "fx": _short(c.get("resolved_rules_text") or c.get("rules_text") or "", 70)})
-    if "select_deck_card" in acts:
+    # mod 的卡牌奖励屏同时暴露 select_deck_card（它继承牌组多选屏），但奖励牌只能
+    # 走 choose_reward_card；两套都列会让模型点错那一套，界面不动。
+    if "select_deck_card" in acts and "choose_reward_card" not in acts:
         for i, c in enumerate(cards):
             if c.get("is_selected") or c.get("selected"):
                 continue
@@ -314,6 +322,42 @@ def _menu_names(menu: list[dict], limit: int = 8) -> str:
     return "、".join(names) or "（空）"
 
 
+def _unopened_card_reward(state: dict) -> int | None:
+    """奖励列表里还没打开的卡牌奖励下标（不是「正在选牌」，是还没 claim）。
+
+    mod 的 ``collect_rewards_and_proceed`` 会把没打开的 Card 奖励一起领掉，并且
+    ``DrainRewardFlowAsync`` 在没人指定牌时直接选**第一张**（不是当前这份奖励
+    里最好的）。于是台词说「卡牌就不贪了」，牌组却悄悄多一张——就是实机反馈的
+    「拿了卡牌也说没拿」。CLI 路径有 ``sts2.unclaimed_card_reward`` 护栏，
+    LLM 菜单路径也必须拦。
+    """
+    rew = state.get("reward") or {}
+    for i, r in enumerate(rew.get("rewards") or []):
+        if not isinstance(r, dict):
+            continue
+        t = str(r.get("reward_type") or r.get("type") or "").lower()
+        if "card" not in t:
+            continue
+        if r.get("is_claimed") or r.get("claimed") or r.get("claimable") is False:
+            continue
+        return _int(r.get("index"), i)
+    return None
+
+
+def _reward_guard(state: dict, entry: dict) -> str:
+    """奖励屏里还有没打开的卡牌时，不许直接 collect/resolve（会静默拿第一张）。"""
+    if str(state.get("screen") or "").upper() != "REWARD":
+        return ""
+    if entry.get("a") not in ("collect_rewards_and_proceed", "resolve_rewards"):
+        return ""
+    idx = _unopened_card_reward(state)
+    if idx is None:
+        return ""
+    return (f"奖励里还有没打开的卡牌（i={idx}）：直接收下会让 mod 自动把第一张牌塞进牌组，"
+            "台词再说「不拿」就对不上了。先 claim_reward 打开，再 choose_reward_card "
+            "或 skip_reward_cards，最后 collect_rewards_and_proceed")
+
+
 def _chest_guard(state: dict, entry: dict) -> str:
     """宝箱里还有没拿的遗物/奖励时，不许 proceed/跑路（实机反馈：老是忘了捡）。"""
     if str(state.get("screen") or "").upper() != "CHEST":
@@ -321,7 +365,7 @@ def _chest_guard(state: dict, entry: dict) -> str:
     ch = state.get("chest") or {}
     acts = _acts(state)
     a = entry.get("a")
-    if "choose_treasure_relic" in acts and not ch.get("has_relic_been_claimed") \
+    if "choose_treasure_relic" in acts and (ch.get("relic_options") or []) \
             and a not in ("choose_treasure_relic", "open_chest"):
         return "宝箱里还有遗物没拿：先 choose_treasure_relic（i=0）拿完再继续"
     # 遗物也可能作为奖励挂在 reward.rewards 里：没领完不许走。
@@ -346,7 +390,7 @@ def check(plan: dict, state: dict) -> tuple[dict | None, str]:
     if raw is None:
         for entry in menu:
             if entry["a"] == act and entry["i"] is None:
-                err = _chest_guard(state, entry)
+                err = _chest_guard(state, entry) or _reward_guard(state, entry)
                 return (None, err) if err else (entry, "")
         return None, f"{act} 不能这么点；可选：{_menu_names(menu)}"
     try:
@@ -355,7 +399,7 @@ def check(plan: dict, state: dict) -> tuple[dict | None, str]:
         return None, "i 必须是整数下标"
     for entry in menu:
         if entry["a"] == act and entry["i"] == idx:
-            err = _chest_guard(state, entry)
+            err = _chest_guard(state, entry) or _reward_guard(state, entry)
             return (None, err) if err else (entry, "")
     return None, f"{act}[{idx}] 不在菜单里；可选：{_menu_names(menu)}"
 

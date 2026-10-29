@@ -1037,6 +1037,32 @@ def _blind_selection(sel: dict) -> bool:
     return mn == 0 and mx == 0 and _selection_need(sel) >= 2
 
 
+def _deck_multi_select(state: dict) -> bool:
+    """这一屏是不是「从牌组里挑 N 张」（移除/升级/变化/附魔）——只有这种才走本地。
+
+    mod 0.8.0 的牌组多选屏只回 pending、``selected_count`` 不可靠，模型点会重复点
+    同一张（run-0113 一晚 1332 步 / 530 万 token），所以要本地按顺序点满再确认。
+
+    但**不能只看 ``select_deck_card`` 在不在**：卡牌奖励屏（``choose_reward_card``
+    + ``reward.pending_card_choice``）和「从 N 张里选 1 张」的捏奥祝福/事件
+    （need=1）也会带 ``select_deck_card``。71f1acb 把它们一起拦进本地后，模型
+    再也看不到自己拿了哪张，紧接着的奖励屏 ``card_options`` 又是空的，它就照着
+    ctx 的「没有卡牌选项」说「奖励没牌可拿 / 涅奥没给好处」——玩家看到的是
+    「明明拿了却说没拿」。单张选牌一次点击就结算，交回模型没有任何风险。
+    """
+    if "select_deck_card" not in _acts(state):
+        return False
+    if "choose_reward_card" in _acts(state):
+        return False
+    if (state.get("reward") or {}).get("pending_card_choice"):
+        return False
+    sel = state.get("selection") or {}
+    cards = [c for c in (sel.get("cards") or []) if isinstance(c, dict)]
+    if _blind_selection(sel):
+        return True
+    return _selection_need(sel, len(cards)) > 1
+
+
 def _deck_select_key(state: dict, sel: dict, cards: list[dict]) -> str:
     """同一屏牌组多选的身份：换局/换层/换提示/换牌表就重新计数。
 
@@ -1345,10 +1371,9 @@ def _one_step(sts2, advisor, state: dict, *, mode: str = "local",
         return _combat(sts2, advisor, state, mode=mode, llm_tools=llm_tools,
                        llm_planner=llm_planner, game=game)
     if mode == "llm" and screen_planner is not None and screen in LLM_SCREENS:
-        # 牌组多选（「选择 N 张牌来移除/升级」）走本地：mod 的 selected_count 不可靠，
-        # 让模型点只会重复点同一张（run-0113 一晚烧掉 530 万 token）。本地按
-        # 0、1、2… 顺序点不同牌，点满后用 confirm_selection 确认（mod 已修）。
-        if screen == "CARD_SELECTION" and "select_deck_card" in _acts(state):
+        # 只有「从牌组挑 N 张」的多选才走本地（mod 的 selected_count 不可靠，
+        # 模型会重复点同一张）；单张选牌和卡牌奖励是玩家决策，必须交给模型。
+        if screen == "CARD_SELECTION" and _deck_multi_select(state):
             _log("deck_selection_local", need=_selection_need(state.get("selection") or {}))
         else:
             out = _screen_llm(sts2, screen_planner, state, screen)

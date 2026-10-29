@@ -563,11 +563,67 @@ def _guard_take(st: dict, sm, allow: dict, played: dict | None = None):
                   f"代价是少打一张输出 —— 要换就换，硬吃就写 {{\"allow_take\":1}}")
 
 
+def _guard_potion(st: dict, sm, allow: dict) -> str | None:
+    """药水闸：这一手会致死 / Boss 战大出血 / 普通战重大损失时，不能空手过。
+
+    run 75S0RYFKEH f17 的账本里，Boss 战「两瓶药水带进棺材」：模型只在
+    ``taken >= hp`` 的最后一回合才交药（T6 18 血交迅捷、T7 5 血交赌徒，
+    已经救不回来）。提示词和 hard_rules 都写了「Boss 不省药 / 净掉≥10% 就喝」，
+    但模型会以「这瓶是抽牌/换手，不直接挡」为由跳过。这里把它变成执行层硬闸：
+    拦一次、给出槽位和数值，模型下一版通常就会把 ``{"p": 槽位}`` 写进 seq。
+
+    留药的口子仍然保留：模型写 ``{"allow_take":1}`` 并在 say 里说明理由即可。
+    """
+    if allow.get("allow_take"):
+        return None
+    if not sm.alive():
+        return None
+    if any(isinstance(s, dict) and s.get("k") == "p"
+           for s in getattr(sm, "steps", []) or []):
+        return None          # 这一手已经交过药了，别逼它连喝两瓶
+    taken = _taken_if_end(sm)
+    if taken <= 0:
+        return None
+    hp = max(1, sts2._int(getattr(sm, "hp", 0), 1))
+    maxhp = max(1, sts2._int(getattr(sm, "maxhp", 0), 1))
+    lethal = taken >= hp
+    if sim.is_boss_fight(st):
+        limit = max(12, int(maxhp * 0.18))
+        pct_hp = 0.40
+    else:
+        limit = max(16, int(maxhp * 0.28))
+        pct_hp = 0.50
+    if not lethal and taken < limit and taken < max(10, int(hp * pct_hp)):
+        return None
+    pots = []
+    for raw in ((st.get("run") or {}).get("potions") or []):
+        p = sim.parse_potion(raw)
+        if not p or not p.get("use"):
+            continue
+        # 只逼「这一手真能减伤」的药水：格挡/回血/抽牌/虚弱/易伤。
+        # 缚魂药水实测无效（run81），灰水只是消耗手牌，逼模型交它们只会
+        # 换来一句「没用，不浪费」加 4 次重试（run SLUA8TYL73 f17 t2 实测）。
+        if "BINDING" in str(p.get("id") or "").upper():
+            continue
+        if not any(p.get(k) for k in ("blk", "blk_mul", "heal", "draw", "weak", "vuln")):
+            continue
+        pots.append(p)
+    if not pots:
+        return None
+    names = "、".join(f"{p['n']}(槽{p['p']})" for p in pots[:3])
+    how = ('{"p": 槽位, "t": 目标下标}' if any(p.get("t") == "enemy" for p in pots)
+           else '{"p": 槽位}')
+    tag = "致死" if lethal else ("Boss 战" if sim.is_boss_fight(st) else "重大损失")
+    return (f"护栏·药水：{tag}——这一手净掉 {taken}（{100 * taken / maxhp:.0f}% 最大生命），"
+            f"手上 {names} 还没交。药水闸要求先把 {how} 写在 seq 最前面再打；"
+            f"确认要留药硬吃就写 {{\"allow_take\":1}} 并在 say 里说明理由")
+
+
 def _guards(st: dict, sm, ended: bool, allow: dict,
             played: dict | None = None) -> tuple[str | None, dict]:
-    """返回 (拒绝原因, 附加信息)。只在「这一手会结束回合」时查漏斩/漏费/漏甲。
+    """返回 (拒绝原因, 附加信息)。只在「这一手会结束回合」时查漏斩/漏费/漏甲/漏药。
 
-    顺序按「亏多少」排：漏斩最贵（白送一回合挨打），其次漏费，最后漏甲。
+    顺序按「亏多少」排：漏斩最贵（白送一回合挨打），其次漏费，然后药水，最后漏甲。
     """
     if not ended:
         return None, {}
@@ -584,6 +640,9 @@ def _guards(st: dict, sm, ended: bool, allow: dict,
         return err, extra
     err, meta = _guard_leftover(sm, allow)
     extra.update(meta)
+    if err:
+        return err, extra
+    err = _guard_potion(st, sm, allow)
     if err:
         return err, extra
     err, warn = _guard_take(st, sm, allow, played)
