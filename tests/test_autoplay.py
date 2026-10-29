@@ -1318,3 +1318,17 @@ def test_no_rollback_for_a_normal_upgrade_selection(monkeypatch):
     fake = _FakeSts2([state])
     assert play._recover_blind_screen(fake, state, "CARD wait 1/1") is False
     assert fake.calls == []
+
+def test_bind_host_is_ignored_while_a_run_is_live(monkeypatch):
+    """facade 的只读调用会 new 一个 host：线程还在跑时不能把模块换过去。"""
+    from dafeiyu.agent.host import AutoplayHost
+
+    live = play._host
+
+    class _Live:
+        def is_alive(self):
+            return True
+
+    monkeypatch.setattr(play, "_thread", _Live())
+    assert play.bind_host(AutoplayHost("slay-the-spire-2")) is live
+    assert play._host is live

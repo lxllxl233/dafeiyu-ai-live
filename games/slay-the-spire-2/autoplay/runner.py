@@ -49,9 +49,17 @@ _recent_speech: dict[str, float] = {}
 
 
 def bind_host(host: AutoplayHost) -> AutoplayHost:
-    """由核心 facade/插件显式注入 host；替换时同步旧测试用的模块别名。"""
+    """由核心 facade/插件显式注入 host；替换时同步旧测试用的模块别名。
+
+    已经有一局在跑时拒绝换 host：``play.status()`` 之类的只读调用以前会
+    新建 host 再 bind，模块级 ``_host`` 被换成默认 state（running=False/pid=0），
+    下一笔状态就把直播状态写成「已停手」（run 16:18 实测）。
+    """
     global _host, _lock, _stop, _state, _speech_until
     global STATUS_PATH, STOP_PATH, LOG_PATH
+    if _thread is not None and _thread.is_alive() and host is not _host:
+        _log("bind_host_ignored", reason="autoplay thread alive")
+        return _host
     _host = host
     _lock = host.lock
     _stop = host.stop_event

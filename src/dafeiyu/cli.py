@@ -354,9 +354,12 @@ def cmd_play(args) -> int:
                 # 状态文件被别的局/别的进程覆盖（实机：跑测试或第二游戏验收把
                 # logs/autoplay.json 写成了另一局、running=false），
                 # 但本进程的线程还在打——别跟着退出，否则直播间会被静默停掉。
-                if started_pid and int(now.get("pid") or 0) != started_pid:
+                # pid=0 是「状态被半写」：本进程线程下一秒会带着 running/pid 写回来，
+                # 先多等几轮（以前只等 10 分钟就整条直播退出）。
+                stale_pid = int(now.get("pid") or 0)
+                if started_pid and stale_pid != started_pid:
                     foreign += 1
-                    if foreign < 600:
+                    if foreign < (600 if stale_pid else 3600):
                         time.sleep(1.0)
                         continue
                 break
