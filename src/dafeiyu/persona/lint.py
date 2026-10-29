@@ -2,7 +2,7 @@
 
 分两级：
 - FAIL：不该发出去（空台词、自称前缀、标签开头、复读、招牌一次两句、超长）
-- WARN：能发但建议改（没数字、语气词多、破折号、毒舌词）
+- WARN：能发但建议改（没数字也没情绪、念血条、叹气太多、语气词多、破折号、毒舌词）
 
 `sentences()` / `clip()` 是排版用的工具，和 lint 分开。
 """
@@ -19,6 +19,11 @@ _SPACE_RE = re.compile(r"[ \t\u3000]+")
 _SENT_RE = re.compile(r"[。！？!?；;…]+")
 _FILLER_RE = re.compile(r"[啊吧嘛哈诶]")
 _STACK_RE = re.compile(r"[？?]{2,}|[。]{2,}")
+# 叹气/拖音：曼波会把这类词读得很软，观众听着像“有感情的呼吸”（实机反馈）。
+_EMOTION_RE = re.compile(r"唉|哎|呜|唔|……|\.\.\.")
+_HP_RE = re.compile(r"(?:HP|血量?|血条)\s*\d|[0-9]+\s*/\s*[0-9]+\s*(?:血|HP)|我\s*[0-9]+\s*血",
+                    re.I)
+_SIGH_RE = re.compile(r"唉|哎|呜|唔")
 
 
 @dataclass(frozen=True, slots=True)
@@ -155,8 +160,16 @@ def lint(
     if "这下看懂了" in t and len(t) <= 12:
         issues.append(LintIssue("WARN", "「这下看懂了」后面要跟看懂的是什么", "quip"))
 
-    if not re.search(r"\d", t):
-        issues.append(LintIssue("WARN", "没有数字：加一个具体数（血/伤/回合）", "number"))
+    # 报账式台词：观众要判断和情绪，不是每句都念一遍血条（P 站实机反馈）。
+    if _HP_RE.search(t):
+        issues.append(LintIssue("WARN", "别念血条：说「挡不挡得住/会不会死」，血只在要死时提一句",
+                                "hp"))
+    sighs = len(_SIGH_RE.findall(t))
+    if sighs > 1:
+        issues.append(LintIssue("WARN", f"叹气 {sighs} 次：一屏一个就够，多了显得丧", "sigh"))
+    if not re.search(r"\d", t) and not _EMOTION_RE.search(t):
+        issues.append(LintIssue("WARN", "没有数字也没有情绪：加一个具体伤害/回合，或一句带语气的人话",
+                                "number"))
 
     return issues
 

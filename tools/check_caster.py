@@ -101,8 +101,13 @@ def lint(text: str) -> list[tuple[str, str]]:
     if "这下看懂了" in t and len(t) <= 12:
         out.append(("WARN", "「这下看懂了」后面要跟看懂的是什么"))
 
-    if not re.search(r"\d", t):
-        out.append(("WARN", "没有数字：加一个具体数（血/伤/回合）"))
+    if re.search(r"(?:HP|血量?|血条)\s*\d|[0-9]+\s*/\s*[0-9]+\s*(?:血|HP)|我\s*[0-9]+\s*血", t, re.I):
+        out.append(("WARN", "别念血条：说「挡不挡得住/会不会死」，血只在要死时提一句"))
+    sighs = len(re.findall(r"唉|哎|呜|唔", t))
+    if sighs > 1:
+        out.append(("WARN", f"叹气 {sighs} 次：一屏一个就够"))
+    if not re.search(r"\d", t) and not re.search(r"唉|哎|呜|唔|……|\.\.\.", t):
+        out.append(("WARN", "没有数字也没有情绪：加一个具体伤害/回合，或一句带语气的人话"))
 
     return out
 

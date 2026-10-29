@@ -561,6 +561,40 @@ def _combat_pass_required(state: dict) -> bool:
     return "play_card" not in acts and "end_turn" in acts
 
 
+_COMBAT_BARKS = (
+    ("先算账，再摸牌。", "数学爬塔。"),
+    ("这波我算过了。", "稳一点稳一点。"),
+    ("认真打，A10 不让的。", "别抖。"),
+    ("出牌出牌。", "打得好看点。"),
+    ("嗨呀，又到我表演了。", "别演砸。"),
+)
+
+
+def _combat_bark(plan: dict, state: dict) -> tuple[str, str]:
+    """本地兜底战斗台词：报局面，不报血条。
+
+    旧模板是 ``它 {incoming}，这手打 {dmg}``：每回合把血量和伤害念一遍，
+    观众听着像报账（实机反馈「讲话总是播报 hp」）。现在只在真会死/斩杀/残血
+    时给一句有情绪的人话，其余交给日常口癖，并且每回合都尽量换一句。
+    """
+    run = state.get("run") or {}
+    combat = state.get("combat") or {}
+    player = combat.get("player") or {}
+    hp = _num(player.get("current_hp", run.get("current_hp", run.get("hp"))))
+    max_hp = _num(player.get("max_hp", run.get("max_hp")), 1) or 1
+    incoming = _num(plan.get("incoming"), 0)
+    kills = _num(plan.get("kills"), 0)
+    low = 0 < hp * 100 <= max_hp * 30
+    if kills:
+        return "刚好够，收工。", "一分不多。"
+    if 0 < hp <= incoming:
+        return "唉……这一下没挡住就没了。", "先挡，别慌。"
+    if low:
+        return "唔……血不多了，稳着来。", "再撑两回合。"
+    turn = _num(state.get("turn") or combat.get("turn"), 0)
+    return _COMBAT_BARKS[turn % len(_COMBAT_BARKS)]
+
+
 def _combat_local(sts2, advisor, state: dict) -> str:
     acts = set(_acts(state))
     if _combat_pass_required(state):
@@ -576,13 +610,7 @@ def _combat_local(sts2, advisor, state: dict) -> str:
     except Exception as exc:  # noqa: BLE001
         _log("advisor_failed", error=f"{type(exc).__name__}: {exc}")
     if plan and plan.get("steps"):
-        thought = ""
-        meme = ""
-        if int(state.get("turn") or 0) % 3 == 1:
-            thought = (f"它 {plan.get('incoming', 0)}，这手打 {plan.get('dmg', 0)}"
-                       if plan.get("incoming") else f"这手打 {plan.get('dmg', 0)} 点")
-            cands = advisor.candidates(plan)
-            meme = cands[0] if cands else ""
+        thought, meme = _combat_bark(plan, state)
         spec = advisor.spec_from_plan(plan, thought, meme)
         _remember_speech(" ".join(x for x in (thought, meme) if x))
         try:

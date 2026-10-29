@@ -29,7 +29,13 @@ DEFAULTS = {
     "volume": 0.55,
     "cut_punc": "，。？！；：、…,.;?!",
     "ref_wav": "",
+    # 叹气/拖音的台词读慢一点：GPT-SoVITS 的语速是按请求传的，0.9~0.95
+    # 就能把「唉……」读得很软，观众听着像有感情（实机反馈）。
+    "sigh_speed": 0.94,
 }
+
+# 台词里出现这些标记 → 当成“软一点”的语气。
+SIGH_MARKS = ("唉", "哎", "呜", "唔", "……", "...")
 
 
 def _load_config(path: Path | None) -> dict:
@@ -93,11 +99,22 @@ class MamboVoice:
             return False
 
     # ---------------------------------------------------------------- 合成
-    def _post(self, text: str, volume: float) -> bytes | None:
+    def _delivery(self, text: str) -> tuple[float, str]:
+        """这句要不要读软一点；返回 (语速倍率, 缓存盐)。
+
+        曼波语音支持有感情的声音：`唉……`、`唔`、拖音会被读得更轻更慢。
+        同一句在不同语速下是不同的 WAV，所以缓存 salt 要跟着语气走。
+        """
+        if any(mark in (text or "") for mark in SIGH_MARKS):
+            return float(self.cfg.get("sigh_speed") or 0.94), "soft"
+        return 1.0, ""
+
+    def _post(self, text: str, volume: float, speed: float = 1.0) -> bytes | None:
         payload = {
             "text": text,
             "text_language": self.cfg.get("text_language", "zh"),
-            "speed": self.speed,
+            # 语速是逐次请求参数：叹气句慢一点，普通句用配置文件里的 speed。
+            "speed": round(float(self.speed) * float(speed), 3),
             "cut_punc": self.cfg.get("cut_punc", ""),
         }
         if self.ref_wav:
@@ -139,14 +156,17 @@ class MamboVoice:
         if not text:
             return VoiceResult(voice=self.name, error="空台词")
         vol = self.volume if volume is None else volume
-        cached = read_cache(self.cache_dir, text)
+        speed, salt = self._delivery(text)
+        cached = read_cache(self.cache_dir, text, salt)
         if cached:
             return VoiceResult(wav=wav_gain(cached, vol), voice=self.name, cached=True,
                                duration=wav_duration(cached))
-        raw = self._post(text, 1.0)
+        raw = self._post(text, 1.0, speed)
         if not raw:
             return VoiceResult(voice=self.name, error=f"引擎无响应（{self.url}）")
-        write_cache(self.cache_dir, text, raw)
+        write_cache(self.cache_dir, text, raw, salt)
+        with self._lock:
+            self._stat["last_mood"] = salt or "normal"
         return VoiceResult(wav=wav_gain(raw, vol), voice=self.name,
                            duration=wav_duration(raw))
 
@@ -161,6 +181,7 @@ class MamboVoice:
             "url": self.url,
             "ref_wav": bool(self.ref_wav),
             "speed": self.speed,
+            "sigh_speed": self.cfg.get("sigh_speed", 0.94),
             "volume": self.volume,
             "cache": str(self.cache_dir),
             **stat,

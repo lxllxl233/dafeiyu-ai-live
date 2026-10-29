@@ -22,7 +22,7 @@ python tools/act.py --file tmp_plan.json    # 执行seq，回下回合ctx
 
 - `c`：`card_id`，不写下标；升级写STRIKE_IRONCLAD+；同名多张默认最便宜/最强。`t`：敌下标，可省（默认最威胁活怪）。`p`：药水槽，targeted必须给t。
 - `end`：最后一步；不写 `end` =打到一半就停，回mid:1，抽牌后读ctx。
-- `say`：1–3句，第一句随本回合播、其余排队，写法见 `games/slay-the-spire-2/persona/speech.md`。`fx`：可选自报账，e/hp/take硬校验，不符整手不打；报错时err给实际值，照抄重发。
+- `say`：1–2句，第一句随本回合播；**别念血条**，数字只给伤害/价格/斩杀线，写法见 `games/slay-the-spire-2/persona/speech.md`。`fx`：可选自报账，e/hp/take硬校验，不符整手不打；报错时err给实际值，照抄重发。
 - 省请求：杂怪（非精英/Boss、血安全）加{"auto":{"turns":3,"stop_hp":40}}本地连打，血线到/战斗结束/进选牌停；一场1请求。
 - {"ok":false,...}：一张没打或打一半STOP；用返回 `ctx` 改 `seq` 重发，绝不自补 `end_turn`。
 - 护栏（`act` 硬拦）：①漏斩=有可校验全斩线却没斩；②漏费=结束还剩能量且手牌能打。按 `err` 改 `seq`；确认换血/留费，`plan` 顶层写{"allow_take":1}/{"allow_leftover":1}/{"allow_no_lethal":1}并说理由。

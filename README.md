@@ -548,7 +548,7 @@ python tools/release_check.py      # 发布门禁：版本 + 单测 + 文档 + �
 - CI 在 `.github/workflows/ci.yml`，跑 `python tools/release_check.py --ci`；
 - `tools/` 的兼容 shim 还在观察期，映射和退役条件见 [tools/README.md](tools/README.md)。
 
-当前版本 **2.2.1**：新增第二游戏 `toy-duel`、跨游戏一致性门禁和发布门禁；
+当前版本 **2.2.2**：新增第二游戏 `toy-duel`、跨游戏一致性门禁和发布门禁；
 STS2 实机验收记录是 `recordings/slay-the-spire-2/run-0108/`。
 
 ---

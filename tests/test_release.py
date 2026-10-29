@@ -11,12 +11,12 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def test_release_versions_are_synced():
     info = release_check.version_info()
-    assert info["expected"] == "2.2.1"
+    assert info["expected"] == "2.2.2"
     assert info["package"] == info["expected"]
     assert info["pyproject"] == info["expected"]
     assert info["game"] == info["expected"]
     assert info["readme"] == "2.2"
-    assert "2.2.1" in info["changelog"]
+    assert "2.2.2" in info["changelog"]
     assert release_check.version_issues(info) == []
 
 

@@ -85,16 +85,17 @@ def wav_gain(data: bytes, volume: float) -> bytes:
     return buf.getvalue()
 
 
-def cache_key(text: str) -> str:
-    return hashlib.sha1((text or "").strip().encode("utf-8")).hexdigest()[:20]
+def cache_key(text: str, salt: str = "") -> str:
+    raw = (text or "").strip() + ("\x00" + salt if salt else "")
+    return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:20]
 
 
-def cache_path(cache_dir: str | os.PathLike[str], text: str) -> Path:
-    return Path(cache_dir) / (cache_key(text) + ".wav")
+def cache_path(cache_dir: str | os.PathLike[str], text: str, salt: str = "") -> Path:
+    return Path(cache_dir) / (cache_key(text, salt) + ".wav")
 
 
-def read_cache(cache_dir: str | os.PathLike[str], text: str) -> bytes | None:
-    path = cache_path(cache_dir, text)
+def read_cache(cache_dir: str | os.PathLike[str], text: str, salt: str = "") -> bytes | None:
+    path = cache_path(cache_dir, text, salt)
     try:
         data = path.read_bytes()
     except OSError:
@@ -102,11 +103,12 @@ def read_cache(cache_dir: str | os.PathLike[str], text: str) -> bytes | None:
     return data if is_wav(data) else None
 
 
-def write_cache(cache_dir: str | os.PathLike[str], text: str, data: bytes) -> None:
+def write_cache(cache_dir: str | os.PathLike[str], text: str, data: bytes,
+                salt: str = "") -> None:
     if not is_wav(data):
         return
     try:
-        path = cache_path(cache_dir, text)
+        path = cache_path(cache_dir, text, salt)
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_suffix(".wav.tmp")
         tmp.write_bytes(data)
