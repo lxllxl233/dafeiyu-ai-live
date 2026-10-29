@@ -340,6 +340,58 @@ def test_screen_llm_invalid_plan_is_asked_again():
     assert "不能执行" in calls[1]
 
 
+def test_blind_deck_multi_select_skips_llm_and_does_not_click():
+    """run-0113：删牌多选屏只有 pending，模型点了 1332 次、烧 530 万 token。
+
+    识别出「min/max 都是 0 的多选」后不再问模型，也不空点，直接标成 ui wait
+    交给卡住守卫（守卫会先尝试自动回滚）。
+    """
+    called = []
+
+    class _Planner:
+        def plan(self, *a, **k):
+            called.append(1)
+            return {"ok": True, "plan": {"act": "select_deck_card", "i": 0}}
+
+    state = {"screen": "CARD_SELECTION", "available_actions": ["select_deck_card"],
+             "selection": {"prompt": "选择 2 张牌来移除", "min_select": 0,
+                           "max_select": 0,
+                           "cards": [{"card_id": f"C{i}", "name": f"牌{i}"}
+                                     for i in range(10)]}}
+    fake = _FakeSts2([state])
+    last = play._one_step(fake, None, state, mode="llm", llm_tools=object(),
+                          llm_planner=object(), screen_planner=_Planner(),
+                          game=play.GAME_ID)
+    assert called == []
+    # 本地只点一次就停手等卡住守卫（不会再点 1000 多次）
+    assert last == "CARD select 1/2"
+    assert fake.calls == [("select_deck_card", {"option_index": 0})]
+
+
+def test_repeated_same_card_click_counts_as_stall():
+    same = play._stall_key("CARD_SELECTION", "CARD_SELECTION select_deck_card 0")
+    other = play._stall_key("CARD_SELECTION", "CARD_SELECTION select_deck_card 1")
+    assert same is not None and same != other
+
+
+def test_blind_selection_rolls_back_only_once(monkeypatch):
+    monkeypatch.setattr(play, "_rollback_tried", False)
+    state = {"screen": "CARD_SELECTION",
+             "selection": {"prompt": "选择 2 张牌来移除"}}
+    fake = _FakeSts2([state])
+    assert play._recover_blind_screen(fake, state, "CARD ui wait 2") is True
+    assert fake.calls == [("save_and_quit", {})]
+    assert play._recover_blind_screen(fake, state, "CARD ui wait 2") is False
+    assert len(fake.calls) == 1
+
+
+def test_recover_does_not_trigger_on_unrelated_screens(monkeypatch):
+    monkeypatch.setattr(play, "_rollback_tried", False)
+    fake = _FakeSts2([{"screen": "SHOP"}])
+    assert play._recover_blind_screen(fake, {"screen": "SHOP"}, "SHOP buy_card 0") is False
+    assert fake.calls == []
+
+
 def test_unknown_screen_does_not_guess_a_button():
     state = {"screen": "SOMETHING_NEW", "available_actions": ["proceed", "confirm"]}
     fake = _FakeSts2([state])
@@ -446,8 +498,10 @@ def test_stall_key_groups_the_same_failure_across_screens():
 
 def test_stall_key_catches_selection_and_wait_loops():
     # 选牌选够但没确认按钮、主菜单没动作：原来不算卡住，会一直转到 5000 步
-    assert play._stall_key("CARD_SELECTION", "CARD wait 2/2") == ("CARD_SELECTION", "CARD")
-    assert play._stall_key("CARD_SELECTION", "CARD ui wait 2") == ("CARD_SELECTION", "CARD")
+    assert play._stall_key("CARD_SELECTION", "CARD wait 2/2") == ("CARD_SELECTION", "CARD wait 2/2")
+    assert play._stall_key("CARD_SELECTION", "CARD ui wait 2") == ("CARD_SELECTION", "CARD ui wait 2")
+    assert play._stall_key("CARD_SELECTION", "CARD select 1/2") == ("CARD_SELECTION", "CARD select 1/2")
+    assert play._stall_key("CARD_SELECTION", "CARD select 2/2") != ("CARD_SELECTION", "CARD select 1/2")
     assert play._stall_key("MAIN_MENU", "WAIT_MAIN_MENU") == ("MAIN_MENU", "WAIT_MAIN_MENU")
 
 

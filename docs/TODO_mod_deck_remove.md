@@ -24,5 +24,11 @@ mod 里 `select_deck_card` 的点击路径大概只接了「手牌/奖励三选�
 4. 加自测：用「松动羊毛剪」跑一遍，断言 `deck` 张数 −2。
 
 **临时绕过（已写进 LESSONS.md / SKILL.md）**
-- 遇到会打开「从牌组移除 N 张」的选项，**不要选**；
+- 遇到会打开「从牌组移除 N 张」的选项，**不要选**（`NONCOMBAT_PROMPT` 已写明）；
 - 已经卡住：`python tools/sts2.py do save_and_quit` → `python tools/sts2.py do continue_run`，会回滚到该选项之前。
+
+**已自动化的部分（2026-10-29，run-0113 复盘）**
+- 识别「min/max 都是 0 的多选」：不再问 LLM（模型点是空操作，一晚烧了 530 万 token），
+  直接走本地；本地点一次没进展就由卡住守卫判定，**自动 `save_and_quit` 一次**
+  （`runner._recover_blind_screen`），主菜单再 `continue_run` 回滚。
+- `CARD ...` 返回串重复（同一张牌反复点）现在算卡住，不会再转 1000+ 步。

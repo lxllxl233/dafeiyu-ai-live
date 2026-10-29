@@ -15,6 +15,15 @@
 
 ### Fixed
 
+- **删牌多选屏空转一晚上（run-0113）**：涅奥「移除 2 张牌」把游戏带进
+  `CARD_SELECTION`，mod 的 `select_deck_card` 只回 `pending`、`selected_count`
+  永远 0；LLM 每 13 秒回一次「选牌 select_deck_card 0」，从 03:51 卡到 09:58，
+  **1332 步、烧掉 530 万 token**（占整局 82%）。三处修：
+  ① `_stall_key` 现在把重复的 `CARD ...` 返回串算作没进展（真正选上牌时串会变）；
+  ② 识别「min/max 都是 0 的牌组多选」后不再问 LLM，直接本地处理，点一次没进展
+  就交给守卫；
+  ③ 守卫判定卡住时**自动 `save_and_quit` 一次**并从主菜单 `continue_run` 回滚
+  （文档里的临时绕过），仍卡住才收手。`NONCOMBAT_PROMPT` 同时写明这类选项别选。
 - **无人值守连播的加固**（睡觉前检查）：
   ① `LLMPlanner` 对超时/连接重置/429/5xx 退避重试 3 次（1.2s、2.4s），401/403
   不重试并提示 Key 失效；坏 JSON 重试时把第一次的 token 也并进账单；

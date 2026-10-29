@@ -835,9 +835,16 @@ def _one_step(sts2, advisor, state: dict, *, mode: str = "local",
         return _combat(sts2, advisor, state, mode=mode, llm_tools=llm_tools,
                        llm_planner=llm_planner, game=game)
     if mode == "llm" and screen_planner is not None and screen in LLM_SCREENS:
-        out = _screen_llm(sts2, screen_planner, state, screen)
-        if out:
-            return out
+        # 牌组多选（「选择 N 张牌来移除/升级」）是 mod 的已知 blocker：点击只回
+        # pending，selected_count 永远 0。让模型点只会把一句话重复上千遍
+        # （run-0113 一晚烧掉 530 万 token），直接走本地：先试一次 UI 坐标点选，
+        # 不行就交给卡住守卫回滚。
+        if screen == "CARD_SELECTION" and _blind_selection(state.get("selection") or {}):
+            _log("blind_selection_local", need=_selection_need(state.get("selection") or {}))
+        else:
+            out = _screen_llm(sts2, screen_planner, state, screen)
+            if out:
+                return out
     if screen == "REWARD":
         return _reward(sts2, state)
     if screen == "CARD_SELECTION":
@@ -883,9 +890,15 @@ def _stall_key(screen: str, last: str) -> tuple[str, str] | None:
         return (screen, "ERROR " + _error_code(last))
     if last in _NO_PROGRESS:
         return (screen, last)
-    # 选牌界面在「已选够但没出现确认按钮」时会一直回 CARD wait N/N；
-    # 主菜单/选角色没有可用动作时回 WAIT_*。这两类原来不算卡住，会一直转到 5000 步。
-    if last.startswith(("CARD wait", "CARD ui wait", "WAIT_")):
+    if last.startswith("CARD "):
+        # 选牌/奖励/确认都会回 "CARD ..."：字符串一模一样说明界面没变。
+        # 真正有进展时 selected 变化，串也不同（比如 1/2 → 2/2），不会误判。
+        return (screen, last)
+    if last.startswith(("CARD_SELECTION select_deck_card",
+                        "CARD_SELECTION choose_reward_card")):
+        # 模型点同一张牌：界面没变（换了牌下标就不同，不会累计）。
+        return (screen, last)
+    if last.startswith("WAIT_"):
         return (screen, last.split(" ", 1)[0])
     return None
 
@@ -911,6 +924,29 @@ class _StallGuard:
 
     def clear(self) -> None:
         self.key, self.hits = None, 0
+
+
+# 「从牌组移除 N 张」是 mod 的已知 blocker（docs/TODO_mod_deck_remove.md）：
+# 卡住时按文档里的临时绕过自动回滚一次——save_and_quit → 主菜单 → continue_run。
+_rollback_tried = False
+
+
+def _recover_blind_screen(sts2, state: dict, last: str) -> bool:
+    """多选卡死时回滚一次；返回 True 表示已经回滚，主循环应重读局面继续。"""
+    global _rollback_tried
+    if _rollback_tried or not str(last).startswith("CARD ui wait"):
+        return False
+    _rollback_tried = True
+    prompt = str((state.get("selection") or {}).get("prompt") or "")[:60]
+    try:
+        sts2.act("save_and_quit")
+    except Exception as exc:  # noqa: BLE001
+        _log("blind_recover_failed", error=f"{type(exc).__name__}: {exc}",
+             prompt=prompt)
+        return False
+    _log("blind_recover", prompt=prompt, last=last)
+    _write_status(last="删牌界面卡死，回滚重开…", error="")
+    return True
 
 
 # ---------------------------------------------------------------- 循环
@@ -945,7 +981,8 @@ def _wait_game(sts2, timeout: float = 120.0) -> dict | None:
 
 
 def _run(game: str, mode: str = "local") -> None:
-    global _thread, _speech_until
+    global _thread, _speech_until, _rollback_tried
+    _rollback_tried = False
     sts2 = advisor = llm_tools = llm_planner = screen_planner = None
     try:
         sts2, advisor = _import_tools()
@@ -1130,6 +1167,12 @@ def _run(game: str, mode: str = "local") -> None:
             if key is None:
                 guard.clear()
             elif guard.hit(key) >= guard.limit:
+                if _recover_blind_screen(sts2, state, last):
+                    # 已 save_and_quit，下一轮在主菜单走 continue_run 回滚。
+                    guard.clear()
+                    _log("blind_recover_wait", last=last)
+                    time.sleep(2.0)
+                    continue
                 _write_status(error=f"界面没有进展：{last}",
                               last="界面卡住，正在收尾…", stopping=True)
                 _log("stalled", last=last, screen=_screen(state), hits=guard.hits)
