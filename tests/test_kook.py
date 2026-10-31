@@ -56,6 +56,33 @@ def test_client_uses_direct_message_for_person():
     assert calls[1][1] == "/message/create"
 
 
+def test_service_replies_to_private_author_not_self(tmp_path):
+    class Client:
+        def __init__(self):
+            self.sent = []
+
+        def send_text(self, target_id, text, **kw):
+            self.sent.append((target_id, text, kw))
+            return {"ok": True}
+
+    class LLM:
+        def complete(self, messages, model=None):
+            return {"ok": True, "text": '{"reply": "收到", "voice": false}'}
+
+    cfg = LiveConfig(kook_memory=False, kook_allow_voice=False, kook_stickers=False)
+    client = Client()
+    service = KookService(cfg, None, client, llm=LLM(),
+                          work_dir=tmp_path, log_path=tmp_path / "events.jsonl")
+    # KOOK 私聊事件的 target_id 是机器人自己；回复必须用 author_id。
+    out = service.handle(Inbound(message_id="m1", target_id="bot-1",
+                                 channel_type="PERSON", author_id="u1",
+                                 msg_type=1, text="在吗"))
+    assert out["ok"] is True
+    assert client.sent and client.sent[0][0] == "u1"
+    assert client.sent[0][2]["channel_type"] == "PERSON"
+    assert service._last_target == "u1"
+
+
 def test_parse_event_reads_image_card():
     card = [{"type": "card", "modules": [
         {"type": "container", "elements": [

@@ -90,6 +90,7 @@ python main.py kook           # 常驻；Ctrl+C 停止
 | 机器人不在服务器 | 重新打开「邀请链接」并确认权限，把机器人邀请进服务器 |
 | 发消息没反应 | 看 `logs/kook/events.jsonl` 是否有 `event_received`；没有就是没收到事件（邀请/权限/频道） |
 | 有 `event_received` 但没有 `reply` | 看 `llm_error` / `send_error`；检查模型 Key 或机器人发送权限 |
+| 私信没反应 / 报“不能是自己” | 私聊事件的 `target_id` 是机器人自己；服务已改为回发送者 `author_id`。确认已重启 KOOK 服务，并看 `send_error` 是否还有 `40000` |
 | 发图片没反应 | 看 `events.jsonl` 是否有 `msg_type: 2` 或 `10`；网页端粘贴图片是卡片，服务会从卡片里取图 |
 | 有 `image_error` | 图片下载失败（外链过期/格式不支持）；重新发一张 PNG/JPG |
 | 没有语音 | 设置页「KOOK → 允许语音回复」是否打开；看 `voice_sent` / `voice_error`，TTS 引擎没起会自动回退动物语；`voice_sent.codec` 应为 `mp3`（没装 `lameenc` 时回退 `wav`） |

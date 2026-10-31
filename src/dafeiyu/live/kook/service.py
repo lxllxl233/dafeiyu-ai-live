@@ -3,8 +3,10 @@
     python main.py kook            # 常驻
     python main.py kook --check    # 只自检配置/网关，不进入消息循环
 
-只用纯出站 WebSocket，不需要公网 IP。KOOK 的频道消息和私信都支持；默认把
-收到消息的 ``target_id`` 原样回过去：GROUP 是频道 id，PERSON 是用户 id。
+只用纯出站 WebSocket，不需要公网 IP。KOOK 的频道消息和私信都支持。
+频道消息的 ``target_id`` 是频道 id；私聊事件的 ``target_id`` 是机器人自己，
+回复时必须用发送者 ``author_id`` 走 ``direct-message/create``，否则平台会报
+“不能是自己”。
 """
 
 from __future__ import annotations
@@ -367,8 +369,12 @@ class KookService:
         target = str(self._last_target or "")
         if not target:
             return False
+        channel_type = self._last_channel_type or "GROUP"
+        # 私聊的 Inbound.target_id 只作展示/兜底；真正发给谁由 _reply_target 决定。
+        # 主动消息没有入站作者，私聊时把 target 同时放进 author_id。
         msg = Inbound(target_id=target,
-                      channel_type=self._last_channel_type or "GROUP")
+                      channel_type=channel_type,
+                      author_id=target if str(channel_type).upper() == "PERSON" else "")
         started = time.time()
         try:
             messages = self._build_messages(
@@ -442,7 +448,7 @@ class KookService:
             self._handle_memory_command(msg.text)
 
         # 记住最近聊过的地方，给「偶尔主动发消息」用。
-        self._last_target = msg.target_id
+        self._last_target = self._reply_target(msg)
         self._last_channel_type = msg.channel_type
         self._last_active_at = time.time()
         self._proactive_armed = True
@@ -510,12 +516,19 @@ class KookService:
         return {"ok": bool(sent), "action": "+".join(actions), "reply": text,
                 "texts": texts, "voice": voice_ok, "sticker": sticker_ok}
 
+    @staticmethod
+    def _reply_target(msg: Inbound) -> str:
+        """频道回频道 id；私聊只回发送者，不能回 ``target_id``（那是机器人自己）。"""
+        if str(msg.channel_type or "").upper() == "PERSON":
+            return str(msg.author_id or msg.target_id or "")
+        return str(msg.target_id or msg.author_id or "")
+
     def _filter(self, msg: Inbound) -> str:
         if msg.author_bot:
             return "机器人自己发的"
         if msg.channel_type not in ("GROUP", "PERSON"):
             return "只处理频道/私聊"
-        if not msg.target_id:
+        if not self._reply_target(msg):
             return "没有 target_id"
         if not msg.text and not msg.image_url:
             return "只接文字/图片消息"
@@ -573,12 +586,13 @@ class KookService:
             return False
         ok = True
         first = True
+        target = self._reply_target(msg)
         for body in parts:
             for chunk in chat_mod.split_message(body):
                 quote = msg.message_id if first else ""
                 try:
                     self.client.send_text(
-                        msg.target_id, chunk, channel_type=msg.channel_type,
+                        target, chunk, channel_type=msg.channel_type,
                         quote=quote, reply_msg_id=quote)
                 except Exception as exc:  # noqa: BLE001
                     ok = False
@@ -647,7 +661,8 @@ class KookService:
             if result.duration:
                 title += f" · {result.duration:.1f}s"
             self.client.send_audio_card(
-                msg.target_id, url, channel_type=msg.channel_type, title=title)
+                self._reply_target(msg), url, channel_type=msg.channel_type,
+                title=title)
             self._log({"kind": "voice_sent", "voice": result.voice,
                        "codec": codec, "bytes": len(data),
                        "duration": round(result.duration, 2)})
@@ -668,7 +683,7 @@ class KookService:
         try:
             data = path.read_bytes()
             url = self.client.upload_asset(data, path.name, "image/png")
-            self.client.send_image(msg.target_id, url,
+            self.client.send_image(self._reply_target(msg), url,
                                    channel_type=msg.channel_type)
             self._log({"kind": "sticker_sent", "sticker": sticker_id})
             return True
@@ -771,7 +786,7 @@ class KookService:
     def _log_usage(self, result: dict, note: str, msg: Inbound | None = None) -> None:
         append_usage(result, note, path=self.work_dir / "usage.jsonl",
                      msg_id=msg.message_id if msg else "",
-                     target_id=msg.target_id if msg else "")
+                     target_id=self._reply_target(msg) if msg else "")
 
 
 # ---------------------------------------------------------------- 运行

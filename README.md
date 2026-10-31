@@ -536,7 +536,7 @@ dafeiyu-ai-live/
 ## 测试与发布
 
 ```powershell
-python -m pytest -q tests          # 596 项：总线 / 性格 / 语音 / 游戏 / 插件 / Agent / 自动玩 / 录像 / B站 / KOOK / 发布
+python -m pytest -q tests          # 597 项：总线 / 性格 / 语音 / 游戏 / 插件 / Agent / 自动玩 / 录像 / B站 / KOOK / 发布
 python tools/test_ctx_act.py       # 决策层：ctx + act（离线）
 python tools/test_streamer.py      # 桌宠渲染 / 透明 / 换行 / 配音
 python tools/test_overlay_playback.py
