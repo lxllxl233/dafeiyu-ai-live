@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+- **KOOK 私信图片修复**：私聊图片的 WebSocket 事件有时只带“有图”却拿不到可用
+  URL；服务现在按 `msg_id` 从 `/direct-message/list` 补全再交给视觉模型。系统提示词
+  也明确“现在能看图”，避免模型沿用之前说过的“看不了图/图片不行”。补了回归测试。
 - **KOOK 私信修复**：私聊事件的 `target_id` 是机器人自己，原来直接拿来回发会报
   `40000: 不能是自己`；现在频道仍回 `target_id`，私聊改回发送者 `author_id` 并走
   `direct-message/create`，主动私信也记住用户 id。补了私聊回归测试。

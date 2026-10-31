@@ -429,6 +429,10 @@ class KookService:
 
     # ---------------------------------------------------------------- 主流程
     def handle(self, msg: Inbound) -> dict:
+        # 私信图片的 WebSocket 事件有时只带“有图”却不带可用 URL；按 msg_id
+        # 从 /direct-message/list 取一次权威内容再走视觉，频道图片仍走原样。
+        if msg.channel_type == "PERSON" and msg.msg_type in (2, 10):
+            self._refresh_private_image(msg)
         skip = self._filter(msg)
         if skip:
             self._log({"kind": "skip", "reason": skip, "author_id": msg.author_id})
@@ -523,6 +527,27 @@ class KookService:
             return str(msg.author_id or msg.target_id or "")
         return str(msg.target_id or msg.author_id or "")
 
+    def _refresh_private_image(self, msg: Inbound) -> None:
+        """私聊图片事件缺 URL 时，用 direct-message/list 按 msg_id 补全。"""
+        if not msg.author_id or not msg.message_id:
+            return
+        try:
+            items = self.client.direct_messages(msg.author_id, 30)
+        except Exception as exc:  # noqa: BLE001 - 补全失败仍可尝试原事件
+            self._log({"kind": "image_refresh_error",
+                       "error": f"{type(exc).__name__}: {exc}"})
+            return
+        for item in items:
+            item_id = str(item.get("id") or item.get("msg_id") or "")
+            if item_id != msg.message_id:
+                continue
+            fresh = inbound_from_message(item, msg.author_id, "PERSON")
+            if fresh and fresh.image_url:
+                msg.image_url = fresh.image_url
+                msg.image_name = fresh.image_name or msg.image_name
+                self._log({"kind": "image_refreshed"})
+            return
+
     def _filter(self, msg: Inbound) -> str:
         if msg.author_bot:
             return "机器人自己发的"
@@ -569,7 +594,8 @@ class KookService:
         if image_url:
             data, mime = self.client.download(image_url)
             messages.append(chat_mod.image_message(
-                caption or "看看这张图，说说你看到了什么。", data, mime))
+                caption or "（对方发来一张图。直接看图片内容回答，不要声称看不到图。）",
+                data, mime))
         elif proactive:
             messages.append({"role": "user",
                              "content": chat_mod.build_proactive_prompt(idle_minutes)})

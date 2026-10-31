@@ -37,8 +37,9 @@ python main.py kook           # 常驻；Ctrl+C 停止
 
 - 在频道里 @ 机器人，或直接私聊机器人；
 - 文本和 KMarkdown 都会处理，`(met)...(met)` 提及会被清掉；
-- **图片**：直接发图片，或用网页端粘贴/拖拽（会变成卡片消息）；服务会把图片下载给
-  `llm_vision_model` 看，再回复看到的内容；
+- **图片**：直接发图片，或用网页端粘贴/拖拽（会变成卡片消息）；服务会下载给
+  `llm_vision_model` 看，再回复看到的内容；私聊图片事件偶尔不带可用 URL，服务会按
+  `msg_id` 从 `/direct-message/list` 补全后再看图；
 - **多条回复**：模型可以一次给 1–3 条短消息（像真人连发），服务按顺序逐条发；
   文字只引用原消息的第一条，不会把三条拼成一大段；
 - **主动消息**：安静一阵后，偶尔主动找最近聊过的频道/私聊说一句；默认开，
@@ -91,7 +92,7 @@ python main.py kook           # 常驻；Ctrl+C 停止
 | 发消息没反应 | 看 `logs/kook/events.jsonl` 是否有 `event_received`；没有就是没收到事件（邀请/权限/频道） |
 | 有 `event_received` 但没有 `reply` | 看 `llm_error` / `send_error`；检查模型 Key 或机器人发送权限 |
 | 私信没反应 / 报“不能是自己” | 私聊事件的 `target_id` 是机器人自己；服务已改为回发送者 `author_id`。确认已重启 KOOK 服务，并看 `send_error` 是否还有 `40000` |
-| 发图片没反应 | 看 `events.jsonl` 是否有 `msg_type: 2` 或 `10`；网页端粘贴图片是卡片，服务会从卡片里取图 |
+| 发图片没反应 | 看 `events.jsonl` 是否有 `msg_type: 2` 或 `10`；网页端粘贴图片是卡片，服务会从卡片里取图；私聊还会用 `direct-message/list` 按 `msg_id` 补 URL |
 | 有 `image_error` | 图片下载失败（外链过期/格式不支持）；重新发一张 PNG/JPG |
 | 没有语音 | 设置页「KOOK → 允许语音回复」是否打开；看 `voice_sent` / `voice_error`，TTS 引擎没起会自动回退动物语；`voice_sent.codec` 应为 `mp3`（没装 `lameenc` 时回退 `wav`） |
 | 手机语音只能听一次 | 这是 KOOK 手机端内嵌音频播放器的重播兼容问题；现在语音已转 MP3 并带「重听」按钮，点按钮用浏览器播放可重复听 |

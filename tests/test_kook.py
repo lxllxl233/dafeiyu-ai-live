@@ -83,6 +83,52 @@ def test_service_replies_to_private_author_not_self(tmp_path):
     assert service._last_target == "u1"
 
 
+def test_service_refreshes_private_image_from_direct_list(tmp_path):
+    class Client:
+        def __init__(self):
+            self.sent = []
+
+        def direct_messages(self, target_id, limit=20):
+            return [{
+                "id": "img1", "type": 2,
+                "content": "https://img.kookapp.cn/private.jpg",
+                "author": {"id": "u1", "username": "小鱼", "bot": False},
+            }]
+
+        def download(self, url, max_bytes=10 * 1024 * 1024):
+            return b"jpeg", "image/jpeg"
+
+        def send_text(self, target_id, text, **kw):
+            self.sent.append((target_id, text, kw))
+            return {"ok": True}
+
+    class LLM:
+        def __init__(self):
+            self.seen = []
+
+        def complete(self, messages, model=None):
+            self.seen = messages
+            return {"ok": True, "text": '{"reply": "看到了", "voice": false}'}
+
+    cfg = LiveConfig(kook_memory=False, kook_allow_voice=False, kook_stickers=False)
+    client = Client()
+    llm = LLM()
+    service = KookService(cfg, None, client, llm=llm,
+                          work_dir=tmp_path, log_path=tmp_path / "events.jsonl")
+    # WebSocket 只给了“有图”没有 URL；服务应查 direct-message/list 补全。
+    out = service.handle(Inbound(message_id="img1", target_id="bot-1",
+                                 channel_type="PERSON", author_id="u1",
+                                 msg_type=2))
+    assert out["ok"] is True
+    user = llm.seen[-1]
+    assert isinstance(user["content"], list)
+    assert any(part.get("type") == "image_url" for part in user["content"])
+    assert client.sent[0][0] == "u1"
+    rows = [json.loads(line) for line in
+            (tmp_path / "events.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert any(row["kind"] == "image_refreshed" for row in rows)
+
+
 def test_parse_event_reads_image_card():
     card = [{"type": "card", "modules": [
         {"type": "container", "elements": [

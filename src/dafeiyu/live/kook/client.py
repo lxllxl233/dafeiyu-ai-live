@@ -89,6 +89,13 @@ class KookClient:
                                   "page_size": max(1, min(int(limit or 20), 50))})
         return [m for m in (data.get("items") or []) if isinstance(m, dict)]
 
+    def direct_messages(self, target_id: str, limit: int = 20) -> list[dict]:
+        """读私聊最近消息；私信图片事件偶尔不带 URL，用它按 msg_id 补。"""
+        data = self._call("GET", "/direct-message/list",
+                          params={"target_id": str(target_id),
+                                  "page_size": max(1, min(int(limit or 20), 50))})
+        return [m for m in (data.get("items") or []) if isinstance(m, dict)]
+
     def _send(self, body: dict, channel_type: str) -> dict:
         path = ("/direct-message/create" if str(channel_type).upper() == "PERSON"
                 else "/message/create")
