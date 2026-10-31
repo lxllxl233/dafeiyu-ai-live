@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import threading
 import time
@@ -17,13 +18,16 @@ from dafeiyu.agent.host import AutoplayHost
 from dafeiyu.core.config import LiveConfig
 
 from .api import BiliClient, BiliError
-from .browser import ChromeBrowser
+from .browser import ChromeBrowser, start_from_zero
 from .cache import Stores
 from .config import CommentaryConfig, load_commentary_config
 from . import control
 from .liker import BiliLiker
 from .live_chat import LiveChatResponder
-from .models import Comment, DanmakuResult, VideoDetail, VideoRef
+from .models import (
+    Comment, DanmakuResult, VideoDetail, VideoProfile, VideoRef,
+    comment_drop_reason, is_big_fish_text, strip_danmaku_word,
+)
 from .persona_watch import PersonaWatch, load_bili_persona
 from .profile import ProfileBuilder, ProfileError
 from .prompts import SEARCH_SYSTEM, commentary_system
@@ -31,11 +35,14 @@ from .search_intent import SearchIntent, SearchIntentPlanner
 from .schedule import (
     CueScheduler, ReplyScheduler, VirtualClock, build_plan,
 )
+from .video_comment import BiliVideoCommenter
 from .select import select_candidates
 from .speaker import OverlaySink, SpeechGate
 
 GAME_ID = "bilibili-hot-commentary"
 DISPLAY_NAME = "B站热门视频云观影"
+# B站历史进度的刷新间隔约 15 秒；连续 30 秒没有前进就认为视频没在播放。
+NOT_PLAYING_AFTER_S = 30.0
 
 _host = AutoplayHost(GAME_ID)
 _lock = _host.lock
@@ -67,6 +74,7 @@ class BiliEngine:
         search: SearchIntentPlanner | None = None,
         browser=None,
         liker=None,
+        commenter=None,
         live_chat=None,
         now=None,
         control_root: str | Path | None = None,
@@ -77,13 +85,24 @@ class BiliEngine:
         self.host = host
         self.config = config
         self.stores = stores or Stores()
-        self.client = client or BiliClient(
-            timeout=8.0, retries=2, logger=self._client_log)
+        if client is None:
+            try:
+                cookie = LiveConfig.load().bilibili_cookie
+            except Exception:
+                cookie = ""
+            self.client = BiliClient(
+                timeout=8.0, retries=2, cookie=cookie,
+                logger=self._client_log,
+            )
+        else:
+            self.client = client
         self._now = now or time.monotonic
         self._wall = time.time
         self._control_root = Path(control_root) if control_root else paths.LOGS
         self._pause_path = self._control_root / "bilibili_commentary.pause"
         self._skip_path = self._control_root / "bilibili_commentary.skip"
+        self._run_lock_path = self._control_root / "bilibili_commentary.run.lock"
+        self._run_lock_fd: int | None = None
         self._config_path = Path(config_path) if config_path else paths.CONFIG_FILE
         self._config_mtime = self._mtime()
         # B 可以经 --game 覆盖启动，此时 config.json 里的 game 仍是别的模式；
@@ -118,9 +137,20 @@ class BiliEngine:
             browser = ChromeBrowser(
                 exe=config.browser_path, logger=self._client_log,
                 windowed=config.browser_window,
+                isolated=config.browser_isolated,
+                profile_dir=(config.browser_profile_dir or
+                             self._control_root / "bilibili_commentary.chrome-profile"),
+                fullscreen=config.browser_fullscreen,
                 monitor=config.browser_monitor,
+                state_path=self._control_root / "bilibili_commentary.chrome.json",
             )
         self.browser = browser
+        adopt = getattr(self.browser, "adopt_legacy_window", None)
+        if callable(adopt):
+            try:
+                adopt(self._control_root / "bilibili_commentary.playlist.json")
+            except Exception:  # noqa: BLE001
+                pass
         if liker is None and config.like_on_watch:
             try:
                 cookie = LiveConfig.load().bilibili_cookie
@@ -129,7 +159,30 @@ class BiliEngine:
             liker = BiliLiker(cookie, logger=self._client_log)
         self.liker = liker
         self._like_skip_logged = False
+        if commenter is None and config.video_comment_enabled:
+            try:
+                cookie = LiveConfig.load().bilibili_cookie
+            except Exception:
+                cookie = ""
+            commenter = BiliVideoCommenter(cookie, logger=self._client_log)
+        elif commenter is False:
+            commenter = None
+        self.commenter = commenter
+        self._comment_skip_logged = False
+        self._comment_inflight = False
+        self._comment_day = ""
+        self._comment_count = 0
+        self._comment_last_at = 0.0
+        self._commented_bvids: set[str] = set()
+        self._comment_state_path = (
+            self._control_root / "bilibili_video_comments.json")
+        self._load_comment_state()
+        self._browser_title_seen = False
+        self._browser_hwnd_seen = False
+        self._browser_newtab_since = 0.0
+        self._history_error_logged = False
         self._live_title = ""
+        self._live_same_fish = False
         self._live_send_skip_logged = False
         self._live_fail_logged = 0.0
         self.live_speech = None
@@ -168,6 +221,9 @@ class BiliEngine:
         self._playlist_current: dict = {}
         self._override_bvid = ""
         self._switching = False
+        # 本轮从“大肥鱼”高播放量轨道拿到的候选。select_candidates 会按
+        # 评分重排，这里记住 bvid，准备时把过关的大肥鱼提到第一条。
+        self._priority_bvids: set[str] = set()
 
     # ---------------------------------------------------------------- 基础 I/O
     def _client_log(self, text: str) -> None:
@@ -190,7 +246,11 @@ class BiliEngine:
 
     # ---------------------------------------------------------------- 直播弹幕
     def _live_context(self) -> dict:
-        return {"current_video": {"title": self._live_title[:120]}}
+        return {"current_video": {
+            "title": self._live_title[:120],
+            "same_fish": bool(self._live_same_fish)
+            or is_big_fish_text(self._live_title),
+        }}
 
     def _live_usage(self, usage: dict) -> None:
         total = 0
@@ -320,10 +380,71 @@ class BiliEngine:
             fields.update({k: v for k, v in extra.items() if k not in fields})
         self._status(**fields)
 
+    def _acquire_run_lock(self) -> bool:
+        """跨进程只允许一个云观影引擎，避免两个进程同时选到同一条。"""
+        try:
+            self._run_lock_path.parent.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            return True  # 锁目录不可写时不让锁阻止启动
+        for _ in range(2):
+            try:
+                fd = os.open(self._run_lock_path,
+                             os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+                os.write(fd, str(os.getpid()).encode("ascii", "ignore"))
+                self._run_lock_fd = fd
+                return True
+            except FileExistsError:
+                try:
+                    owner = int(self._run_lock_path.read_text(
+                        encoding="utf-8").strip() or 0)
+                except (OSError, ValueError):
+                    owner = 0
+                if owner and self.host.pid_alive(owner):
+                    self._log("commentary_already_running", pid=owner)
+                    return False
+                # 进程已死/同进程上一个线程留下的锁，清掉重试。
+                try:
+                    self._run_lock_path.unlink()
+                except OSError:
+                    return False
+        return False
+
+    def _release_run_lock(self) -> None:
+        fd, self._run_lock_fd = self._run_lock_fd, None
+        if fd is not None:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+        try:
+            owner = int(self._run_lock_path.read_text(
+                encoding="utf-8").strip() or 0)
+        except (OSError, ValueError):
+            owner = 0
+        if owner == os.getpid():
+            try:
+                self._run_lock_path.unlink()
+            except OSError:
+                pass
+
     # ---------------------------------------------------------------- 生命周期
     def run(self) -> None:
+        if not self._acquire_run_lock():
+            self._stop_reason = "已有云观影在跑，拒绝重复启动"
+            try:
+                self.host.set_status(
+                    running=False, stopping=False, screen="STOPPED",
+                    game=GAME_ID, last=self._stop_reason, error=self._stop_reason,
+                    speech_busy=False, idle_text="",
+                )
+            except Exception:
+                pass
+            return
         try:
             self._clear_controls()
+            rec = self.host.start_recording(note="云观影") or {}
+            self._log("commentary_record", ok=bool(rec.get("ok")),
+                      path=rec.get("path"), error=rec.get("error"))
             self._status(
                 screen="SELECTING", step=0, last="开始按人设选视频", error="",
                 bvid="", video_title="", position_s=0.0, duration_s=0.0,
@@ -373,6 +494,10 @@ class BiliEngine:
                          error=f"{type(exc).__name__}: {exc}")
         finally:
             try:
+                self.host.stop_recording("live_end")
+            except Exception:
+                pass
+            try:
                 if self.browser is not None and hasattr(self.browser, "close"):
                     self.browser.close()
             except Exception:
@@ -409,6 +534,7 @@ class BiliEngine:
                 )
             except Exception:
                 pass
+            self._release_run_lock()
 
     # ------------------------------------------------ 控制台播放列表/命令
     def _publish_playlist(self, refs=None, *, current=None, state: str = "") -> None:
@@ -527,16 +653,37 @@ class BiliEngine:
         except Exception as exc:  # noqa: BLE001
             self._log("playlist_play_failed", bvid=bvid,
                       error=f"{type(exc).__name__}: {exc}"[:160])
-            return None
+            # 不要因为一次详情接口失败就偷偷改播别的视频；把 bvid 交回
+            # _prepare，让它按用户点播失败给出明确状态。
+            return VideoRef(bvid=bvid)
 
     def _candidate_refs(self) -> list[VideoRef]:
+        self._priority_bvids = set()
         if not self.config.search_enabled or self.search is None:
             return self._popular()
         intent = self._get_intent()
         if intent is None or not intent.keywords:
+            if self._high_view_due():
+                high = self._high_view_refs()
+                enriched_high = self._enrich_search_refs(high) if high else []
+                if enriched_high:
+                    self._priority_bvids = {ref.bvid for ref in enriched_high}
+                    self._log("high_view_candidates", count=len(enriched_high),
+                              step=self._video_count + 1)
+                    return enriched_high
             self._log("search_skipped", reason="没有搜索意图，回退热门")
             return self._popular()
         refs = self._search_videos(intent)
+        high: list[VideoRef] = []
+        if self._high_view_due():
+            high = self._high_view_refs()
+            if high:
+                # 高播放量候选放前面，后面仍保留搞笑候选兜底。
+                high_ids = {ref.bvid for ref in high}
+                self._priority_bvids = high_ids
+                refs = high + [ref for ref in refs if ref.bvid not in high_ids]
+                self._log("high_view_candidates", count=len(high),
+                          step=self._video_count + 1)
         if not refs:
             self._log("search_empty", keywords=list(intent.keywords),
                       reason="搜索结果为空，回退热门")
@@ -574,16 +721,78 @@ class BiliEngine:
         )
         return self._intent
 
-    def _search_blocked(self, *parts: str) -> bool:
-        """标题/简介是否命中当前游戏的排除词；手写关键词时尊重用户覆盖。"""
-        if self._intent is not None and self._intent.source == "config":
-            return False
+    def _text_blocked(self, *parts: str) -> bool:
+        """标题/简介是否命中当前游戏的排除词。"""
         words = [str(word).strip().lower() for word in self.config.search_exclude
                  if str(word).strip()]
         if not words:
             return False
         text = " ".join(str(part or "") for part in parts).lower()
         return any(word in text for word in words)
+
+    def _search_blocked(self, *parts: str) -> bool:
+        """标题/简介是否命中当前游戏的排除词；手写关键词时尊重用户覆盖。"""
+        if self._intent is not None and self._intent.source == "config":
+            return False
+        return self._text_blocked(*parts)
+
+    def _high_view_due(self) -> bool:
+        """按视频计数轮换：每 high_view_every 条安排一条高播放量。"""
+        every = int(self.config.high_view_every or 0)
+        return bool(self.config.high_view_keywords and every > 0
+                    and (self._video_count + 1) % every == 0)
+
+    def _high_view_refs(self) -> list[VideoRef]:
+        """搜索高播放量的“大肥鱼”视频；结果按播放量从高到低。"""
+        words = [str(word).strip()
+                 for word in self.config.high_view_keywords if str(word).strip()]
+        if not words:
+            return []
+        out: list[VideoRef] = []
+        seen: set[str] = set()
+        floor = max(0, int(self.config.high_view_min_view or 0))
+        for keyword in words[:5]:
+            if self._should_stop():
+                break
+            try:
+                rows = self.client.search(
+                    keyword, limit=self.config.search_limit)
+            except BiliError as exc:
+                self._log("high_view_search_failed", keyword=keyword,
+                          error=exc.message[:160])
+                continue
+            for ref in rows:
+                if not ref.bvid or ref.bvid in seen:
+                    continue
+                stat = ref.stat if isinstance(ref.stat, dict) else {}
+                try:
+                    view = int(stat.get("view") or 0)
+                except (TypeError, ValueError):
+                    view = 0
+                if view < floor:
+                    continue
+                if not (self.config.min_duration_s <= ref.duration_s
+                        <= self.config.max_duration_s):
+                    continue
+                # 搜索卡片只有播放量，没有评论数；评论门槛等补详情后由
+                # select_candidates 统一过滤，不能在这里把候选全砍掉。
+                if self._text_blocked(ref.title, ref.desc):
+                    continue
+                # 高播放量榜前面的往往已经看过；在这里先排掉，才能继续从
+                # “大肥鱼 直播/切片”这些补充搜索里找到没刷过的。
+                if self.stores.seen.is_seen(
+                        ref.bvid, self.config.seen_ttl_days):
+                    continue
+                if self.stores.failed.is_failed(ref.bvid):
+                    continue
+                seen.add(ref.bvid)
+                out.append(ref)
+            if len(out) >= 8:
+                break
+        out.sort(key=_ref_view, reverse=True)
+        self._log("high_view_search", keywords=words[:5], floor=floor,
+                  count=len(out))
+        return out
 
     def _search_videos(self, intent: SearchIntent) -> list[VideoRef]:
         out: list[VideoRef] = []
@@ -619,7 +828,9 @@ class BiliEngine:
                 if self.stores.failed.is_failed(ref.bvid, now=self._wall()):
                     continue
                 out.append(ref)
-        return out[:self.config.search_limit]
+        # 以前这里又截了整个列表的 20 条，等于每个关键词只吃前几条；
+        # 现在每个关键词自己限流，保留所有去重后的候选。
+        return out
 
     def _enrich_search_refs(self, refs: list[VideoRef]) -> list[VideoRef]:
         out: list[VideoRef] = []
@@ -635,6 +846,19 @@ class BiliEngine:
             out.append(detail.to_ref())
         return out
 
+    def _forced_profile(self, detail: VideoDetail) -> VideoProfile:
+        """点播兜底档案：LLM 失败也先把视频放起来，开场/收尾由排期补。"""
+        return VideoProfile(
+            bvid=detail.bvid,
+            url=detail.url,
+            title=detail.title,
+            duration_s=max(1, int(detail.duration_s or 0)),
+            owner={"mid": detail.owner_mid, "name": detail.owner_name},
+            confidence={"topic": 0.2, "summary": 0.2, "audience": 0.2,
+                        "timeline": 0.0, "content": 0.0},
+            meta={"forced_fallback": True},
+        )
+
     def _prepare(self, *, exclude_bvid: str = "", quiet: bool = False):
         if not quiet:
             self._apply_control()
@@ -645,7 +869,12 @@ class BiliEngine:
         # 过滤，否则用户点了列表里的视频又会被自动规则弹回去。
         forced = None if quiet else self._take_forced_ref()
         if forced is not None:
-            refs = [forced]
+            self._priority_bvids = set()
+            # 点播只改变“先准备哪一条”，不要把控制台里原有的候选列表
+            # 整个清空；否则刚点完播放，新列表就只剩这一条，大肥鱼也没了。
+            refs = [forced] + [
+                ref for ref in self._playlist_refs
+                if ref.bvid and ref.bvid != forced.bvid]
             videos = [forced]
             self._publish_playlist(refs=refs, state="selecting")
         else:
@@ -664,6 +893,19 @@ class BiliEngine:
                 self._log("commentary_no_candidate", rejected=result.rejected[:8])
                 return None
             videos = [candidate.video for candidate in result.candidates]
+            if self._priority_bvids:
+                # 评分可能把大肥鱼压到第二、第三；用户要的是“多刷大肥鱼”，
+                # 只要它过了已看/失败/评论门槛，本轮就先播它。
+                first = next(
+                    (video for video in videos
+                     if video.bvid in self._priority_bvids), None)
+                if first is not None:
+                    videos = [first] + [video for video in videos
+                                        if video.bvid != first.bvid]
+                    self._log("high_view_selected", bvid=first.bvid,
+                              title=first.title[:80],
+                              step=self._video_count + 1)
+        last_error = ""
         for video in videos[:self.config.max_candidates_per_cycle]:
             if self._should_stop() or self._config_switched():
                 return None
@@ -680,11 +922,28 @@ class BiliEngine:
                     self._log("commentary_excluded", bvid=video.bvid,
                               title=detail.title[:80], reason="search_exclude")
                     continue
-                comments = self._comments(detail)
-                if len(comments) < self.config.min_comments:
+                try:
+                    comments = self._comments(detail)
+                except BiliError as exc:
+                    if forced is None:
+                        raise
+                    comments = []
+                    self._log("forced_comments_skipped", bvid=video.bvid,
+                              error=exc.message[:160])
+                # 用户在控制台点播时，评论少也照播；否则 0 热评视频会被
+                # 门槛挡掉，表现成“点了播放但没反应”。
+                if forced is None and len(comments) < self.config.min_comments:
+                    last_error = f"热评不足（{len(comments)} < {self.config.min_comments}）"
                     self._mark_failed(video.bvid, "热评不足")
                     continue
-                danmaku = self._danmaku(detail)
+                try:
+                    danmaku = self._danmaku(detail)
+                except BiliError as exc:
+                    if forced is None:
+                        raise
+                    danmaku = DanmakuResult(error=exc.message[:160])
+                    self._log("forced_danmaku_skipped", bvid=video.bvid,
+                              error=exc.message[:160])
                 profile, info = self.builder.build(detail, comments, danmaku)
                 usage = (info or {}).get("usage") or {}
                 if usage:
@@ -699,20 +958,33 @@ class BiliEngine:
                     cached=bool((info or {}).get("cached")),
                     cues=len(profile.cues), replies=len(profile.replies),
                     danmaku=len(danmaku.items), partial=danmaku.partial,
+                    same_fish=bool((profile.meta or {}).get("same_fish")),
                     confidence=profile.confidence,
                 )
                 return detail, profile, danmaku, info or {}
             except (BiliError, ProfileError) as exc:
+                last_error = f"{type(exc).__name__}: {exc}"[:160]
+                if forced is not None and isinstance(exc, ProfileError):
+                    profile = self._forced_profile(detail)
+                    self._log("forced_profile_fallback", bvid=video.bvid,
+                              error=str(exc)[:160])
+                    return detail, profile, danmaku, {
+                        "cached": False, "fallback": True}
                 self._mark_failed(video.bvid, str(exc)[:160])
                 self._log("commentary_skip", bvid=video.bvid,
                           error=f"{type(exc).__name__}: {exc}"[:240])
                 continue
             except Exception as exc:  # noqa: BLE001
+                last_error = f"{type(exc).__name__}: {exc}"[:160]
                 self._mark_failed(video.bvid, f"{type(exc).__name__}: {exc}")
                 self._log("commentary_candidate_error", bvid=video.bvid,
                           error=f"{type(exc).__name__}: {exc}"[:240])
                 continue
-        self._stop_reason = "本轮候选全部失败"
+        if forced is not None:
+            self._stop_reason = (
+                f"点播失败：{last_error}" if last_error else "点播失败：没有可用档案")
+        else:
+            self._stop_reason = "本轮候选全部失败"
         return None
 
     def _start_prefetch(self, current_bvid: str) -> None:
@@ -809,6 +1081,216 @@ class BiliEngine:
                       code=int(result.get("code") or 0),
                       error=str(result.get("error") or "")[:160])
 
+    def _load_comment_state(self) -> None:
+        try:
+            raw = json.loads(self._comment_state_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError):
+            return
+        if not isinstance(raw, dict):
+            return
+        day = str(raw.get("date") or "")
+        if day != time.strftime("%Y-%m-%d"):
+            return
+        try:
+            count = max(0, int(raw.get("count") or 0))
+        except (TypeError, ValueError):
+            count = 0
+        try:
+            last_at = max(0.0, float(raw.get("last_at") or 0.0))
+        except (TypeError, ValueError):
+            last_at = 0.0
+        self._comment_day = day
+        self._comment_count = count
+        self._comment_last_at = last_at
+        rows = raw.get("bvids")
+        if isinstance(rows, list):
+            self._commented_bvids = {
+                str(item) for item in rows if str(item).strip()}
+
+    def _save_comment_state(self) -> None:
+        payload = {
+            "date": self._comment_day or time.strftime("%Y-%m-%d"),
+            "count": int(self._comment_count),
+            "last_at": float(self._comment_last_at),
+            "bvids": sorted(self._commented_bvids)[-50:],
+        }
+        try:
+            self._comment_state_path.parent.mkdir(parents=True, exist_ok=True)
+            self._comment_state_path.write_text(
+                json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        except OSError:
+            pass
+
+    def _start_video_comment(self, detail: VideoDetail, profile) -> None:
+        """同类视频且模型写了评论时，异步发一条；每日上限/间隔防止刷屏。"""
+        if not self.config.video_comment_enabled:
+            return
+        meta = dict(getattr(profile, "meta", {}) or {})
+        if not meta.get("same_fish"):
+            return
+        if detail.bvid in self._commented_bvids:
+            return
+        text = strip_danmaku_word(
+            str(meta.get("video_comment") or "")).strip()
+        max_chars = int(self.config.video_comment_max_chars or 0)
+        if max_chars > 0:
+            text = text[:max_chars].strip()
+        if not text:
+            # 模型自己判断“这次没什么想说的”，不是错误。
+            return
+        dropped = comment_drop_reason(
+            text, tuple(getattr(self.persona, "quips", ()) or ()))
+        if dropped:
+            # 旧缓存/profile 里可能还留着“同类看同类”这类台本，发出去更像机器人。
+            self._log("video_comment_skipped", bvid=detail.bvid,
+                      reason="像在背人设台词，这次不发了", kind=dropped)
+            return
+        if self.commenter is None:
+            return
+        try:
+            available = bool(self.commenter.available())
+        except Exception:  # noqa: BLE001
+            available = False
+        if not available:
+            if not self._comment_skip_logged:
+                self._comment_skip_logged = True
+                self._log("video_comment_skipped",
+                          reason="未配置登录 Cookie（SESSDATA/bili_jct）")
+            return
+        if self._comment_inflight:
+            self._log("video_comment_skipped", bvid=detail.bvid,
+                      reason="上一条评论还没发完")
+            return
+        day = time.strftime("%Y-%m-%d")
+        if self._comment_day != day:
+            self._comment_day = day
+            self._comment_count = 0
+        limit = int(self.config.video_comment_max_per_day or 0)
+        if limit > 0 and self._comment_count >= limit:
+            self._log("video_comment_skipped", bvid=detail.bvid,
+                      reason=f"今日评论上限 {limit}")
+            return
+        now = self._wall()
+        gap = max(0.0, float(self.config.video_comment_min_gap_s or 0.0))
+        if self._comment_last_at and now - self._comment_last_at < gap:
+            self._log("video_comment_skipped", bvid=detail.bvid,
+                      reason="距上一条评论太近")
+            return
+        self._comment_inflight = True
+        self._comment_last_at = now
+        threading.Thread(
+            target=self._video_comment_worker, args=(detail, text),
+            name="bili-video-comment", daemon=True,
+        ).start()
+
+    def _video_comment_worker(self, detail: VideoDetail, text: str) -> None:
+        try:
+            result = self.commenter.comment(detail.aid, detail.bvid, text)
+        except Exception as exc:  # noqa: BLE001
+            result = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+        finally:
+            self._comment_inflight = False
+        if result.get("ok"):
+            self._comment_count += 1
+            self._commented_bvids.add(detail.bvid)
+            self._save_comment_state()
+            self._record_video_comment(detail, text, result.get("rpid"))
+            self._log("video_comment_ok", bvid=detail.bvid,
+                      rpid=str(result.get("rpid") or ""),
+                      chars=len(text))
+        elif result.get("skipped"):
+            if not self._comment_skip_logged:
+                self._comment_skip_logged = True
+                self._log("video_comment_skipped",
+                          reason=str(result.get("reason") or "")[:120])
+        else:
+            self._log("video_comment_failed", bvid=detail.bvid,
+                      code=int(result.get("code") or 0),
+                      error=str(result.get("error") or "")[:160])
+
+    def _record_video_comment(self, detail: VideoDetail, text: str, rpid) -> None:
+        """把真发出去的评论记进控制台能读的本地账本：视频链接/标题/评论内容。"""
+        try:
+            control.append_video_comment(
+                bvid=detail.bvid, title=detail.title, text=text,
+                url=detail.url, owner=detail.owner_name, rpid=rpid,
+                root=self._control_root)
+        except Exception:  # noqa: BLE001 - 记账失败不影响看视频
+            pass
+
+    def _browser_lost(self) -> bool:
+        """Chrome 窗口被关掉时返回 True；只读窗口句柄/标题，不读页面。"""
+        browser = self.browser
+        if browser is None or not hasattr(browser, "snapshot"):
+            return False
+        try:
+            snapshot = browser.snapshot()
+        except Exception:  # noqa: BLE001
+            return False
+        if not isinstance(snapshot, dict) or snapshot.get("browser") != "chrome":
+            return False
+        title = str(snapshot.get("title") or "").strip()
+        new_tab = any(word in title for word in (
+            "新标签页", "新建标签页", "New Tab", "新建标签"))
+        if title and not new_tab:
+            self._browser_title_seen = True
+        if snapshot.get("opened"):
+            self._browser_hwnd_seen = True
+        elif not self._browser_hwnd_seen:
+            # Chrome 窗口句柄是异步找到的，刚打开那几秒不能算“被关掉”。
+            return False
+        else:
+            self._browser_newtab_since = 0.0
+            return True
+        # 只在已经看到过视频标题后，才把“新标签页”当成标签页被关掉；
+        # 再留 8 秒宽限，避免用户临时开个新标签页就把视频切走。
+        if self._browser_title_seen and new_tab:
+            now = float(self._wall())
+            if not self._browser_newtab_since:
+                self._browser_newtab_since = now
+            return now - self._browser_newtab_since >= 8.0
+        self._browser_newtab_since = 0.0
+        return False
+
+    def _history_sample(self, bvid: str) -> dict | None:
+        """读一次自己账号的历史进度；没有 Cookie/接口失败返回 None。"""
+        method = getattr(self.client, "history_progress", None)
+        if not callable(method):
+            return None
+        try:
+            progress = method(bvid)
+        except BiliError as exc:
+            if not self._history_error_logged:
+                self._history_error_logged = True
+                self._log("history_progress_failed", error=exc.message[:120])
+            return None
+        except Exception as exc:  # noqa: BLE001
+            if not self._history_error_logged:
+                self._history_error_logged = True
+                self._log("history_progress_error",
+                          error=f"{type(exc).__name__}: {exc}"[:120])
+            return None
+        if not isinstance(progress, dict):
+            return None
+        try:
+            return {
+                "progress": int(progress.get("progress") or 0),
+                "duration": int(progress.get("duration") or 0),
+                "view_at": int(progress.get("view_at") or 0),
+            }
+        except (TypeError, ValueError):
+            return None
+
+    def _history_end(self, bvid: str, since: float) -> bool:
+        """用自己账号的历史进度发现用户把进度拖到了结尾。"""
+        sample = self._history_sample(bvid)
+        if not sample:
+            return False
+        # 必须是本次播放期间的新记录，不能拿上次看完的旧历史直接跳。
+        if sample["duration"] <= 10 or sample["view_at"] < int(since) - 5:
+            return False
+        return sample["progress"] >= sample["duration"] - 2
+
     def _play(self, detail: VideoDetail, profile, danmaku: DanmakuResult,
               info: dict) -> None:
         plan = build_plan(profile, self.config, speed=self.config.speed)
@@ -816,14 +1298,34 @@ class BiliEngine:
             self._mark_failed(detail.bvid, "没有可用 cue")
             self._stop_reason = "没有可用 cue"
             return
+        # 进入播放即记已看：重启/中途停掉也不会再把同一条选回来。
+        # 自然播完仍保留这个标记；跳过会额外进失败冷却。
+        self.stores.seen.mark(detail.bvid)
+        self._browser_title_seen = False
+        self._browser_hwnd_seen = False
+        self._browser_newtab_since = 0.0
+        play_started_at = self._wall()
+        play_url = start_from_zero(detail.url)
         if self.browser is not None:
-            opened = self.browser.open(detail.url)
+            opened = self.browser.open(play_url)
             self._log("browser_open", bvid=detail.bvid,
                       ok=bool(opened.get("ok")),
                       browser=str(opened.get("browser") or ""),
+                      url=play_url,
                       error=str(opened.get("error") or "")[:160])
+            try:
+                snapshot = self.browser.snapshot()
+                if (isinstance(snapshot, dict)
+                        and snapshot.get("browser") == "chrome"
+                        and snapshot.get("opened")):
+                    self._browser_hwnd_seen = True
+            except Exception:  # noqa: BLE001
+                pass
         self._start_like(detail)
+        self._start_video_comment(detail, profile)
         self._live_title = profile.title
+        self._live_same_fish = is_big_fish_text(
+            detail.title, detail.desc, detail.owner_name)
         self._video_count += 1
         self._switching = False
         self._publish_playlist(
@@ -855,8 +1357,14 @@ class BiliEngine:
         stopped = False
         skipped = False
         reached_end = False
+        browser_lost = False
+        not_playing = False
         position = 0.0
         last_status = 0.0
+        last_history_check = 0.0
+        last_browser_check = 0.0
+        history_last_progress = -1
+        history_last_change_at = play_started_at
         while not self._should_stop():
             if self._config_switched():
                 stopped = True
@@ -881,6 +1389,37 @@ class BiliEngine:
                 break
 
             position = clock.tick()
+            now = self._wall()
+            if position >= 3.0 and now - last_browser_check >= 2.0:
+                last_browser_check = now
+                if self._browser_lost():
+                    browser_lost = True
+                    self._log("video_browser_lost", bvid=detail.bvid)
+                    break
+            # 历史进度既用来发现“拖到结尾”，也用来发现画面卡住/暂停。
+            # 没有 Cookie 时安静跳过，仍由虚拟时钟负责自然结束。
+            if position >= 3.0 and now - last_history_check >= 10.0:
+                last_history_check = now
+                sample = self._history_sample(detail.bvid)
+                if (sample and sample["duration"] > 10
+                        and sample["view_at"] >= int(play_started_at) - 5):
+                    if sample["progress"] >= sample["duration"] - 2:
+                        reached_end = True
+                        self._log("video_history_end", bvid=detail.bvid,
+                                  position=round(position, 1))
+                        break
+                    if history_last_progress < 0:
+                        history_last_progress = sample["progress"]
+                        history_last_change_at = now
+                    elif sample["progress"] != history_last_progress:
+                        history_last_progress = sample["progress"]
+                        history_last_change_at = now
+                    elif now - history_last_change_at >= NOT_PLAYING_AFTER_S:
+                        not_playing = True
+                        self._log("video_not_playing", bvid=detail.bvid,
+                                  progress=sample["progress"],
+                                  stalled_s=round(now - history_last_change_at, 1))
+                        break
             due = scheduler.due(position)
             if due:
                 cue = due[-1]
@@ -898,11 +1437,12 @@ class BiliEngine:
                     self._cues_dropped += 1
                     self._log("cue_dropped_speech_busy", bvid=detail.bvid,
                               cue_id=cue.cue_id)
-                elif self.speech.offer(cue.text):
+                elif self.speech.offer(strip_danmaku_word(cue.text)):
                     scheduler.mark_fired(cue)
                     self._cues_fired += 1
                     self._log("cue_say", bvid=detail.bvid, cue_id=cue.cue_id,
-                              kind=cue.kind, text=cue.text[:80])
+                              kind=cue.kind,
+                              text=strip_danmaku_word(cue.text)[:80])
                 else:
                     scheduler.mark_fired(cue)
                     self._cues_dropped += 1
@@ -910,17 +1450,17 @@ class BiliEngine:
             elif self.config.dynamic_reactions or self.config.max_replies > 0:
                 reply = replies.due(position)
                 if reply is not None and not self.speech.busy():
-                    if self.speech.offer(reply.text):
+                    reply_text = strip_danmaku_word(reply.text)
+                    if self.speech.offer(reply_text):
                         replies.mark_used(reply, position)
                         self._replies_fired += 1
                         self._log("danmaku_reply", bvid=detail.bvid,
                                   reply_id=reply.reply_id,
-                                  text=reply.text[:80])
+                                  text=reply_text[:80])
 
             if position >= plan.duration_s:
                 reached_end = True
                 break
-            now = self._wall()
             if now - last_status >= 2.0:
                 last_status = now
                 self._maybe_status("PLAYING", position, plan.duration_s,
@@ -941,6 +1481,46 @@ class BiliEngine:
                       target=self._override_bvid)
             self._publish_playlist(state="selecting")
             return
+        if browser_lost:
+            self._status(screen="SELECTING", last="浏览器已关闭，准备下一个",
+                         bvid=detail.bvid, video_title=profile.title[:80],
+                         position_s=0.0, duration_s=0.0)
+            self._log("video_browser_closed", bvid=detail.bvid)
+            self._publish_playlist(state="between")
+            return
+        if not_playing:
+            # 保持同一个 Chrome 窗口/标签页，先切空白页避免静帧继续被采集；
+            # 下一条会在同一个标签页里导航，不再关窗重开触发 Chrome 恢复旧标签。
+            blank = getattr(self.browser, "blank", None) if self.browser else None
+            if callable(blank):
+                try:
+                    result = blank()
+                except Exception as exc:  # noqa: BLE001
+                    result = {"ok": False, "error": str(exc)}
+                self._log("video_not_playing_blank",
+                          ok=bool(result.get("ok")),
+                          error=str(result.get("error") or "")[:120])
+                if not result.get("ok") and hasattr(self.browser, "close"):
+                    try:
+                        self.browser.close()
+                    except Exception:  # noqa: BLE001
+                        pass
+            elif self.browser is not None and hasattr(self.browser, "close"):
+                try:
+                    result = self.browser.close()
+                except Exception as exc:  # noqa: BLE001
+                    result = {"ok": False, "error": str(exc)}
+                self._log("video_not_playing_close",
+                          ok=bool(result.get("ok")),
+                          error=str(result.get("error") or "")[:120])
+            self.stores.failed.mark(
+                detail.bvid, self.config.skip_cooldown_min * 60)
+            self._status(screen="SELECTING", last="视频没有播放，强制下一条",
+                         bvid=detail.bvid, video_title=profile.title[:80],
+                         position_s=0.0, duration_s=0.0)
+            self._log("video_not_playing_skip", bvid=detail.bvid)
+            self._publish_playlist(state="between")
+            return
         # 外部停止/切换配置/暂停中被停止都不是自然结束；不能发 closing，
         # 也不能把视频误记为已看。
         if not skipped and not reached_end:
@@ -957,7 +1537,6 @@ class BiliEngine:
                          bvid=detail.bvid, video_title=profile.title[:80],
                          position_s=0.0, duration_s=0.0)
         else:
-            self.stores.seen.mark(detail.bvid)
             self._status(screen="SELECTING", last="视频结束，准备下一个",
                          bvid=detail.bvid, video_title=profile.title[:80],
                          position_s=0.0, duration_s=0.0)
@@ -1010,7 +1589,7 @@ class BiliEngine:
 
     # ---------------------------------------------------------------- 数据
     def _popular(self) -> list[VideoRef]:
-        cached = self.stores.popular.get("popular")
+        cached = self.stores.popular.get("popular:60")
         if isinstance(cached, list):
             refs = [VideoRef.from_dict(row) for row in cached if isinstance(row, dict)]
             refs = [ref for ref in refs if ref is not None]
@@ -1018,12 +1597,12 @@ class BiliEngine:
                 self._log("popular_cache_hit", count=len(refs))
                 return refs
         try:
-            refs = self.client.popular(limit=20)
+            refs = self.client.popular(limit=60)
         except BiliError as exc:
             self._log("popular_failed", error=exc.message[:200])
             return []
         self.stores.popular.put(
-            "popular", [ref.to_dict() for ref in refs],
+            "popular:60", [ref.to_dict() for ref in refs],
             now=self._wall())
         return refs
 
@@ -1124,6 +1703,11 @@ def _make_search_planner(config: CommentaryConfig):
         )
     except Exception:
         return None
+
+
+def _ref_view(ref: VideoRef) -> int:
+    stat = ref.stat if isinstance(ref.stat, dict) else {}
+    return _as_int(stat.get("view"))
 
 
 def _as_int(value, default: int = 0) -> int:

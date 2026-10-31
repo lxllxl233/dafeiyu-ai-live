@@ -1,13 +1,15 @@
 """B 模式的控制面：播放列表快照 + 控制台命令文件。
 
 B 自动玩可能在另一个进程里跑，控制台不能直接摸到 ``BiliEngine``。这里只用
-两个本地文件通信：
+本地文件通信：
 
 - ``bilibili_commentary.playlist.json``：引擎写，控制台读，展示候选/当前视频；
 - ``bilibili_commentary.command.json``：控制台写，引擎消费，play/close/refresh。
+- ``bilibili_commentary.comments.jsonl``：引擎真发出一条视频评论后追加一行，
+  控制台读来展示「已发评论」：视频链接 / 标题 / 评论内容 / rpid。
 
-文件都在 ``paths.LOGS`` 下（测试可传 ``root``），只含 bvid/标题/URL/窗口号，
-不含 Cookie。命令是用户明确点击产生的，不来自视频/弹幕文本。
+文件都在 ``paths.LOGS`` 下（测试可传 ``root``），只含 bvid/标题/URL/窗口号/评论
+正文，不含 Cookie。命令是用户明确点击产生的，不来自视频/弹幕文本。
 """
 
 from __future__ import annotations
@@ -22,8 +24,10 @@ from dafeiyu import paths
 
 PLAYLIST_FILE = "bilibili_commentary.playlist.json"
 COMMAND_FILE = "bilibili_commentary.command.json"
+COMMENTS_FILE = "bilibili_commentary.comments.jsonl"
 ACTIONS = frozenset({"play", "close", "refresh"})
 _ITEM_LIMIT = 40
+_COMMENT_KEEP = 200
 
 
 def _root(root: str | Path | None = None) -> Path:
@@ -36,6 +40,10 @@ def playlist_path(root: str | Path | None = None) -> Path:
 
 def command_path(root: str | Path | None = None) -> Path:
     return _root(root) / COMMAND_FILE
+
+
+def comments_path(root: str | Path | None = None) -> Path:
+    return _root(root) / COMMENTS_FILE
 
 
 def _read_json(path: Path) -> dict:
@@ -143,6 +151,107 @@ def read_playlist(root: str | Path | None = None) -> dict:
     return raw
 
 
+def append_video_comment(
+    bvid: str = "",
+    title: str = "",
+    text: str = "",
+    *,
+    url: str = "",
+    owner: str = "",
+    rpid: str = "",
+    root: str | Path | None = None,
+) -> dict:
+    """真发出去一条视频评论后记一行：视频链接 / 标题 / 评论内容。
+
+    只给「已经发成功」的评论记账，草稿和失败不落盘；写失败也不抛——
+    记账不能反过来影响看视频的线程。
+    """
+    body = _text(text, 500)
+    if not body:
+        return {}
+    bvid = _text(bvid, 20)
+    row = {
+        "at": round(time.time(), 3),
+        "bvid": bvid,
+        "url": _text(url or (f"https://www.bilibili.com/video/{bvid}" if bvid else ""),
+                     300),
+        "title": _text(title, 160),
+        "owner": _text(owner, 60),
+        "text": body,
+        "rpid": _text(rpid, 40),
+    }
+    path = comments_path(root)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+        _trim_comments(path)
+    except OSError:
+        pass
+    return row
+
+
+def _trim_comments(path: Path, keep: int | None = None) -> None:
+    """账本只留最近 keep 行，控制台 3 秒一轮询不会越读越大。
+
+    先写临时文件再 ``os.replace``：控制台可能正好在这时读，不能让它看到半截文件。
+    """
+    keep = _COMMENT_KEEP if keep is None else max(1, int(keep))
+    try:
+        lines = [line for line in
+                 path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    except OSError:
+        return
+    if len(lines) <= keep:
+        return
+    try:
+        tmp = path.with_name(path.name + f".{os.getpid()}.tmp")
+        tmp.write_text("\n".join(lines[-keep:]) + "\n", encoding="utf-8")
+        os.replace(tmp, path)
+    except OSError:
+        pass
+
+
+def read_video_comments(limit: int = 20, root: str | Path | None = None) -> dict:
+    """读「已发评论」账本，新的在前；坏行跳过，没有文件就是空列表。"""
+    path = comments_path(root)
+    rows: list[dict] = []
+    try:
+        with path.open(encoding="utf-8") as fh:
+            for line in fh:
+                try:
+                    row = json.loads(line)
+                except ValueError:
+                    continue
+                if not isinstance(row, dict):
+                    continue
+                body = _text(row.get("text"), 500)
+                if not body:
+                    continue
+                try:
+                    at = float(row.get("at") or 0)
+                except (TypeError, ValueError):
+                    at = 0.0
+                rows.append({
+                    "at": at,
+                    "bvid": _text(row.get("bvid"), 20),
+                    "url": _text(row.get("url"), 300),
+                    "title": _text(row.get("title"), 160),
+                    "owner": _text(row.get("owner"), 60),
+                    "text": body,
+                    "rpid": _text(row.get("rpid"), 40),
+                })
+    except OSError:
+        return {"ok": True, "items": [], "count": 0}
+    rows.reverse()
+    try:
+        limit = max(0, int(limit))
+    except (TypeError, ValueError):
+        limit = 20
+    return {"ok": True, "items": rows[:limit] if limit else rows,
+            "count": len(rows)}
+
+
 def send_command(
     action: str,
     bvid: str = "",
@@ -182,7 +291,8 @@ def consume_command(root: str | Path | None = None) -> dict | None:
 
 
 __all__ = [
-    "ACTIONS", "COMMAND_FILE", "PLAYLIST_FILE", "command_path", "consume_command",
+    "ACTIONS", "COMMENTS_FILE", "COMMAND_FILE", "PLAYLIST_FILE",
+    "append_video_comment", "command_path", "comments_path", "consume_command",
     "item_from_ref", "playlist_path", "publish_playlist", "read_playlist",
-    "send_command",
+    "read_video_comments", "send_command",
 ]

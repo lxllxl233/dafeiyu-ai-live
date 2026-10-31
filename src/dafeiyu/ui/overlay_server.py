@@ -16,6 +16,7 @@ import urllib.parse
 import urllib.request
 from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 
 # 布局：src/dafeiyu/ui/overlay_server.py
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -28,8 +29,12 @@ from dafeiyu.games.catalog import env_value  # noqa: E402
 
 HOST = "127.0.0.1"
 PORT = int(env_value("OVERLAY_PORT", "8730"))
+# 最近一次真正绑上的服务：CLI --port / 环境变量可能和 config.json 不一致，
+# 设置页要显示/跳转的是这个真实端口，而不是配置里那个。
+_SERVER = None
 UI_DIR = os.path.join(ROOT, "ui")
 INDEX = os.path.join(UI_DIR, "overlay", "index.html")
+BILI_SCENE = os.path.join(UI_DIR, "overlay", "bili.html")
 STUDIO = os.path.join(UI_DIR, "studio", "index.html")
 ROUTE_PLAN = os.path.join(ROOT, "logs", "route_plan.json")
 
@@ -44,11 +49,35 @@ TTS_CUT = "，。？！；：、…,.;?!"
 TTS_CACHE = os.path.join(ROOT, "logs", "tts_cache")
 TTS_TIMEOUT = float(env_value("TTS_TIMEOUT", "60"))
 
+
+def _apply_runtime_config():
+    """把 config.json 里的 host / 端口 / 配音地址同步到本模块的全局量。
+
+    设置页存完端口后要重启才生效，重启时就是走到这里：以前这些值只认环境变量，
+    在页面上改 ``port`` / ``tts_url`` 存了也白存。返回读到的 LiveConfig（失败 None）。
+    """
+    global HOST, TTS_URL, TTS_REF, TTS_PROMPT, TTS_TIMEOUT
+    try:
+        from dafeiyu.core.config import LiveConfig
+
+        cfg = LiveConfig.load()
+    except Exception:
+        return None
+    HOST = str(cfg.host or HOST)
+    TTS_URL = str(cfg.tts_url or TTS_URL)
+    TTS_REF = str(cfg.tts_ref or TTS_REF)
+    TTS_PROMPT = str(cfg.tts_prompt or TTS_PROMPT)
+    try:
+        TTS_TIMEOUT = float(cfg.tts_timeout or TTS_TIMEOUT)
+    except (TypeError, ValueError):
+        pass
+    return cfg
+
 # 一回合可能好几路同时要同一句（预热 / OBS 页面 / 直播姬页面）：
 # 串行进引擎，后到的等锁，醒来先查磁盘缓存。绝不并发压 MamboTTS。
 _tts_lock = threading.Lock()
 _tts_stat = {"ok": 0, "fail": 0, "last_ok": 0.0, "last_fail": 0.0,
-             "last_ms": 0, "consec_fail": 0}
+             "last_ms": 0, "consec_fail": 0, "last_error": ""}
 _guard = {"t": 0.0, "runs": 0}
 
 
@@ -93,10 +122,14 @@ def _synth(text: str) -> bytes | None:
     try:
         with opener.open(req, timeout=TTS_TIMEOUT) as r:
             data = r.read()
-    except Exception:
+    except Exception as exc:
+        # 记下原因：引擎重启期间控制台只看「合成失败」根本分不清是没起、超时还是报错。
+        _tts_stat["last_error"] = f"{type(exc).__name__}: {str(exc)[:80]}"
         return None
     if len(data) < 44 or data[:4] != b"RIFF":
+        _tts_stat["last_error"] = f"非 WAV 响应（{len(data)} 字节）"
         return None
+    _tts_stat["last_error"] = ""
     return data
 
 
@@ -127,7 +160,9 @@ def tts_wav(text: str) -> bytes | None:
             return data
         _tts_stat.update(fail=_tts_stat["fail"] + 1, last_fail=time.time(),
                          consec_fail=_tts_stat["consec_fail"] + 1)
-        print(f"[tts] 合成失败 {time.time() - t0:.1f}s: {text[:24]}", file=sys.stderr, flush=True)
+        print(f"[tts] 合成失败 {time.time() - t0:.1f}s: {text[:24]}"
+              f"（{_tts_stat.get('last_error') or '未知原因'}）",
+              file=sys.stderr, flush=True)
         _kick_guard()
         return None
 
@@ -546,13 +581,30 @@ class Handler(BaseHTTPRequestHandler):
                 _subscribers.pop(q, None)
                 _pick_live_owner_locked()
 
+    def handle(self):
+        """对端先挂断不是错误。
+
+        OBS 切换场景、直播姬刷新浏览器源、页面关掉，都会把还在等 /tts 的连接
+        直接掐掉（WinError 10053/10054）。默认实现会把整页 traceback 打到控制台，
+        看起来像服务崩了，其实只是响应没人要了。连接层的错一律吞掉，
+        真正的业务异常（500 响应）照样由 _send 正常返回。
+        """
+        try:
+            super().handle()
+        except ConnectionError:
+            self.close_connection = True
+
     def _send(self, code: int, body: bytes, ctype: str):
-        self.send_response(code)
-        self.send_header("Content-Type", ctype)
-        self.send_header("Cache-Control", "no-store")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.send_response(code)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        except ConnectionError:
+            # 页面已经走了（切场景/刷新）：这份响应丢掉，别在死连接上继续写。
+            self.close_connection = True
 
     def do_GET(self):
         global _seq
@@ -563,12 +615,51 @@ class Handler(BaseHTTPRequestHandler):
                     self._send(200, f.read(), "text/html; charset=utf-8")
             except OSError:
                 self._send(500, b"overlay missing", "text/plain")
+        elif path in ("/bili", "/bili/", "/bili/index.html"):
+            try:
+                with open(BILI_SCENE, "rb") as f:
+                    self._send(200, f.read(), "text/html; charset=utf-8")
+            except OSError:
+                self._send(500, b"bili scene missing", "text/plain")
         elif path in ("/studio", "/studio/", "/studio/index.html"):
             try:
                 with open(STUDIO, "rb") as f:
                     self._send(200, f.read(), "text/html; charset=utf-8")
             except OSError:
                 self._send(500, b"studio missing", "text/plain")
+        elif path in ("/settings", "/settings/", "/settings/index.html"):
+            try:
+                from dafeiyu.ui import settings as settings_ui
+
+                with open(settings_ui.page_path(), "rb") as f:
+                    self._send(200, f.read(), "text/html; charset=utf-8")
+            except OSError:
+                self._send(500, b"settings page missing", "text/plain")
+        elif path.startswith("/stickers/"):
+            name = path[len("/stickers/"):]
+            if (not name.endswith(".png") or "/" in name or "\\" in name
+                    or name != os.path.basename(name)):
+                self._send(404, b"not found", "text/plain")
+            else:
+                try:
+                    from dafeiyu.persona import stickers as stickers_mod
+
+                    file = stickers_mod.path_of(Path(name).stem.replace("sticker_", "", 1))
+                    if file is None:
+                        raise FileNotFoundError(name)
+                    self._send(200, Path(file).read_bytes(), "image/png")
+                except OSError:
+                    self._send(404, b"not found", "text/plain")
+        elif path == "/api/settings":
+            try:
+                from dafeiyu.ui import settings as settings_ui
+
+                body = json.dumps(settings_ui.payload(), ensure_ascii=False).encode("utf-8")
+                self._send(200, body, "application/json; charset=utf-8")
+            except Exception as exc:
+                self._send(500, json.dumps({"ok": False, "error": f"{type(exc).__name__}: {exc}"},
+                                           ensure_ascii=False).encode("utf-8"),
+                           "application/json; charset=utf-8")
         elif path == "/api/studio":
             try:
                 from dafeiyu.ui.studio import get_runtime
@@ -650,6 +741,53 @@ class Handler(BaseHTTPRequestHandler):
                 from dafeiyu.ui.studio import get_runtime
 
                 body = json.dumps(get_runtime().bilibili_playlist(),
+                                  ensure_ascii=False).encode("utf-8")
+                self._send(200, body, "application/json; charset=utf-8")
+            except Exception as exc:
+                self._send(500, json.dumps({"ok": False, "error": str(exc)},
+                                           ensure_ascii=False).encode("utf-8"),
+                           "application/json; charset=utf-8")
+        elif path == "/api/bilibili/comment":
+            try:
+                from dafeiyu.ui.studio import get_runtime
+
+                runtime = get_runtime()
+                payload = dict(runtime.bilibili_comment_settings())
+                # 设置 + 已发评论账本：控制台只看这一个接口也能出「已发评论」。
+                payload["posted"] = runtime.bilibili_video_comments()
+                body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+                self._send(200, body, "application/json; charset=utf-8")
+            except Exception as exc:
+                self._send(500, json.dumps({"ok": False, "error": str(exc)},
+                                           ensure_ascii=False).encode("utf-8"),
+                           "application/json; charset=utf-8")
+        elif path == "/api/bilibili/scene":
+            try:
+                from dafeiyu.ui.studio import get_runtime
+
+                body = json.dumps(get_runtime().bilibili_scene(),
+                                  ensure_ascii=False).encode("utf-8")
+                self._send(200, body, "application/json; charset=utf-8")
+            except Exception as exc:
+                self._send(500, json.dumps({"ok": False, "error": str(exc)},
+                                           ensure_ascii=False).encode("utf-8"),
+                           "application/json; charset=utf-8")
+        elif path == "/api/recording":
+            try:
+                from dafeiyu.ui.studio import get_runtime
+
+                body = json.dumps(get_runtime().recording_payload(),
+                                  ensure_ascii=False).encode("utf-8")
+                self._send(200, body, "application/json; charset=utf-8")
+            except Exception as exc:
+                self._send(500, json.dumps({"ok": False, "error": str(exc)},
+                                           ensure_ascii=False).encode("utf-8"),
+                           "application/json; charset=utf-8")
+        elif path == "/api/game/start":
+            try:
+                from dafeiyu.ui.studio import get_runtime
+
+                body = json.dumps(get_runtime().game_start(),
                                   ensure_ascii=False).encode("utf-8")
                 self._send(200, body, "application/json; charset=utf-8")
             except Exception as exc:
@@ -744,7 +882,66 @@ class Handler(BaseHTTPRequestHandler):
         else:
             self._send(404, b"not found", "text/plain")
 
+    def _origin_ok(self) -> bool:
+        """拦掉别的网页对本机 127.0.0.1 的跨站写入。
+
+        浏览器跨站 POST 会带 Origin；控制台/设置页同源，本地进程和 curl 不带
+        Origin。只允许同源，避免随便一个网页就能改配置或触发重启。
+        """
+        origin = (self.headers.get("Origin") or "").strip().lower()
+        if not origin:
+            return True
+        host = (self.headers.get("Host") or "").strip().lower()
+        if not host:
+            return False
+        return origin in (f"http://{host}", f"https://{host}")
+
     def do_POST(self):
+        if not self._origin_ok():
+            # 先读掉请求体再关连接：带未读数据直接 close 会被 Windows 回 RST，
+            # 客户端可能只看到 ConnectionAborted 而看不到 403。
+            try:
+                n = int(self.headers.get("Content-Length", "0") or 0)
+                if 0 < n <= 1024 * 1024:
+                    self.rfile.read(n)
+            except (OSError, ValueError):
+                pass
+            self.close_connection = True
+            self._send(403, b'{"ok":false,"error":"forbidden origin"}', "application/json")
+            return
+        if self.path == "/api/settings":
+            try:
+                n = int(self.headers.get("Content-Length", "0") or 0)
+                payload = json.loads(self.rfile.read(n) or b"{}") if n else {}
+                payload = payload if isinstance(payload, dict) else {}
+                from dafeiyu.ui import settings as settings_ui
+
+                result = settings_ui.save(payload)
+                body = json.dumps(result, ensure_ascii=False).encode("utf-8")
+                self._send(200, body, "application/json; charset=utf-8")
+            except ValueError as exc:
+                self._send(400, json.dumps({"ok": False, "error": str(exc)},
+                                           ensure_ascii=False).encode("utf-8"),
+                           "application/json; charset=utf-8")
+            except Exception as exc:
+                self._send(500, json.dumps({"ok": False, "error": f"{type(exc).__name__}: {exc}"},
+                                           ensure_ascii=False).encode("utf-8"),
+                           "application/json; charset=utf-8")
+            return
+        if self.path in ("/api/app/restart", "/api/app/quit"):
+            try:
+                from dafeiyu.ui import settings as settings_ui
+
+                result = (settings_ui.request_restart() if self.path.endswith("restart")
+                          else settings_ui.request_quit())
+                # 重启/退出是延迟执行的：先把「已经开始」回给页面，它才有时间显示提示。
+                body = json.dumps(result, ensure_ascii=False).encode("utf-8")
+                self._send(200, body, "application/json; charset=utf-8")
+            except Exception as exc:
+                self._send(500, json.dumps({"ok": False, "error": str(exc)},
+                                           ensure_ascii=False).encode("utf-8"),
+                           "application/json; charset=utf-8")
+            return
         if self.path == "/api/config":
             try:
                 n = int(self.headers.get("Content-Length", "0"))
@@ -821,6 +1018,46 @@ class Handler(BaseHTTPRequestHandler):
                                            ensure_ascii=False).encode("utf-8"),
                            "application/json; charset=utf-8")
             return
+        if self.path == "/api/recording":
+            try:
+                n = int(self.headers.get("Content-Length", "0") or 0)
+                payload = json.loads(self.rfile.read(n) or b"{}") if n else {}
+                payload = payload if isinstance(payload, dict) else {}
+                from dafeiyu.ui.studio import get_runtime
+
+                result = get_runtime().recording_action(
+                    str(payload.get("action") or "status"), payload)
+                code = 200 if result.get("ok") else 400
+                self._send(code, json.dumps(result, ensure_ascii=False).encode("utf-8"),
+                           "application/json; charset=utf-8")
+            except ValueError as exc:
+                self._send(400, json.dumps({"ok": False, "error": str(exc)},
+                                           ensure_ascii=False).encode("utf-8"),
+                           "application/json; charset=utf-8")
+            except Exception as exc:
+                self._send(500, json.dumps({"ok": False, "error": str(exc)},
+                                           ensure_ascii=False).encode("utf-8"),
+                           "application/json; charset=utf-8")
+            return
+        if self.path == "/api/game/start":
+            try:
+                n = int(self.headers.get("Content-Length", "0") or 0)
+                payload = json.loads(self.rfile.read(n) or b"{}") if n else {}
+                payload = payload if isinstance(payload, dict) else {}
+                from dafeiyu.ui.studio import get_runtime
+
+                result = get_runtime().save_game_start(payload)
+                self._send(200, json.dumps(result, ensure_ascii=False).encode("utf-8"),
+                           "application/json; charset=utf-8")
+            except ValueError as exc:
+                self._send(400, json.dumps({"ok": False, "error": str(exc)},
+                                           ensure_ascii=False).encode("utf-8"),
+                           "application/json; charset=utf-8")
+            except Exception as exc:
+                self._send(500, json.dumps({"ok": False, "error": str(exc)},
+                                           ensure_ascii=False).encode("utf-8"),
+                           "application/json; charset=utf-8")
+            return
         if self.path == "/api/bili/send":
             try:
                 n = int(self.headers.get("Content-Length", "0") or 0)
@@ -846,12 +1083,17 @@ class Handler(BaseHTTPRequestHandler):
             return
         if self.path == "/api/play/start":
             try:
-                from dafeiyu.agent.play import start_autoplay
-
                 n = int(self.headers.get("Content-Length", "0") or 0)
                 body = json.loads(self.rfile.read(n) or b"{}") if n else {}
                 body = body if isinstance(body, dict) else {}
-                result = start_autoplay(mode=body.get("mode"), pace=body.get("pace"))
+                if str(body.get("mode") or "").strip().lower() == "director":
+                    from dafeiyu.agent import director
+
+                    result = director.start(module=body.get("module") or None)
+                else:
+                    from dafeiyu.agent.play import start_autoplay
+
+                    result = start_autoplay(mode=body.get("mode"), pace=body.get("pace"))
                 code = 200 if result.get("ok") else 503
                 self._send(code, json.dumps(result, ensure_ascii=False).encode("utf-8"),
                            "application/json; charset=utf-8")
@@ -864,6 +1106,12 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 from dafeiyu.agent.play import stop_autoplay
 
+                try:
+                    from dafeiyu.agent import director
+
+                    director.stop()
+                except Exception:
+                    pass
                 self._send(200, json.dumps(stop_autoplay(), ensure_ascii=False).encode("utf-8"),
                            "application/json; charset=utf-8")
             except Exception as exc:
@@ -935,6 +1183,39 @@ class Handler(BaseHTTPRequestHandler):
             except ValueError as exc:
                 self._send(400, json.dumps({"ok": False, "error": str(exc)},
                                            ensure_ascii=False).encode("utf-8"),
+                           "application/json; charset=utf-8")
+            except Exception as exc:
+                self._send(500, json.dumps({"ok": False, "error": str(exc)},
+                                           ensure_ascii=False).encode("utf-8"),
+                           "application/json; charset=utf-8")
+            return
+        if self.path == "/api/bilibili/comment":
+            try:
+                n = int(self.headers.get("Content-Length", "0") or 0)
+                payload = json.loads(self.rfile.read(n) or b"{}") if n else {}
+                payload = payload if isinstance(payload, dict) else {}
+                from dafeiyu.ui.studio import get_runtime
+
+                result = get_runtime().save_bilibili_comment_settings(payload)
+                self._send(200, json.dumps(result, ensure_ascii=False).encode("utf-8"),
+                           "application/json; charset=utf-8")
+            except ValueError as exc:
+                self._send(400, json.dumps({"ok": False, "error": str(exc)},
+                                           ensure_ascii=False).encode("utf-8"),
+                           "application/json; charset=utf-8")
+            except Exception as exc:
+                self._send(500, json.dumps({"ok": False, "error": str(exc)},
+                                           ensure_ascii=False).encode("utf-8"),
+                           "application/json; charset=utf-8")
+            return
+        if self.path == "/api/voice/stop":
+            try:
+                from dafeiyu.core.config import LiveConfig
+                from dafeiyu.voice.startup import stop_from_config
+
+                result = stop_from_config(LiveConfig.load())
+                code = 200 if result.get("ok") else 503
+                self._send(code, json.dumps(result, ensure_ascii=False).encode("utf-8"),
                            "application/json; charset=utf-8")
             except Exception as exc:
                 self._send(500, json.dumps({"ok": False, "error": str(exc)},
@@ -1038,24 +1319,50 @@ class Handler(BaseHTTPRequestHandler):
 
 def _make_server(port: int | None = None) -> ThreadingHTTPServer:
     os.makedirs(os.path.join(UI_DIR, "overlay"), exist_ok=True)
-    return ThreadingHTTPServer((HOST, port or PORT), Handler)
+    # 0 是「让系统给个空端口」，不能当成没传：测试和临时实例要真的另开一个，
+    # 否则 Windows 的 SO_REUSEADDR 会悄悄再绑到 8730，请求却还是被桌宠进程接走。
+    if port is None:
+        # 没显式传端口 = 跟随 config.json（设置页改端口后重启即生效）。
+        cfg = _apply_runtime_config()
+        try:
+            port = int(cfg.port) if cfg is not None else PORT
+        except (TypeError, ValueError):
+            port = PORT
+    return ThreadingHTTPServer((HOST, int(port)), Handler)
 
 
-def start_background(port: int | None = None) -> ThreadingHTTPServer | None:
+def bound_port() -> int:
+    """本进程实际在监听的端口；还没起服务返回 0。"""
+    srv = _SERVER
+    try:
+        return int(srv.server_address[1]) if srv is not None else 0
+    except (AttributeError, IndexError, TypeError, ValueError):
+        return 0
+
+
+def start_background(port: int | None = None, quiet: bool = False) -> ThreadingHTTPServer | None:
     """给 main.py 用：端口空就起后台服务；被占用返回 None（不抢正在跑的 studio）。"""
+    global _SERVER
+    _apply_runtime_config()
     try:
         srv = _make_server(port)
     except OSError as exc:
-        print(f"overlay server 未启动（{exc}）", flush=True)
+        if not quiet:
+            print(f"overlay server 未启动（{exc}）", flush=True)
         return None
     threading.Thread(target=srv.serve_forever, daemon=True).start()
-    print(f"overlay server on http://{HOST}:{port or PORT}", flush=True)
+    _SERVER = srv
+    print(f"overlay server on http://{HOST}:{srv.server_address[1]}", flush=True)
     return srv
 
 
 def main(port: int | None = None):
+    """前台跑一个 overlay server（``python -m dafeiyu.ui.overlay_server``）。"""
+    global _SERVER
+    _apply_runtime_config()
     srv = _make_server(port)
-    print(f"overlay server on http://{HOST}:{port or PORT}", flush=True)
+    _SERVER = srv
+    print(f"overlay server on http://{HOST}:{srv.server_address[1]}", flush=True)
     srv.serve_forever()
 
 

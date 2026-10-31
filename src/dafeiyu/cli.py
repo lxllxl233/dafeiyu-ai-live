@@ -3,6 +3,7 @@
 """大肥鱼直播姬 · 命令行。
 
     python main.py studio            起 overlay + 直播姬控制台（:8730）
+    python main.py kook             KOOK 聊天常驻服务（WebSocket 长连接）
     python main.py demo              离线跑一遍「游戏 → 性格 → 语音 → UI」
     python main.py say --thought "..." --meme "..."
     python main.py status            各层体检（JSON）
@@ -80,11 +81,20 @@ def _game_status_line(state: dict) -> str:
 def cmd_studio(args) -> int:
     from dafeiyu.ui.overlay_server import main
 
+    port = int(args.port) if args.port is not None else int(LiveConfig.load().port)
     print(f"{__product__} v{__version__} · studio", flush=True)
-    print(f"  overlay : http://127.0.0.1:{args.port}/", flush=True)
-    print(f"  控制台  : http://127.0.0.1:{args.port}/studio", flush=True)
-    main(port=args.port)
+    print(f"  overlay : http://127.0.0.1:{port}/", flush=True)
+    print(f"  控制台  : http://127.0.0.1:{port}/studio", flush=True)
+    main(port=port)
     return 0
+
+
+def cmd_kook(args) -> int:
+    """KOOK 聊天常驻服务；--check 只自检，不进入消息循环。"""
+    from dafeiyu.live.kook.service import check, run
+
+    cfg = LiveConfig.load()
+    return check(cfg) if getattr(args, "check", False) else run(cfg)
 
 
 def cmd_demo(args) -> int:
@@ -160,6 +170,12 @@ def cmd_status(args) -> int:
         status["play"] = play_status()
     except Exception:
         pass
+    try:
+        from dafeiyu.agent import director
+
+        status["live"] = director.status()
+    except Exception:
+        pass
     status["product"] = {"name": __product__, "version": __version__, "root": str(paths.ROOT)}
     status["games"] = [p.info.to_dict() for p in registry.packs()]
     if args.json:
@@ -187,6 +203,10 @@ def cmd_status(args) -> int:
               f" · {play.get('mode', '?')} · tok {play.get('tokens_total') or 0}"
               f"（入 {play.get('tokens_in') or 0} / 出 {play.get('tokens_out') or 0}）"
               f" · {'录像中' if play.get('recording') else '未录像'}")
+    live = status.get("live") or {}
+    if live.get("running"):
+        print(f"  live    LLM 直播模式 · {live.get('module_label') or live.get('module') or '—'}"
+              f" · 第 {live.get('segments') or 0} 段 · {live.get('reason') or ''}")
     return 0
 
 
@@ -215,7 +235,12 @@ def cmd_games(args) -> int:
 def cmd_game(args) -> int:
     """读游戏适配器状态 / 启动游戏；默认取 config 的 game。"""
     registry = GameRegistry()
-    game_id = args.game or LiveConfig.load().game
+    if args.game:
+        from dafeiyu.games.catalog import resolve_game_id
+
+        game_id = resolve_game_id(args.game)
+    else:
+        game_id = LiveConfig.load().game
     if args.action == "launch":
         from dafeiyu.games.launch import launch_game
 
@@ -335,6 +360,13 @@ def cmd_play(args) -> int:
     from dafeiyu.agent.play import start_autoplay, status, stop_autoplay
 
     if getattr(args, "stop", False):
+        # 停手要连「LLM 直播模式」一起停，否则导演会在几秒后把模块又开起来。
+        try:
+            from dafeiyu.agent import director
+
+            director.stop()
+        except Exception:
+            pass
         result = stop_autoplay()
         print(result.get("message") or "已请求停手")
         return 0
@@ -376,6 +408,57 @@ def cmd_play(args) -> int:
     except KeyboardInterrupt:
         stop_autoplay()
         print("已停手")
+    return 0
+
+
+def cmd_live(args) -> int:
+    """LLM 直播模式：模型自己决定播哪个模块，并在模块之间自动切换。"""
+    import time
+
+    from dafeiyu.agent import director
+
+    if getattr(args, "stop", False):
+        result = director.stop()
+        print(result.get("message") or "已停止直播模式")
+        return 0
+    if getattr(args, "status", False):
+        _print_json({"live": director.status(),
+                     "modules": director.live_modules()})
+        return 0
+    ok, why = director.available()
+    if not ok:
+        print(f"ERR {why}")
+        return 2
+    items = director.live_modules()
+    if not items:
+        print("ERR games/ 下没有可直播模块（game.json 需要 live.enabled）")
+        return 2
+    print("直播模块：" + "、".join(str(x.get("label") or x.get("id"))
+                                    for x in items))
+    result = director.start(module=getattr(args, "module", None))
+    print(result.get("message") or result.get("error") or "")
+    if not result.get("ok"):
+        return 1
+    last = None
+    try:
+        while True:
+            state = director.status()
+            if not state.get("running"):
+                print(f"直播模式已停：{state.get('error') or state.get('phase') or ''}")
+                break
+            key = (state.get("module"), state.get("phase"),
+                   state.get("segments"), state.get("next_at"))
+            if key != last:
+                print(f"[{state.get('phase') or '?'}] "
+                      f"{state.get('module_label') or '—'} · "
+                      f"{state.get('reason') or ''} · "
+                      f"第 {state.get('segments') or 0} 段 · "
+                      f"tok {state.get('tokens') or 0}")
+                last = key
+            time.sleep(2.0)
+    except KeyboardInterrupt:
+        director.stop()
+        print("已停止直播模式")
     return 0
 
 
@@ -610,8 +693,13 @@ def build_parser() -> argparse.ArgumentParser:
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     p = sub.add_parser("studio", help="起 overlay + 直播姬控制台")
-    p.add_argument("--port", type=int, default=int(env_value("OVERLAY_PORT", "8730")))
+    p.add_argument("--port", type=int, default=None,
+                   help="端口（默认用 config.json 的 port；环境变量 DAFEIYU_OVERLAY_PORT 仍优先）")
     p.set_defaults(func=cmd_studio)
+
+    p = sub.add_parser("kook", help="KOOK 聊天常驻服务（Bot + WebSocket）")
+    p.add_argument("--check", action="store_true", help="只自检 Token/网关，不进入消息循环")
+    p.set_defaults(func=cmd_kook)
 
     p = sub.add_parser("demo", help="离线演示整条链路（不需要游戏）")
     p.add_argument("--voice", default="animal", choices=["mambo", "animal", "off"])
@@ -669,6 +757,12 @@ def build_parser() -> argparse.ArgumentParser:
                    help="voice=等语音；normal=旧版快节奏")
     p.add_argument("--stop", action="store_true", help="只停手，不启动")
     p.set_defaults(func=cmd_play)
+
+    p = sub.add_parser("live", help="LLM 直播模式：模型决定播哪个模块并自动切换")
+    p.add_argument("--stop", action="store_true", help="停止直播模式（连带停手）")
+    p.add_argument("--status", action="store_true", help="只打印状态和候选模块")
+    p.add_argument("--module", default=None, help="第一段固定用这个模块 id")
+    p.set_defaults(func=cmd_live)
 
     p = sub.add_parser("obs", help="OBS WebSocket 控制")
     p.add_argument("action", choices=["status", "setup", "start", "stop", "shot",

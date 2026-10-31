@@ -135,6 +135,7 @@ class GameManifest:
     skills: tuple[str, ...] = ()
     prompts: dict[str, str] = field(default_factory=dict)
     obs: str = ""
+    recording: dict[str, Any] = field(default_factory=dict)
     launch: dict[str, Any] = field(default_factory=dict)
     entry_fallback: bool = False
 
@@ -193,6 +194,8 @@ class GameManifest:
         } if isinstance(prompts_raw, dict) else {}
 
         launch = dict(raw.get("launch") or {}) if isinstance(raw.get("launch"), dict) else {}
+        recording = (dict(raw.get("recording") or {})
+                     if isinstance(raw.get("recording"), dict) else {})
         return cls(
             schema=schema,
             id=game_id,
@@ -205,6 +208,7 @@ class GameManifest:
             skills=skills,
             prompts=prompts,
             obs=_text(raw.get("obs")),
+            recording=recording,
             launch=launch,
             entry_fallback=not bool(entry_raw) and bool(adapter),
         )
@@ -261,6 +265,7 @@ class GameManifest:
             "skills": list(self.skills),
             "prompts": dict(self.prompts),
             "obs": self.obs,
+            "recording": dict(self.recording),
             "launch": dict(self.launch),
             "entry_fallback": self.entry_fallback,
         }

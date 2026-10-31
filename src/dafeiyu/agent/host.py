@@ -333,12 +333,15 @@ class AutoplayHost:
             res = auto.start_session(self.game, note=note or "自动玩")
         except Exception as exc:  # noqa: BLE001
             res = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+        skipped = bool(res.get("skipped") or res.get("disabled"))
         self.set_status(
             recording=bool(res.get("ok")),
             record_path=str(res.get("path") or ""),
-            record_error="" if res.get("ok") else str(res.get("error") or "录像启动失败"),
+            record_error="" if (res.get("ok") or skipped)
+            else str(res.get("error") or "录像启动失败"),
         )
-        self.log("record_start" if res.get("ok") else "record_failed",
+        self.log("record_skip" if skipped else
+                 ("record_start" if res.get("ok") else "record_failed"),
                  path=res.get("path"), error=res.get("error"))
         return res
 

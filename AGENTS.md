@@ -17,7 +17,10 @@ and dry-run by default; keep that boundary unless the task asks for a new planne
 - The game packets are under `games/<id>/`; the registry is
   `games/registry.json`. `games/toy-duel/` is the second, fully offline plugin
   used to prove the core is not STS2-specific; keep it working when changing
-  the plugin/host/tools contracts.
+  the plugin/host/tools contracts. `games/vampire-survivors/` is the third
+  packet (BepInEx 6 IL2CPP bridge + local HTTP `:8091`; no window focus and no
+  keyboard injection) and `games/bilibili-hot-commentary/` is the non-game watch
+  mode.
 
 ## Commands
 
@@ -31,6 +34,10 @@ python main.py play --mode llm  # LLM decides every player decision (needs API k
 python main.py play --pace voice # default: wait for speech; normal = old fast
 python main.py play --game toy-duel --mode local  # offline second-game acceptance
 python main.py play --stop      # cross-process stop
+python main.py live             # LLM live-mode director: picks a live module and switches
+python main.py live --status    # director status + candidate modules
+python main.py live --stop      # stop director (and the running module)
+python main.py kook             # KOOK bot WebSocket chat (optional)
 python main.py agent run --demo # offline LangGraph turn
 python main.py agent run        # real ctx + LLM, dry-run
 python main.py agent run --execute
@@ -54,8 +61,29 @@ not the product version.
   `src/dafeiyu/`, game-specific code belongs under `games/<id>/`. Core must not
   hardcode a game id, display name, or alias; use `games/catalog.py` and
   `game.json` metadata.
-- The desktop right-click menu is a Win32 popup. Menu IDs are explicit; do not
-  renumber existing entries when adding one.
+- The desktop right-click opens a custom **gear button tight against the pet's right
+  side** (light-blue outer ring, blue inner ring, one larger centered gear icon,
+  all concentric; scales with the pet, pop/fade animation), clamped to the pet's
+  monitor, not a Win32 popup menu.
+  All toggles and service ports
+  live in `ui/settings/index.html`, served by `src/dafeiyu/ui/settings.py`; that page
+  and the console read/write the same `LiveConfig` (`config.json`) — do not add a
+  second settings store or another desktop entry.
+- `pet_status_bar` now controls the **Windows tray icon** (left click show/hide,
+  right click settings); `pet_autostart` writes HKCU Run. Both are Windows-only
+  side effects in `ui/desktop.py` / `core/autostart.py`; the settings page only
+  edits `LiveConfig`.
+- Persona is three layers: personal (`persona/<id>/`) → live (`persona/live/`) →
+  game (`games/<id>/persona/layer.md`). Assemble them only through
+  `src/dafeiyu/persona/layers.py::PersonaStack`; do not concatenate persona files
+  in a runner. KOOK chat uses `config.kook_persona` with `live=False`.
+- KOOK memory keeps all turns in SQLite; context is recent turns + summaries.
+  When pending turns exceed `kook_summary_trigger`, compress the oldest batch and
+  advance `meta.summary_upto`; keep the raw turns. Do not silently drop history.
+- KOOK monitoring is a separate process; when `kook_enabled` is true the pet
+  starts/stops it via `live/kook/supervisor.py` and `logs/kook/service.lock`
+  prevents a manual launch from creating a second connection. Keep that lock
+  protocol when changing startup/restart behavior.
 - Combat actions use the `games/slay-the-spire-2/decision/act.py` batch protocol
   through `sts2.cmd_batch`; screen transitions use
   `games/slay-the-spire-2/decision/sts2.py` (compat client). Game launch goes
@@ -77,8 +105,24 @@ not the product version.
   `logs/bilibili_events.jsonl`（最近 120 条，`live/bilibili.py::RoomLog`）；控制台
   `ui/studio` 只读这份文件，发弹幕走 `POST /api/bili/send`（需要 `bili_jct`）。
   不要在控制台进程再开一个监听，否则同一房间会写重复事件。
-- **Token 账单**：每次 LLM 调用必须经 `AutoplayHost.add_usage(..., note=...)`，`note`
+- **Token 账单**：自动玩每次 LLM 调用必须经 `AutoplayHost.add_usage(..., note=...)`，`note`
   写清「战斗 f7 t3」或「地图 choose_map_node 2」；控制台 Agent 页按它出每步 token。
+  KOOK 聊天是独立进程，每次回复/记忆抽取/压缩写 `logs/kook/usage.jsonl`
+  （`live/kook/usage.py`，带 `msg_id`），控制台与自动玩账单合并展示。
+  KOOK 回复可拆成 1–3 条独立消息；主动消息只发最近聊过的 `target_id`，
+  间隔 `kook_proactive_minutes` 后按概率触发，不能连发。
+- **LLM 直播模式**：导演候选只来自各游戏包 `game.json` 的 `live` 块
+  （`live.enabled/label/role/weight`），`src/dafeiyu/agent/director.py` 不写死任何
+  游戏 id/显示名；模型只决定「播哪个/多久/过渡台词」，怎么玩仍归各游戏 runner。
+  导演切换前先 `stop_autoplay()`，停手/手动「让她玩」都必须先停导演
+  （`director.stop()`），否则下一段会把刚开的模块切走；状态文件是
+  `logs/live_director.json`，停止标志 `logs/live_director.stop`。
+- **开局设置**：角色/难度这类开局选项由各游戏包 `game.json` 的 `start.options`
+  声明（`choice` / `int` / `bool`），控制台按声明渲染，值写 `config.json` 的
+  `start_options.<game-id>`；清洗逻辑只在 `src/dafeiyu/games/start_options.py`，
+  那里不许写具体游戏/角色 id。游戏包自己的模块（如
+  `games/slay-the-spire-2/start_options.py`）在开新局前读取，不塞进 `LiveConfig`
+  的具名字段。改完值必须下一局生效，不能改写已经开着的局。
 - Agent traces are local JSONL (`logs/agent_trace.jsonl`); do not send them to a
   cloud service or include full game state / secrets.
 

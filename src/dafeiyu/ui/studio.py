@@ -20,7 +20,10 @@ from typing import Any, Callable
 
 from .. import __codename__, __product__, __version__, paths
 from ..core.config import LiveConfig
+from ..core.usage import merge_usage
 from ..games import GameRegistry
+from ..games import start_options
+from ..live.kook.usage import summary as kook_token_usage
 from ..persona import Persona
 from ..voice import build_router
 
@@ -31,7 +34,7 @@ _PERSONA_MAX_BYTES = 200_000
 
 # 控制台「人设/梗」可编辑的文件：只认白名单，页面传名字不传路径，避免任意文件读写。
 _PERSONA_TEXT_FILES = (
-    ("style.md", "说话风格（三拍/五件武器/梗纪律）"),
+    ("style.md", "个人性格（常驻）"),
 )
 _CASTER_FILES = (
     ("speech.md", "主播台词规则"),
@@ -53,12 +56,23 @@ def persona_files(persona_id: str, game: str) -> list[dict]:
         if p.exists():
             out.append({"name": fname, "label": label, "kind": "text",
                         "path": f"persona/{pid}/{fname}"})
+    live_dir = paths.PERSONA / "live"
+    if (live_dir / "card.json").exists():
+        out.append({"name": "live/card.json", "label": "直播性格卡",
+                    "kind": "json", "path": "persona/live/card.json"})
+    if (live_dir / "style.md").exists():
+        out.append({"name": "live/style.md", "label": "直播性格（叠加层）",
+                    "kind": "text", "path": "persona/live/style.md"})
     for p in sorted((paths.PERSONA / "memes").glob("*.json")):
         out.append({"name": f"memes/{p.name}", "label": f"通用梗 · {p.stem}",
                     "kind": "json", "path": f"persona/memes/{p.name}"})
     game_id = str(game or "")
     if game_id:
         game_dir = paths.ROOT / "games" / game_id / "persona"
+        layer = game_dir / "layer.md"
+        if layer.exists():
+            out.append({"name": "game/layer.md", "label": "游戏性格（叠加层）",
+                        "kind": "text", "path": f"games/{game_id}/persona/layer.md"})
         for fname, label in _CASTER_FILES:
             p = game_dir / fname
             if p.exists():
@@ -183,6 +197,7 @@ class StudioRuntime:
         self._pushed = 0
         self._last: dict = {}
         self._voice_state: dict = {"pending": 0, "ok": 0, "fail": 0, "last": {}}
+        self._rec_cache: tuple[float, dict] = (0.0, {})
         self._q: queue.Queue = queue.Queue()
         self._worker = threading.Thread(target=self._worker_loop, name="dafeiyu-studio-voice", daemon=True)
         self._worker.start()
@@ -262,6 +277,14 @@ class StudioRuntime:
         from ..agent.trace import agent_summary
         from ..agent.play import status as play_status, token_usage
 
+        try:
+            from ..agent import director as live_director
+
+            live = live_director.status()
+        except Exception as exc:  # noqa: BLE001 - 导演状态坏了不能拖垮控制台
+            live = {"running": False, "error": f"{type(exc).__name__}: {exc}"}
+        # 自动玩和 KOOK 聊天各写各的账本；控制台合并成一张真实 API 账单。
+        tokens = merge_usage(token_usage(40), kook_token_usage(limit=40), limit=40)
         return {
             "ok": True,
             "product": {"name": __product__, "version": __version__, "codename": __codename__},
@@ -281,10 +304,15 @@ class StudioRuntime:
                 "usage": overlay.get("usage", {}),
             },
             "studio": {"said": said, "pushed": pushed, "last": last, "voice": voice_state},
-            "agent": {**agent_summary(), "tokens": token_usage(40)},
+            "agent": {**agent_summary(), "tokens": tokens},
             "play": play_status(),
+            "recording": self.recording_payload(),
+            "live": live,
+            "game_start": self.game_start(),
             "bilibili": self._bilibili_status(),
             "bilibili_playlist": self.bilibili_playlist(),
+            "bilibili_comment_settings": self.bilibili_comment_settings(),
+            "bilibili_video_comments": self.bilibili_video_comments(),
             "samples": list(card.openers[:2]) + list(card.quips[:4]),
             "links": {
                 "overlay": "/",
@@ -366,10 +394,158 @@ class StudioRuntime:
                     "items": [], "browser": {}, "updated_at": 0,
                     "error": f"{type(exc).__name__}: {exc}"}
 
+    def bilibili_scene(self) -> dict:
+        """直播姬「B站云观影」场景的轻量数据：当前播放、播放列表、最近弹幕。
+
+        只读 B 模式自己的状态/列表和直播间事件，不碰 Cookie；文本给页面按纯文本
+        渲染。场景页每 2 秒轮询一次，所以这里不返回 Agent/Token 这些大对象。
+        """
+        from ..agent.play import status as play_status
+
+        playlist = self.bilibili_playlist()
+        room: dict = {}
+        try:
+            room = self._bilibili_status()
+        except Exception:  # noqa: BLE001 - 场景页不能因监听日志坏了 500
+            room = {}
+        events = room.get("events", []) if isinstance(room, dict) else []
+        rows = []
+        for row in list(events)[-12:]:
+            if not isinstance(row, dict):
+                continue
+            rows.append({
+                "at": row.get("at", 0),
+                "kind": str(row.get("kind") or "")[:16],
+                "label": str(row.get("label") or "")[:16],
+                "user": str(row.get("user") or "")[:40],
+                "text": str(row.get("text") or "")[:160],
+                "gift": str(row.get("gift") or "")[:40],
+                "count": int(row.get("count") or 0),
+                "coin": int(row.get("coin") or 0),
+            })
+        return {"ok": True, "play": play_status(), "playlist": playlist,
+                "events": rows, "room_id": int(room.get("room_id") or 0),
+                "enabled": bool(room.get("enabled"))}
+
+    # ---------------------------------------------------------------- 开局设置
+    def _start_spec(self, game_id: str) -> dict:
+        """当前游戏在 game.json 里声明的开局选项（没有就返回空）。"""
+        for row in self._games():
+            if str(row.get("id") or "") != game_id:
+                continue
+            return start_options.spec_from_manifest(row.get("manifest") or {})
+        return {}
+
+    def game_start(self) -> dict:
+        """当前游戏的开局设置：声明（角色/难度…）+ 现在生效的值。
+
+        选项由游戏包声明，控制台只按声明渲染；值存在 config.json 的
+        ``start_options[<game-id>]``，游戏包下一局开新局时自己读。
+        """
+        self._sync_config()
+        game_id = str(self.cfg.game or "")
+        spec = self._start_spec(game_id) if game_id else {}
+        if not spec:
+            return {"ok": True, "game": game_id, "spec": {}, "values": {}}
+        try:
+            values = start_options.load_values(game_id, spec, cfg=self.cfg)
+        except Exception as exc:  # noqa: BLE001 - 控制台不能因配置坏了 500
+            return {"ok": False, "game": game_id, "spec": spec, "values": {},
+                    "error": f"{type(exc).__name__}: {exc}"}
+        return {"ok": True, "game": game_id, "spec": spec, "values": values}
+
+    def save_game_start(self, body: dict) -> dict:
+        """保存开局设置；按 game.json 的声明清洗后写 config.json。"""
+        self._sync_config()
+        game_id = str(self.cfg.game or "")
+        spec = self._start_spec(game_id) if game_id else {}
+        if not spec:
+            raise ValueError("当前游戏没有可配置的开局设置")
+        raw = body.get("values") if isinstance(body, dict) else None
+        values = start_options.store_values(
+            game_id, spec, raw if isinstance(raw, dict) else body, cfg=self.cfg)
+        self._sync_config()
+        return {"ok": True, "game": game_id, "spec": spec, "values": values,
+                "saved": True}
+
+    def bilibili_video_comments(self, limit: int = 20) -> dict:
+        """引擎真发出去的视频评论：视频链接 / 标题 / 评论内容。
+
+        账本由 B 引擎追加写 ``logs/bilibili_commentary.comments.jsonl``，这里是
+        只读视图；不是 B 模式或还没发过评论时给空列表，控制台不报错。
+        """
+        if str(self.cfg.game or "") != "bilibili-hot-commentary":
+            return {"ok": True, "items": [], "count": 0}
+        try:
+            return self._bili_control_module().read_video_comments(limit)
+        except Exception as exc:  # noqa: BLE001 - 控制台不能因账本坏了 500
+            return {"ok": False, "items": [], "count": 0,
+                    "error": f"{type(exc).__name__}: {exc}"}
+
     def bilibili_command(self, action: str, bvid: str = "") -> dict:
         """控制台点播放/关闭/刷新时写一条本地命令，由 B 引擎消费。"""
         module = self._bili_control_module()
         return module.send_command(action, bvid)
+
+    def bilibili_comment_settings(self) -> dict:
+        """控制台读取 B 模式的可选视频评论设置（不返回 Cookie）。"""
+        self._sync_config()
+        if str(self.cfg.game or "") != "bilibili-hot-commentary":
+            return {"ok": False, "error": "当前游戏不是 B站云观影"}
+        module = self.registry.load_game_module(
+            "bilibili-hot-commentary", "config")
+        if module is None:
+            return {"ok": False, "error": "B站云观影配置模块不可用"}
+        cfg = module.load_commentary_config()
+        cookie = str(self.cfg.bilibili_cookie or "")
+        can_post = bool("SESSDATA=" in cookie and "bili_jct=" in cookie)
+        return {
+            "ok": True,
+            "enabled": bool(cfg.video_comment_enabled),
+            "max_chars": int(cfg.video_comment_max_chars),
+            "max_per_day": int(cfg.video_comment_max_per_day),
+            "min_gap_s": float(cfg.video_comment_min_gap_s),
+            "unlimited": int(cfg.video_comment_max_per_day) <= 0,
+            "cookie_set": bool(cookie),
+            "can_post": can_post,
+        }
+
+    def save_bilibili_comment_settings(self, body: dict) -> dict:
+        """保存 B 模式视频评论设置到 config.json 的 bilibili_commentary。"""
+        self._sync_config()
+        if str(self.cfg.game or "") != "bilibili-hot-commentary":
+            raise ValueError("当前游戏不是 B站云观影")
+        module = self.registry.load_game_module(
+            "bilibili-hot-commentary", "config")
+        if module is None:
+            raise RuntimeError("B站云观影配置模块不可用")
+        current = module.load_commentary_config()
+        enabled = bool(body.get("enabled", current.video_comment_enabled))
+        try:
+            max_chars = int(body.get("max_chars", current.video_comment_max_chars))
+            max_per_day = int(body.get("max_per_day", current.video_comment_max_per_day))
+            min_gap_s = float(body.get("min_gap_s", current.video_comment_min_gap_s))
+        except (TypeError, ValueError):
+            raise ValueError("评论设置必须是数字") from None
+        if not 10 <= max_chars <= 200:
+            raise ValueError("评论字数上限需在 10–200 之间")
+        if not 0 <= max_per_day <= 100000:
+            raise ValueError("每日上限需在 0–100000 之间，0 表示不限")
+        if not 0 <= min_gap_s <= 86400:
+            raise ValueError("评论间隔需在 0–86400 秒之间")
+        extra = dict(self.cfg.extra or {})
+        nested = dict(extra.get("bilibili_commentary") or {})
+        nested.update({
+            "video_comment_enabled": enabled,
+            "video_comment_max_chars": max_chars,
+            "video_comment_max_per_day": max_per_day,
+            "video_comment_min_gap_s": min_gap_s,
+        })
+        extra["bilibili_commentary"] = nested
+        self.cfg.extra = extra
+        self.cfg.save_patch({})
+        self._cfg_mtime = self._config_mtime()
+        return {"ok": True, "settings": self.bilibili_comment_settings()}
 
     def send_to_room(self, text: str) -> dict:
         """控制台发一条弹幕进直播间；需要带 bili_jct 的登录 Cookie。"""
@@ -403,6 +579,7 @@ class StudioRuntime:
         fresh = LiveConfig.load()
         self.cfg = fresh
         self._cfg_mtime = mtime
+        self._rec_cache = (0.0, {})
         new = (fresh.voice, fresh.tts_url, fresh.mambo_dir,
                fresh.tts_ref, fresh.tts_prompt, fresh.tts_speed, fresh.tts_timeout)
         if old != new:
@@ -421,6 +598,94 @@ class StudioRuntime:
             for g in self.registry.list()
         ]
         return out
+
+    # ---------------------------------------------------------------- OBS 录像
+    def recording_payload(self, *, force: bool = False) -> dict:
+        """当前游戏的 OBS 策略 + 脚本 + 实际录像状态（缓存 3 秒，别轮询卡 OBS）。"""
+        self._sync_config()
+        now = time.time()
+        ts, cached = self._rec_cache
+        if not force and now - ts < 3.0 and cached:
+            return cached
+        game = str(self.cfg.game or "")
+        try:
+            from ..recording import manual, policy
+
+            status = manual.status(game, timeout=1.2)
+            payload = {
+                "ok": bool(status.get("ok")),
+                "game": game,
+                "master": bool(status.get("master", True)),
+                "policy": status.get("policy") or policy.policy_for(game),
+                "script": status.get("script") or policy.script_state(game),
+                "obs": {
+                    "ok": bool(status.get("ok")),
+                    "recording": bool(status.get("recording")),
+                    "output_path": str(status.get("output_path") or ""),
+                    "message": str(status.get("message") or ""),
+                },
+                "session": status.get("session") or {"active": False},
+                "recording": bool(status.get("recording")),
+            }
+        except Exception as exc:  # noqa: BLE001 - OBS 离线不能拖垮控制台
+            payload = {
+                "ok": False, "game": game, "master": True,
+                "policy": {"enabled": False, "split": "none", "game": game},
+                "script": {"path": f"games/{game}/game-skill/obs.json",
+                           "exists": False},
+                "obs": {"ok": False, "recording": False, "output_path": "",
+                        "message": f"{type(exc).__name__}: {exc}"},
+                "session": {"active": False}, "recording": False,
+            }
+        self._rec_cache = (now, payload)
+        return payload
+
+    def recording_action(self, action: str, body: dict | None = None) -> dict:
+        """控制台/右键共用的录像动作：start / stop / ensure / save。"""
+        self._sync_config()
+        body = body if isinstance(body, dict) else {}
+        game = str(body.get("game") or self.cfg.game or "")
+        action = str(action or "").strip().lower()
+        result: dict
+        if action == "start":
+            from ..recording import manual
+
+            result = manual.start_game(game, force=True)
+        elif action == "stop":
+            from ..recording import manual
+
+            result = manual.stop_game()
+        elif action == "ensure":
+            from ..recording import manual
+
+            result = manual.ensure_game(game)
+        elif action == "save":
+            from ..recording import policy
+
+            if body.get("recording_enabled") is not None:
+                policy.set_master(bool(body.get("recording_enabled")))
+            result = {
+                "ok": True,
+                "policy": policy.save_policy(
+                    game,
+                    enabled=body.get("enabled"),
+                    split=body.get("split"),
+                ),
+                "message": "录像策略已保存",
+            }
+        else:
+            raise ValueError("未知录像动作")
+        self._rec_cache = (0.0, {})
+        return {"ok": bool(result.get("ok", True)), "action": action,
+                "result": result, "recording": self.recording_payload(force=True)}
+
+    def recording_master(self, enabled: bool) -> dict:
+        from ..recording import policy
+
+        policy.set_master(bool(enabled))
+        self._rec_cache = (0.0, {})
+        return {"ok": True, "master": bool(enabled),
+                "recording": self.recording_payload(force=True)}
 
     def start_voice(self, voice: str) -> dict:
         """启动指定音色引擎；目前只有曼波需要启动。"""
@@ -445,6 +710,8 @@ class StudioRuntime:
     def update_config(self, body: dict) -> dict:
         """从控制台/桌宠菜单保存语音、模型、API 配置。"""
         patch: dict = {}
+        if body.get("recording_enabled") is not None:
+            patch["recording_enabled"] = bool(body.get("recording_enabled"))
         for key in ("voice", "game", "mambo_dir", "llm_provider", "llm_base_url", "llm_model",
                     "autoplay_mode", "autoplay_pace", "autoplay_llm_model"):
             if body.get(key) is not None:
@@ -486,6 +753,7 @@ class StudioRuntime:
             return {"ok": True, "config": self.config_payload()}
         self.cfg.save_patch(patch)
         self._cfg_mtime = self._config_mtime()
+        self._rec_cache = (0.0, {})
         if "voice" in patch:
             self.voice = build_router(self.cfg)
             self._voice_cache = (0.0, {})

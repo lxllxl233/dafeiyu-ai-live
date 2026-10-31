@@ -122,14 +122,14 @@ python main.py agent graph
 
 ## 6. 整局自动玩法与回合图的分工
 
-`python main.py play` / 右键「让她玩 ▸ 本地算账」先走 `src/dafeiyu/agent/play.py`
+`python main.py play` / 设置页「运行 → 本地算账」先走 `src/dafeiyu/agent/play.py`
 这个 facade，再转给游戏包的 `autoplay/runner.py`（当前是
 `games/slay-the-spire-2/`）。它是一个**整局循环**：战斗回合过 LangGraph，
 界面点击直接问一次模型（`_screen_llm`），不走图——看图只为一次点击没有意义。
 状态/停止/录像/说话节奏由核心 `src/dafeiyu/agent/host.py` 提供，
 游戏包只保留界面分派和决策。
 
-右键「让她玩 ▸ LLM 规划」把**每个玩家决策**都交给模型，分两条路：
+设置页「运行 → LLM 规划」把**每个玩家决策**都交给模型，分两条路：
 
 - **战斗**：`_combat_llm` 调 `run_turn(..., tools=Sts2Tools, planner=LLMPlanner,
   dry_run=False)`，所以战斗决策、验算、执行和轨迹都能在「Agent 流程」看到；

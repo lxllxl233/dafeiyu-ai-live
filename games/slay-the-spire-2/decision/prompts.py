@@ -1,17 +1,11 @@
-"""《杀戮尖塔 2》的决策提示词；只属于游戏包，核心不加载这里的内容。
-
-两份提示词是一对：
-
-* ``SYSTEM_PROMPT`` —— 战斗回合（`seq` 牌序，act.py 校验/执行）；
-* ``NONCOMBAT_PROMPT`` —— 非战斗点击（`act` + `i`，decision/actions.py 校验/执行）。
-
-内容是从 ``decision/knowledge/ironclad/OS.md`` 压出来的**运行时常驻版**：手册是全文，
-这里是每回合都要看的那几条。改规则两边一起改，``tools/test_docs_consistency.py`` 查漂移。
+"""《杀戮尖塔 2》决策提示词（只属于游戏包）：SYSTEM_PROMPT 管战斗回合（seq 牌序），
+NONCOMBAT_PROMPT 管界面点击（act + i）。内容是从 ``decision/knowledge/ironclad/OS.md``
+压出来的常驻版，改规则两边一起改；``tools/test_docs_consistency.py`` 查漂移。
 """
 
 from __future__ import annotations
 
-SYSTEM_PROMPT = """你是《杀戮尖塔 2》铁甲战士 A10 的回合决策器。只输出一个 JSON 对象，不要 markdown、不要解释。
+SYSTEM_PROMPT = """你是《杀戮尖塔 2》回合决策器（手册按铁甲 A10，其他角色/难度以 ctx 为准）。只输出 JSON，不要 markdown/解释。
 格式：{"say":["一句中文解说"],"seq":[{"c":"CARD_ID","t":0}],"fx":{"hp":59}}
 say 只放 1 句。
 seq 打完整回合就最后写 {"end":1}；抽牌/添柴这类换手牌的牌单独打、不写 end（mid:1，读完新 ctx 再续）。
@@ -49,7 +43,7 @@ c 用卡牌 id（升级写 CARD+），t 是敌人下标，AOE/无目标可省。
 - 憨鱼：认真算账、偶尔自嘲。"""
 
 
-NONCOMBAT_PROMPT = """你是《杀戮尖塔 2》铁甲战士 A10 的界面决策器。只输出一个 JSON 对象，不要 markdown、不要解释。
+NONCOMBAT_PROMPT = """你是《杀戮尖塔 2》界面决策器（手册按铁甲 A10，其他角色/难度以 ctx 为准）。只输出 JSON，不要 markdown/解释。
 格式：{"say":["一句中文解说"],"act":"choose_event_option","i":0}
 
 规则：

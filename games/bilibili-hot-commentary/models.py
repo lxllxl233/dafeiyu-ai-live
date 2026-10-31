@@ -18,6 +18,99 @@ _CONTROL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 _SPACE_RE = re.compile(r"\s+")
 _URL_RE = re.compile(r"(?:https?://|www\.)\S+", re.I)
 _AT_RE = re.compile(r"@[^\s，。！？、；：]{1,40}")
+_CROWD_PREFIX_RE = re.compile(
+    r"^(?:(?:兄弟们?|家人们?|老铁们?|朋友们?|观众朋友们?|"
+    r"各位(?:观众|兄弟|姐妹|朋友)?)\s*"
+    r"[，,。.!！?？、:：;；~～—\-]*\s*)+"
+)
+_DANMAKU_WORD_RE = re.compile(r"[弹彈]幕")
+
+
+def strip_danmaku_word(value: Any) -> str:
+    """发言里不要把“弹幕”两个字说出口。
+
+    观众发来的内容仍按数据读；这里只清洗模型生成的回复/解说。优先保留
+    “这条/里/说”等语境，再兜底替换成“评论”，避免把句子删得不完整。
+    """
+    text = str(value or "")
+    if not text:
+        return ""
+    text = re.sub(r"这(?:条|个)?\s*[弹彈]幕", "这条评论", text)
+    text = re.sub(r"[弹彈]幕(?=游戏)", "", text)
+    text = _DANMAKU_WORD_RE.sub("评论", text)
+    return text.strip()
+
+
+def strip_crowd_prefix(value: Any) -> str:
+    """去掉回复开头反复出现的“兄弟们/家人们”等称呼。
+
+    只在开头处理，不碰正文；空回复允许上层丢弃。
+    """
+    return _CROWD_PREFIX_RE.sub("", str(value or "")).strip()
+
+
+_BIG_FISH_WORDS = ("大肥鱼", "大肥魚")
+
+# 人设卡里这几句自嘲/同类台词被模型抄进视频评论区后，陌生观众只会看到一句复读。
+# 视频评论宁可不发，也不发这种“背台本”的话；解说 cue 里偶尔说一次不受影响。
+_CANNED_COMMENT_PHRASES = (
+    "同类看同类",
+    "同类看同類",
+    "我也是条鱼",
+    "我也是條魚",
+    "我们鱼界",
+    "我們魚界",
+    "这波我先共情",
+    "先共情一下",
+)
+
+# 这些是完整一句招牌稿；单独成句才算背台本，后面接了自己的观察就照常发。
+_CANNED_WHOLE_LINES = (
+    "先别急着笑",
+    "先别笑太大声",
+    "先别笑得太大声",
+)
+
+_KEY_RE = re.compile(r"\W+", re.UNICODE)
+
+
+def _skeleton(value: Any) -> str:
+    """去掉空白和标点，只留文字，用来判断“整句是不是某句台词”。"""
+    return _KEY_RE.sub("", _SPACE_RE.sub("", str(value or "")))
+
+
+_CANNED_WHOLE_SKELETONS = tuple(_skeleton(line) for line in _CANNED_WHOLE_LINES)
+
+
+def comment_drop_reason(value: Any, quips: tuple[str, ...] = ()) -> str:
+    """视频评论是不是“背台本”：命中同类台词，或整句就是一句口癖。
+
+    返回空串表示可以发；``template`` 表示抄了人设台词，``quip`` 表示只有一句
+    招牌稿、没有真内容。视频评论是给陌生观众看的，这种宁可留空。
+    """
+    compact = _SPACE_RE.sub("", str(value or ""))
+    if not compact:
+        return ""
+    if any(phrase in compact for phrase in _CANNED_COMMENT_PHRASES):
+        return "template"
+    skeleton = _skeleton(compact)
+    if skeleton in _CANNED_WHOLE_SKELETONS:
+        return "template"
+    for quip in quips or ():
+        if skeleton and skeleton == _skeleton(quip):
+            return "quip"
+    return ""
+
+
+
+def is_big_fish_text(*parts: Any) -> bool:
+    """标题/UP 主/简介是否和主播的“大肥鱼”同类身份撞上。
+
+    只做关键词判断，不把网页文本当指令；用于给模型一个 same_fish 提示，
+    让同类视频可以自然自嘲/共情，而不是每段都硬提鱼。
+    """
+    text = " ".join(str(part or "") for part in parts)
+    return any(word in text for word in _BIG_FISH_WORDS)
 
 
 def clean_text(value: Any, limit: int = 300) -> str:
@@ -513,4 +606,6 @@ class VideoProfile:
 __all__ = [
     "Comment", "Cue", "Danmaku", "DanmakuReply", "DanmakuResult",
     "TimelineBucket", "VideoDetail", "VideoProfile", "VideoRef", "clean_text",
+    "comment_drop_reason", "is_big_fish_text", "strip_crowd_prefix",
+    "strip_danmaku_word",
 ]

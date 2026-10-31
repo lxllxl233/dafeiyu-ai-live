@@ -15,7 +15,7 @@ import time
 from pathlib import Path
 
 from ..games.catalog import env_value
-from . import replay
+from . import policy, replay
 
 # 无人值守连播一晚上，OBS 一局几 GB 很常见：剩太少就直接不录（不影响打游戏）。
 MIN_FREE_BYTES = 2 * 1024 ** 3
@@ -108,12 +108,44 @@ def _prepare_scene(game: str) -> tuple[bool, str]:
             obs.ensure_scene(profile.scene)
             obs.ensure_game_capture(profile.scene)
             obs.ensure_audio(profile.scene)
-            obs.free_mode("game")
+            obs.free_mode(profile.capture_mode or "game")
         finally:
             obs.close()
         return True, ""
     except Exception as exc:  # noqa: BLE001
         return False, f"{type(exc).__name__}: {exc}"
+
+
+def prepare_scene(game: str) -> tuple[bool, str]:
+    """公开给控制台「检查/创建录制脚本」调用。"""
+    return _prepare_scene(game)
+
+
+def _start_continuous(game: str) -> dict:
+    """不分集：OBS 直接录到 recordings/<game>/，不建 run-NNNN。"""
+    from .obs import Obs, load_profile, load_ws_config
+
+    out_dir = replay.game_dir(game) / "continuous"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    cfg = load_ws_config()
+    obs = Obs(cfg.get("url", ""), cfg.get("password", ""),
+              profile=load_profile(game)).connect()
+    try:
+        try:
+            obs.request("SetRecordDirectory", {"recordDirectory": str(out_dir)})
+        except Exception:
+            pass
+        obs.start_record()
+    finally:
+        obs.close()
+    global _session
+    _session = {
+        "active": True, "kind": "continuous", "path": str(out_dir),
+        "started_at": time.time(), "record_started_at": time.time(),
+        "game": game, "events": 0,
+    }
+    return {"ok": True, "continuous": True, "path": str(out_dir),
+            "message": "OBS 开始录像（不分集）"}
 
 
 def _events_path(run_dir: Path) -> Path:
@@ -261,15 +293,30 @@ def _preempt_busy_record() -> dict:
     return {"ok": True, "stopped": True, "path": out}
 
 
-def start_session(game: str = "", note: str = "") -> dict:
-    """开一局自动玩录像；失败返回 ok=False，不阻断自动玩。"""
+def start_session(game: str = "", note: str = "", *, force: bool = False,
+                  split: str | None = None) -> dict:
+    """开一局自动玩录像；失败返回 ok=False，不阻断自动玩。
+
+    ``force=True`` 用于桌宠右键/控制台手动「OBS 录像」：跳过每游戏默认开关，
+    但仍遵守总开关和磁盘保护。``split`` 可临时覆盖策略。
+    """
     global _session
     game = replay.game_id(game)
     with _lock:
         if _session and _session.get("active"):
-            return {"ok": True, "already": True, "path": _session.get("path", "")}
+            return {"ok": True, "already": True, "path": _session.get("path", ""),
+                    "kind": _session.get("kind", "run")}
         if not _enabled():
             return {"ok": False, "error": "自动录像已关闭"}
+        pol = policy.policy_for(game)
+        if not force:
+            if not policy.master_enabled():
+                return {"ok": False, "skipped": True, "disabled": True,
+                        "error": "OBS 录像总开关已关闭"}
+            if not pol.get("enabled"):
+                return {"ok": False, "skipped": True, "disabled": True,
+                        "error": "这个游戏默认不录像"}
+        mode = policy._clean_split(split, str(pol.get("split") or "none"))
         try:
             free = shutil.disk_usage(
                 replay.RECORDINGS if replay.RECORDINGS.exists() else replay.ROOT).free
@@ -279,14 +326,34 @@ def start_session(game: str = "", note: str = "") -> dict:
             return {"ok": False,
                     "error": f"录像磁盘只剩 {replay.human_size(free)}，先不录了（游戏照打）"}
         _recover_stale_recording()   # 上一次被强杀的话，先在录的那段先收尾
+        script = {"ok": True, "created": False, **policy.script_state(game)}
+        try:
+            script = {**policy.ensure_script(game), "ok": True}
+        except Exception as exc:  # noqa: BLE001
+            script = {"ok": False, "created": False,
+                      "error": f"{type(exc).__name__}: {exc}"}
         ok, why = ensure_obs(game=game)
         if not ok:
-            return {"ok": False, "error": why}
+            return {"ok": False, "error": why, "script": script}
         pre = _preempt_busy_record()
         if not pre.get("ok"):
             return {"ok": False,
-                    "error": f"OBS 里还有一段录制停不掉：{pre.get('error')}"}
+                    "error": f"OBS 里还有一段录制停不掉：{pre.get('error')}",
+                    "script": script}
         scene_ok, scene_why = _prepare_scene(game)
+        if mode == "none":
+            try:
+                out = _start_continuous(game)
+            except Exception as exc:  # noqa: BLE001
+                return {"ok": False,
+                        "error": f"OBS 开录失败：{type(exc).__name__}: {exc}",
+                        "script": script}
+            out.update({
+                "script": script,
+                "warning": "" if scene_ok else f"场景源未完全就绪：{scene_why}",
+                "policy": {"enabled": bool(pol.get("enabled")), "split": mode},
+            })
+            return out
         run_dir = replay.create_run(game, note=note or "自动玩")
         try:
             replay.set_current(run_dir)
@@ -299,16 +366,19 @@ def start_session(game: str = "", note: str = "") -> dict:
             except Exception:
                 pass
             return {"ok": False, "error": f"OBS 开录失败：{type(exc).__name__}: {exc}",
-                    "path": str(run_dir)}
-        _session = {"active": True, "path": str(run_dir), "started_at": time.time(),
+                    "path": str(run_dir), "script": script}
+        _session = {"active": True, "kind": "run", "path": str(run_dir),
+                    "started_at": time.time(),
                     "record_started_at": time.time(), "game": game, "events": 0}
         replay.write_meta(run_dir, status="recording", source="autoplay",
                           scene_error="" if scene_ok else scene_why,
                           started_at=time.strftime("%Y-%m-%dT%H:%M:%S"))
         record_event("run_start", note or "自动玩", game=game,
                      note=note or "自动玩")
-        return {"ok": True, "path": str(run_dir),
-                "warning": "" if scene_ok else f"场景源未完全就绪：{scene_why}"}
+        return {"ok": True, "path": str(run_dir), "kind": "run",
+                "script": script,
+                "warning": "" if scene_ok else f"场景源未完全就绪：{scene_why}",
+                "policy": {"enabled": bool(pol.get("enabled")), "split": mode}}
 
 
 def stop_session(result: str = "") -> dict:
@@ -316,11 +386,21 @@ def stop_session(result: str = "") -> dict:
     global _session
     with _lock:
         sess = _session
-        if sess and sess.get("active"):
+        if sess and sess.get("active") and sess.get("kind", "run") == "run":
             record_event("stop", result=result or "stopped")
         _session = None
     if not sess or not sess.get("active"):
         return {"ok": True, "active": False}
+    if sess.get("kind") == "continuous":
+        try:
+            out = replay.stop_recording_now()
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "active": True, "kind": "continuous",
+                    "error": f"停录失败：{type(exc).__name__}: {exc}",
+                    "path": str(sess.get("path") or "")}
+        return {"ok": True, "active": False, "kind": "continuous",
+                "path": out or str(sess.get("path") or ""),
+                "message": f"已停止录像：{out}" if out else "已停止录像"}
     run_dir = Path(str(sess.get("path") or ""))
     if not run_dir.is_dir():
         return {"ok": False, "error": f"录像目录不存在：{run_dir}"}
@@ -366,9 +446,11 @@ def status() -> dict:
     with _lock:
         if not _session:
             return {"active": False}
-        return {"active": True, "path": _session.get("path", ""),
+        return {"active": True, "kind": _session.get("kind", "run"),
+                "path": _session.get("path", ""),
+                "game": _session.get("game", ""),
                 "started_at": _session.get("started_at", 0)}
 
 
-__all__ = ["ensure_obs", "record_event", "start_session", "stop_session", "force_stop",
-           "status", "write_timeline"]
+__all__ = ["ensure_obs", "prepare_scene", "record_event", "start_session",
+           "stop_session", "force_stop", "status", "write_timeline"]

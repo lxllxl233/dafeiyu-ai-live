@@ -2,5 +2,6 @@ requests>=2.31
 websockets>=12.0
 beautifulsoup4>=4.12
 Pillow>=10.0
+lameenc>=1.8
 # Agent 流程（可选）：pip install -e .[agent]
 # langgraph>=1.0

@@ -1,0 +1,18 @@
+{
+  "scene": "Bili Watch",
+  "game_source": "Bili Screen",
+  "window_source": "Bili Window",
+  "monitor_source": "Bili Monitor",
+  "audio_source": "Bili Audio",
+  "overlay_source": "Bili Scene",
+  "ticker_source": "",
+  "ticker_text": "B站云观影 · AI 生成",
+  "window_match": ["哔哩哔哩", "bilibili", "Bilibili", "Google Chrome", "chrome.exe"],
+  "window_fallback": "Google Chrome",
+  "audio_mode": "desktop",
+  "capture_mode": "monitor",
+  "monitor_index": 1,
+  "overlay_url": "http://127.0.0.1:8730/bili",
+  "overlay_width": 1920,
+  "overlay_height": 1080
+}

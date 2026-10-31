@@ -24,10 +24,13 @@ from pathlib import Path
 
 from dafeiyu import paths
 from dafeiyu.agent.host import AutoplayHost
+from dafeiyu.recording import policy as recording_policy
 
 from ..decision.speech import tidy_say as _tidy_say
 from ..decision.prompts import (NONCOMBAT_PROMPT, SYSTEM_PROMPT, combat_goal,
                                 noncombat_goal, screen_label)
+from ..start_options import FALLBACK as _START_FALLBACK
+from ..start_options import load as _load_start_options
 
 GAME_ID = "slay-the-spire-2"
 
@@ -159,6 +162,11 @@ def _start_autoplay_recording(game: str, mode: str) -> dict:
     return res
 
 
+def _recording_retryable(res: dict) -> bool:
+    """策略关闭 / 总开关关闭不是 OBS 故障，别每 6 秒重试一次。"""
+    return not (res.get("skipped") or res.get("disabled"))
+
+
 def _finish_autoplay_recording(result: str = "") -> dict:
     global _rec_active, _rec_path
     res = _host.stop_recording(result)
@@ -174,6 +182,7 @@ _rec_run_id: str | None = None
 _rec_game = ""
 _rec_mode = ""
 _rec_pending = 0.0
+_rec_split = "run"
 
 
 def _maybe_split_recording(state: dict) -> None:
@@ -184,8 +193,11 @@ def _maybe_split_recording(state: dict) -> None:
         res = _start_autoplay_recording(_rec_game, _rec_mode) or {}
         _log("record_retry", ok=bool(res.get("ok")),
              error=str(res.get("error") or "")[:120])
-        if not res.get("ok"):
+        if not res.get("ok") and _recording_retryable(res):
             _rec_pending = time.time() + 6.0
+    # 策略是「不分集」：整段自动玩只保留一个录像文件，run_id/GAME_OVER 都不切。
+    if _rec_split == "none":
+        return
     rid = str((state.get("run") or {}).get("run_id") or "")
     if not rid:
         # STS2 mod 的状态里没有 run_id（只有 floor/角色/卡组）。切段以
@@ -216,12 +228,15 @@ def _maybe_split_recording(state: dict) -> None:
 
 
 def _record_new_run() -> None:
-    """死亡重开新一局：换一个新视频（每局一个视频）。"""
+    """死亡重开新一局：换一个新视频（一局一个视频）。"""
     global _rec_pending
+    if _rec_split == "none":
+        return
     res = _start_autoplay_recording(_rec_game, _rec_mode) or {}
     _log("record_new_run", ok=bool(res.get("ok")),
          path=str(res.get("path") or ""), error=str(res.get("error") or "")[:120])
-    _rec_pending = 0.0 if res.get("ok") else time.time() + 6.0
+    _rec_pending = (0.0 if res.get("ok") or not _recording_retryable(res)
+                    else time.time() + 6.0)
 
 
 def _settings() -> tuple[str, str]:
@@ -399,7 +414,69 @@ def _set_from_state(state: dict, last: str = "") -> None:
 
 
 # ---------------------------------------------------------------- 开局
-def _ensure_run(sts2, state: dict) -> dict | None:
+# 控制台「开局设置」写 config.json 的 start_options；这里按 mtime 缓存，
+# 每局开新局前读一次就够，不跟 3 秒轮询抢文件。
+_start_options_cache: dict = {"sig": object(), "values": dict(_START_FALLBACK)}
+
+
+def _start_options() -> dict:
+    """当前生效的角色/进阶（控制台可改）；读失败回退铁甲 + A10。"""
+    try:
+        stat = paths.CONFIG_FILE.stat()
+        sig = (stat.st_mtime_ns, stat.st_size)
+    except OSError:
+        sig = None
+    if sig != _start_options_cache["sig"]:
+        _start_options_cache["values"] = dict(_load_start_options())
+        _start_options_cache["sig"] = sig
+    return dict(_start_options_cache["values"])
+
+
+def _character_index(cs: dict, character_id: str) -> int | None:
+    wanted = str(character_id or "").strip().upper()
+    if not wanted:
+        return None
+    for item in cs.get("characters") or ():
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("character_id") or "").strip().upper() != wanted:
+            continue
+        try:
+            return int(item.get("index"))
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def _set_ascension(sts2, state: dict, cs: dict, target: int) -> tuple[dict, dict]:
+    """把选人界面的进阶调到 target；游戏上限更低时停在上限。
+
+    两个方向都走：游戏会记住上次的进阶，所以“想打 A0”必须能降下来。
+    """
+    asc = int(cs.get("ascension") or 0)
+    mx = int(cs.get("max_ascension") or 0)
+    target = max(0, int(target or 0))
+    if mx > 0:
+        target = min(target, mx)
+    action = "increase_ascension" if asc < target else "decrease_ascension"
+    for _ in range(abs(target - asc) + 1):
+        if asc == target or action not in _acts(state):
+            break
+        sts2.act(action)
+        state = sts2.get_state()
+        cs = state.get("character_select") or {}
+        new_asc = int(cs.get("ascension") or 0)
+        if new_asc == asc:      # 按钮点了没反应：别再空转
+            break
+        asc = new_asc
+        action = "increase_ascension" if asc < target else "decrease_ascension"
+    if asc != target:
+        # 按钮不可用 / 点了没反应：照常开局，但把差距记下来，方便事后排查。
+        _log("start_ascension_unmet", want=target, ascension=asc)
+    return state, cs
+
+
+def _ensure_run(sts2, state: dict, options: dict | None = None) -> dict | None:
     screen = _screen(state)
     acts = _acts(state)
     if screen == "GAME_OVER":
@@ -416,24 +493,27 @@ def _ensure_run(sts2, state: dict) -> dict | None:
                 return sts2.get_state()
         return None
     if screen == "CHARACTER_SELECT":
+        opts = dict(options) if isinstance(options, dict) else _start_options()
+        want_char = str(opts.get("character") or _START_FALLBACK["character"])
+        try:
+            want_asc = int(opts.get("ascension", _START_FALLBACK["ascension"]))
+        except (TypeError, ValueError):
+            want_asc = int(_START_FALLBACK["ascension"])
         cs = state.get("character_select") or {}
         selected = str(cs.get("selected_character_id") or "")
-        if selected != "IRONCLAD":
-            chars = cs.get("characters") or []
-            idx = next((c.get("index") for c in chars
-                        if str(c.get("character_id") or "").upper() == "IRONCLAD"), None)
-            if idx is not None:
+        if selected.upper() != want_char.strip().upper():
+            idx = _character_index(cs, want_char)
+            if idx is None:
+                # 角色没解锁 / 这个版本没有：保持当前选择照常开局，别卡死在选人界面。
+                _log("start_character_unavailable", want=want_char, selected=selected)
+            else:
                 sts2.act("select_character", option_index=int(idx))
                 state = sts2.get_state()
                 cs = state.get("character_select") or {}
-        asc = int(cs.get("ascension") or 0)
-        mx = int(cs.get("max_ascension") or 0)
-        for _ in range(max(0, mx - asc)):
-            if "increase_ascension" not in _acts(state):
-                break
-            sts2.act("increase_ascension")
-            state = sts2.get_state()
+        state, cs = _set_ascension(sts2, state, cs, want_asc)
         if "embark" in _acts(state):
+            _log("start_run", character=str(cs.get("selected_character_id") or want_char),
+                 ascension=int(cs.get("ascension") or 0), want_ascension=want_asc)
             sts2.act("embark")
             return sts2.get_state()
     return None
@@ -1638,6 +1718,7 @@ def _wait_game(sts2, timeout: float = 120.0) -> dict | None:
 def _run(game: str, mode: str = "local") -> None:
     global _thread, _speech_until, _rollback_tried, _sl_used, _sl_last
     global _rec_run_id, _rec_game, _rec_mode, _rec_pending, _rec_active, _rec_path
+    global _rec_split
     _rollback_tried = False
     _sl_used = 0
     _sl_last = 0.0
@@ -1648,6 +1729,10 @@ def _run(game: str, mode: str = "local") -> None:
     _rec_pending = 0.0
     _rec_active = False
     _rec_path = ""
+    try:
+        _rec_split = str(recording_policy.policy_for(game).get("split") or "run")
+    except Exception:  # noqa: BLE001
+        _rec_split = "run"
     _deck_clicks.clear()
     sts2 = advisor = llm_tools = llm_planner = screen_planner = None
     try:
@@ -1658,6 +1743,9 @@ def _run(game: str, mode: str = "local") -> None:
             from dafeiyu.core.config import LiveConfig  # noqa: PLC0415
 
             cfg = LiveConfig.load()
+            from dafeiyu.persona.layers import prompt_prefix  # noqa: PLC0415
+
+            persona = prompt_prefix(cfg, game_id="slay-the-spire-2", live=True)
             llm_tools = Sts2Tools(game)
             # 界面决策（地图/事件/营火/商店/宝箱/选牌）是简单选择，关掉思维链：
             # deepseek-flash 开着 thinking 时实测一次 24s、4096 reasoning token、
@@ -1668,12 +1756,12 @@ def _run(game: str, mode: str = "local") -> None:
             screen_thinking = True if think_pref == "on" else False
             llm_planner = LLMPlanner(
                 cfg, model=cfg.autoplay_llm_model or cfg.llm_model,
-                timeout=25.0, system_prompt=SYSTEM_PROMPT,
+                timeout=25.0, system_prompt=(persona + "\n\n" + SYSTEM_PROMPT).strip(),
                 thinking=combat_thinking,
             )
             screen_planner = LLMPlanner(
                 cfg, model=cfg.autoplay_llm_model or cfg.llm_model,
-                timeout=40.0, system_prompt=NONCOMBAT_PROMPT,
+                timeout=40.0, system_prompt=(persona + "\n\n" + NONCOMBAT_PROMPT).strip(),
                 thinking=screen_thinking,
             )
             ok, why = screen_planner.available()
@@ -1686,7 +1774,7 @@ def _run(game: str, mode: str = "local") -> None:
                       started_at=time.time(), last="启动游戏…")
         if not _stopping():
             res = _start_autoplay_recording(game, mode) or {}
-            if not res.get("ok"):
+            if not res.get("ok") and _recording_retryable(res):
                 _rec_pending = time.time() + 6.0   # OBS 没起来就过几秒再试，别让整局没录像
         if _stopping():
             _write_status(last="已停手")
@@ -1764,7 +1852,7 @@ def _run(game: str, mode: str = "local") -> None:
                 _sl_last = 0.0
                 _sl_done.clear()
                 # 每局一个视频：死亡就收尾，等新一局第一屏再开新录像。
-                if _rec_active:
+                if _rec_active and _rec_split != "none":
                     _rec_run_id = ""
                     stop = _finish_autoplay_recording("run_end") or {}
                     _log("record_split", reason="game_over",

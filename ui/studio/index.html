@@ -214,6 +214,82 @@
   .room-item.k-self{border-left-color:#57d38c}
   .room-item.k-self .room-kind{color:#57d38c;border-color:rgba(87,211,140,.45)}
   .chip.on{color:var(--gold);border-color:rgba(244,201,104,.55);background:rgba(244,201,104,.10)}
+  /* current game workspace */
+  .run-grid{grid-template-columns:minmax(0,1.35fr) minmax(330px,.65fr);align-items:start}
+  .game-hero{display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:22px;align-items:center;
+    padding:20px 22px;overflow:hidden;position:relative;
+    background:
+      radial-gradient(70% 130% at 0% 0%, rgba(127,182,255,.16), transparent 60%),
+      radial-gradient(55% 120% at 100% 0%, rgba(244,201,104,.11), transparent 65%),
+      linear-gradient(180deg, rgba(23,26,37,.96), rgba(17,19,28,.96))}
+  .game-hero::after{content:"";position:absolute;right:-40px;bottom:-70px;width:240px;height:240px;
+    border-radius:50%;border:1px solid rgba(244,201,104,.12);pointer-events:none}
+  .hero-main{min-width:0;position:relative;z-index:1}
+  .hero-title{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:4px 0 7px}
+  .hero-title #curGameName{font-size:27px;font-weight:700;letter-spacing:.4px}
+  .hero-status{display:flex;gap:6px;flex-wrap:wrap}
+  .hero-meta{font-size:12.5px;color:#c6d0e4;line-height:1.65}
+  .hero-tip{margin-top:8px;font-size:11.5px;color:var(--muted);line-height:1.7;
+    border-left:2px solid rgba(244,201,104,.4);padding-left:10px}
+  .hero-control{position:relative;z-index:1;background:rgba(11,13,18,.45);border:1px solid var(--line);
+    border-radius:13px;padding:13px;display:flex;flex-direction:column;gap:8px}
+  .hero-control select{width:100%}
+  .hero-buttons{display:flex;gap:8px;flex-wrap:wrap}
+  .hero-buttons .btn{flex:1;min-width:112px}
+  .mini-label{font-size:9.5px;letter-spacing:1.5px;color:var(--muted);text-transform:uppercase}
+  .run-card{padding:18px 20px}
+  .run-headline{display:flex;align-items:flex-start;gap:14px;justify-content:space-between}
+  .run-screen{font-size:19px;font-weight:650;letter-spacing:.3px;line-height:1.35}
+  .run-last{font-size:11.5px;color:var(--muted);margin-top:5px;line-height:1.6}
+  .run-actions{display:flex;gap:8px;flex:none}
+  .stat-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:9px;margin:15px 0 12px}
+  .stat{border:1px solid var(--line);border-radius:11px;padding:10px 11px;
+    background:linear-gradient(180deg, rgba(255,255,255,.035), rgba(255,255,255,.01))}
+  .stat small{display:block;font-size:9.5px;letter-spacing:1.2px;color:var(--muted);margin-bottom:5px}
+  .stat b{font-size:14px;font-weight:650;color:#e7ecf8;overflow:hidden;text-overflow:ellipsis;
+    white-space:nowrap;display:block}
+  .run-kv{display:flex;flex-wrap:wrap;gap:6px 18px;padding:10px 0;border-top:1px dashed var(--line);
+    border-bottom:1px dashed var(--line);font-size:11px;color:var(--muted)}
+  .run-kv b{color:#cdd6e8;font-weight:500}
+  .play-settings{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-top:13px}
+  .play-settings .field{margin:0}
+  .rec-card{padding:18px 20px}
+  .rec-summary{display:flex;align-items:center;gap:12px;border:1px solid var(--line);border-radius:12px;
+    padding:12px;background:rgba(11,13,18,.35);margin-bottom:12px}
+  .rec-orb{width:34px;height:34px;border-radius:50%;display:grid;place-items:center;font-size:13px;
+    color:var(--muted);background:rgba(255,255,255,.04);border:1px solid var(--line);flex:none}
+  .rec-orb.on{color:#ff8a8a;border-color:rgba(240,106,106,.5);background:rgba(240,106,106,.12);
+    box-shadow:0 0 18px rgba(240,106,106,.18)}
+  .rec-orb.ok{color:#8fe0ad;border-color:rgba(87,211,140,.45);background:rgba(87,211,140,.10)}
+  .rec-title{font-size:13px;font-weight:600}
+  .rec-sub{font-size:10.5px;color:var(--muted);line-height:1.55;margin-top:3px;word-break:break-word}
+  .switch-row{display:flex;align-items:flex-start;gap:9px;cursor:pointer;font-size:12px;
+    padding:9px 0;border-top:1px dashed var(--line)}
+  .switch-row input{margin-top:2px;accent-color:var(--gold)}
+  .switch-row b{font-weight:600;display:block}
+  .switch-row small{display:block;color:var(--muted);font-size:10.5px;line-height:1.55;margin-top:2px}
+  .switch-row.compact{align-items:center;padding:2px 0;border:0;font-size:11.5px;color:var(--muted)}
+  .rec-policy{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:5px 0 10px}
+  .rec-policy .field{margin:0}
+  .script-line{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:9px 0;
+    border-top:1px dashed var(--line);font-size:11px;color:var(--muted)}
+  .script-line code{font-family:Consolas,monospace;font-size:10.5px;color:#c8d2e6;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}
+  .rec-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:4px}
+  .rec-actions .btn{flex:1;min-width:104px}
+  .game-list-card{padding:0;margin-top:16px}
+  .game-list-card summary{display:flex;align-items:center;gap:10px;padding:14px 18px;cursor:pointer;
+    list-style:none;font-size:12.5px}
+  .game-list-card summary::-webkit-details-marker{display:none}
+  .game-list-card summary b{font-size:12.5px}
+  .game-list-card summary span{color:var(--gold);font-size:11px}
+  .game-list-card summary small{margin-left:auto;color:var(--muted);font-size:10.5px}
+  .game-list-card #gameRows{padding:0 18px 8px}
+  .game.current{background:rgba(244,201,104,.055);border-radius:10px;padding-left:9px;padding-right:9px}
+  @media (max-width:1100px){.run-grid,.game-hero{grid-template-columns:1fr}.hero-control{max-width:none}}
+  @media (max-width:720px){.stat-grid,.play-settings,.rec-policy{grid-template-columns:repeat(2,minmax(0,1fr))}
+    .run-headline{flex-direction:column}.run-actions{width:100%}.run-actions .btn{flex:1}}
+  @media (max-width:1100px){.admin-shell{grid-template-columns:196px minmax(0,1fr)}.grid.two,.grid.wide{grid-template-columns:1fr}}
   footer{position:relative;z-index:1;padding:10px 26px 22px;color:var(--muted);font-size:11.5px;
     max-width:1680px;margin:0 auto;display:flex;gap:16px;flex-wrap:wrap}
   footer code{background:rgba(255,255,255,.04);border:1px solid var(--line);border-radius:6px;
@@ -262,7 +338,7 @@
       <button class="nav-item active" type="button" data-view="basic">
         <i>◈</i><span>基础配置</span><b id="navVoice">—</b></button>
       <button class="nav-item" type="button" data-view="games">
-        <i>▦</i><span>游戏</span><b id="navGame">—</b></button>
+        <i>▦</i><span>当前游戏</span><b id="navGame">—</b></button>
       <button class="nav-item" type="button" data-view="persona">
         <i>✎</i><span>人设配置</span><b id="navPersona">—</b></button>
       <div class="nav-group">直播</div>
@@ -277,6 +353,7 @@
     </nav>
     <div class="side-tip">
       <div>当前游戏：<code id="navGameTip">—</code></div>
+      <div style="margin-top:6px">录像：<code id="sideRec">—</code></div>
       <div style="margin-top:6px">API Key 只存本机，不回显。</div>
       <div style="margin-top:8px" id="sideVersion">—</div>
     </div>
@@ -354,64 +431,200 @@
     <section class="view" data-view="games" id="view-games">
       <div class="view-head">
         <div>
-          <span class="eyebrow">GAME / CURRENT RUN</span>
-          <h2>游戏与当前局</h2>
-          <p>右键桌宠「游戏 ▸」或这里切换；切换会写入 config.game，游戏适配器和 Agent 下一轮读取。</p>
+          <span class="eyebrow">CURRENT GAME / LIVE RUN</span>
+          <h2>当前游戏</h2>
+          <p>切换后这里只保留本游戏的局内数据、录像策略和操作；其他游戏收进下面的列表。</p>
+        </div>
+        <div class="head-actions">
+          <a href="#agent">Agent 流程 →</a>
         </div>
       </div>
-      <div class="grid two">
-        <div class="card">
-          <h2>当前游戏 <span>config.game</span></h2>
-          <div class="field"><label for="cfgGame">切换游戏</label>
-            <select id="cfgGame"></select></div>
-          <div class="row" style="display:flex;gap:9px;align-items:center;flex-wrap:wrap">
-            <button class="btn" id="gameSave">保存切换</button>
+
+      <div class="game-hero card">
+        <div class="hero-main">
+          <span class="eyebrow" id="curGameKicker">NOW PLAYING</span>
+          <div class="hero-title"><span id="curGameName">—</span><span class="hero-status" id="curGameBadges"></span></div>
+          <div class="hero-meta" id="curGameMeta">—</div>
+          <div class="hero-tip" id="gameHint">—</div>
+        </div>
+        <div class="hero-control">
+          <label class="mini-label" for="cfgGame">切换游戏</label>
+          <select id="cfgGame"></select>
+          <div class="hero-buttons">
+            <button class="btn" id="gameSave">应用切换</button>
             <button class="btn ghost" id="gameLaunch">启动当前游戏</button>
-            <span class="hint" id="gameHint" style="color:var(--muted);font-size:11px">—</span>
-          </div>
-          <div class="hint" style="margin-top:12px;line-height:1.8;color:var(--muted)">
-            切换不会重启游戏或 Agent；只改变当前配置。启动走 game.json 的 launch（Steam / exe）。游戏是否在线看右侧连接状态。
           </div>
         </div>
-        <div class="card">
-          <h2>游戏列表 <span id="gameCount">—</span></h2>
-          <div class="hint" style="margin-bottom:8px;color:var(--muted);font-size:11px">点一个游戏 → 编辑它的策略文档、查看并完善资料笔记。</div>
-          <div id="gameRows"></div>
-        </div>
-        <div class="card" id="biliPlaylistCard" style="grid-column:1/-1;display:none">
-          <h2>B站播放列表 <span id="biliPlaylistState">—</span></h2>
-          <div class="hint" id="biliPlaylistHint" style="margin-bottom:8px;color:var(--muted);font-size:11px">
-            选一个候选 → 播放；新视频会先关掉旧标签页再开新的，同一个视频则直接刷新当前标签页。
-          </div>
-          <div class="row" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
-            <button class="btn sm ghost" id="biliRefresh">刷新当前标签页</button>
-            <button class="btn sm ghost" id="biliClose">关闭当前标签页</button>
-            <span class="hint" id="biliBrowserState" style="color:var(--muted);font-size:11px">—</span>
-          </div>
-          <div id="biliPlaylist"></div>
-        </div>
-        <div class="card" id="gameDetailCard" style="grid-column:1/-1;display:none">
-          <h2><span id="gameDetailTitle">游戏详情</span> <span id="gameDetailMeta">—</span></h2>
-          <div class="hint" id="gameDetailDesc" style="line-height:1.8;color:var(--muted)">—</div>
-          <div class="editor">
-            <select id="gEditFile" onchange="loadGameFile()"></select>
-            <textarea id="gEditText" spellcheck="false" placeholder="选择一篇策略/人设文档开始编辑…"></textarea>
-            <div class="meta" id="gEditHint">不限字数，保存即写盘；页面会立刻刷新。</div>
-            <div class="row" style="margin-top:0">
-              <button class="btn" type="button" onclick="saveGameFile()">保存</button>
-              <button class="btn ghost" type="button" onclick="loadGameFile()">还原</button>
-              <span class="hint" id="gEditState"></span>
+      </div>
+
+      <div class="grid run-grid">
+        <div class="card run-card" id="runCard">
+          <h2>当前局 <span id="runState">—</span></h2>
+          <div class="run-headline">
+            <div>
+              <div class="run-screen" id="playDetail">—</div>
+              <div class="run-last" id="runLast">—</div>
             </div>
-            <div class="hint" id="gEditEffect" style="margin-top:6px;line-height:1.7;color:var(--muted);font-size:11px">
-              生效方式：文档保存后，Agent 下次按需读取时用新内容；正在跑的这局不会热更新——实时决策提示词仍是
-              <code>decision/prompts.py</code>，改完要重启自动玩才生效。人设卡/梗走「人设配置 → 重载人设」。
+            <div class="run-actions">
+              <button class="btn" id="playStart" type="button">让她玩</button>
+              <button class="btn ghost" id="playStop" type="button">停手</button>
+              <button class="btn ghost" id="liveToggle" type="button">LLM 直播模式</button>
             </div>
           </div>
-          <h2 style="margin-top:14px">游戏资料 <span>原始资料只读，策略与笔记可编辑</span></h2>
-          <div class="hint" id="gMatCounts" style="line-height:1.8;color:var(--muted)">—</div>
-          <div class="chips" id="gMatFiles"></div>
-          <pre id="gMatPreview" style="max-height:260px;overflow:auto;white-space:pre-wrap;font-size:11px;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px;margin-top:10px">点上面的资料文件查看内容。</pre>
+          <div class="stat-grid" id="runStats">
+            <div class="stat"><small>步数</small><b id="playStep">—</b></div>
+            <div class="stat"><small>Token</small><b id="playTokens">—</b></div>
+            <div class="stat"><small>LLM</small><b id="playCalls">—</b></div>
+            <div class="stat" id="routeStat"><small>路线</small><b id="playRoute">—</b></div>
+          </div>
+          <div class="run-kv">
+            <span>录像 <b id="playRecord">—</b></span>
+            <span>直播模式 <b id="liveState">—</b></span>
+            <span>当前模块 <b id="liveModule">—</b></span>
+            <span>下次切换 <b id="liveNext">—</b></span>
+          </div>
+          <div class="play-settings" id="playSettings">
+            <div class="field"><label for="playMode">玩法</label>
+              <select id="playMode">
+                <option value="local">本地算账（不烧 token）</option>
+                <option value="llm">LLM 规划（慢，按回合思考）</option>
+              </select></div>
+            <div class="field"><label for="playLlmModel">LLM 模型</label>
+              <input id="playLlmModel" placeholder="deepseek-chat"></div>
+            <div class="field"><label for="playPace">播报节奏</label>
+              <select id="playPace">
+                <option value="voice">慢速：等语音播完再打</option>
+                <option value="normal">普通：旧版快节奏</option>
+              </select></div>
+          </div>
+          <div class="hint" id="playHint">运行中切换玩法会停手，重新点「让她玩」生效；节奏下一步生效。</div>
         </div>
+
+        <div class="card rec-card" id="recordingCard">
+          <h2>OBS 录像 <span id="recState">—</span></h2>
+          <div class="rec-summary">
+            <div class="rec-orb" id="recOrb">●</div>
+            <div>
+              <div class="rec-title" id="recTitle">未连接 OBS</div>
+              <div class="rec-sub" id="recSub">—</div>
+            </div>
+          </div>
+          <label class="switch-row">
+            <input type="checkbox" id="recMaster">
+            <span><b>自动录像总开关</b><small>关闭后所有游戏都不自动开录；手动「开始录像」仍可用</small></span>
+          </label>
+          <div class="rec-policy">
+            <div class="field"><label for="recEnabled">本游戏自动录像</label>
+              <label class="switch-row compact"><input type="checkbox" id="recEnabled"><span>开局/开播时自动检查并开录</span></label>
+            </div>
+            <div class="field"><label for="recSplit">分集方式</label>
+              <select id="recSplit">
+                <option value="run">一局一集（每局单独 run-NNNN）</option>
+                <option value="none">不分集（连续录一段）</option>
+              </select>
+            </div>
+          </div>
+          <div class="script-line">
+            <span class="mini-label">录制脚本</span>
+            <code id="recScript">—</code>
+            <span class="badge" id="recScriptState">—</span>
+          </div>
+          <div class="rec-actions">
+            <button class="btn" id="recToggle" type="button">开始录像</button>
+            <button class="btn ghost" id="recEnsure" type="button">检查/创建脚本</button>
+            <button class="btn ghost" id="recSave" type="button">保存策略</button>
+          </div>
+          <div class="hint" id="recHint">开启后：先检查本游戏的 OBS 场景脚本，没有就创建；再按策略开录。关闭会停录并收尾。</div>
+        </div>
+      </div>
+
+      <div class="card" id="startOptionsCard" style="display:none">
+        <h2>开局设置 <span id="startOptionsMeta">—</span></h2>
+        <div class="hint" id="startOptionsHint" style="line-height:1.7;color:var(--muted);margin-bottom:8px">—</div>
+        <div class="grid two" id="startOptionsFields"></div>
+        <div class="row" style="display:flex;gap:8px;align-items:center">
+          <button class="btn" id="startOptionsSave" type="button">保存开局设置</button>
+          <span class="hint" id="startOptionsState" style="color:var(--muted);font-size:11px"></span>
+        </div>
+      </div>
+
+      <details class="card game-list-card">
+        <summary><b>全部游戏</b><span id="gameCount">—</span><small>切换 / 查看策略与资料</small></summary>
+        <div id="gameRows"></div>
+      </details>
+
+      <div class="card" id="biliPlaylistCard" style="display:none">
+        <h2>B站播放列表 <span id="biliPlaylistState">—</span></h2>
+        <div class="hint" id="biliPlaylistHint" style="margin-bottom:8px;color:var(--muted);font-size:11px">
+          选一个候选 → 播放；新视频会先关掉旧标签页再开新的，同一个视频则直接刷新当前标签页。
+        </div>
+        <div class="row" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
+          <button class="btn sm ghost" id="biliRefresh">刷新当前标签页</button>
+          <button class="btn sm ghost" id="biliClose">关闭当前标签页</button>
+          <a class="btn sm ghost" id="biliSceneOpen" href="/bili" target="_blank"
+             rel="noopener">打开直播场景</a>
+          <span class="hint" style="color:var(--muted);font-size:11px">
+            直播姬浏览器源：<code>http://127.0.0.1:8730/bili</code>
+          </span>
+          <span class="hint" id="biliBrowserState" style="color:var(--muted);font-size:11px">—</span>
+        </div>
+        <div id="biliPlaylist"></div>
+      </div>
+
+      <div class="card" id="biliCommentCard" style="display:none">
+        <h2>视频评论 <span>可选 · 只对同类视频</span></h2>
+        <div class="hint" style="line-height:1.8;color:var(--muted);margin-bottom:8px">
+          模型只在“大肥鱼同类”视频且有具体想法时才写评论；不是每条都发。这里是公开评论，
+          需要 B 站登录 Cookie 才会真正发出。每日上限填 0 表示不限制。
+        </div>
+        <label class="hint" style="display:flex;align-items:center;gap:7px;cursor:pointer;margin-bottom:8px">
+          <input id="biliCommentEnabled" type="checkbox"> 允许自动发视频评论
+        </label>
+        <div class="grid two">
+          <div class="field"><label for="biliCommentMaxDay">每日上限（0 = 不限）</label>
+            <input id="biliCommentMaxDay" type="number" min="0" max="100000" step="1"></div>
+          <div class="field"><label for="biliCommentGap">最小间隔（秒）</label>
+            <input id="biliCommentGap" type="number" min="0" max="86400" step="60"></div>
+          <div class="field"><label for="biliCommentChars">评论字数上限</label>
+            <input id="biliCommentChars" type="number" min="10" max="200" step="10"></div>
+          <div class="field"><label>登录状态</label>
+            <span class="hint" id="biliCommentHint">—</span></div>
+        </div>
+        <div class="row" style="display:flex;gap:8px;align-items:center">
+          <button class="btn" id="biliCommentSave">保存评论设置</button>
+          <span class="hint" id="biliCommentState" style="color:var(--muted);font-size:11px"></span>
+        </div>
+        <h3 style="margin:16px 0 4px;font-size:13px">已发评论
+          <span class="hint" id="biliCommentCount" style="color:var(--muted);font-size:11px;font-weight:400">0 条</span>
+        </h3>
+        <div class="hint" style="line-height:1.7;color:var(--muted);font-size:11px;margin-bottom:6px">
+          只记真的发到 B 站视频评论区的：视频链接、标题、评论内容。记录在
+          <code>logs/bilibili_commentary.comments.jsonl</code>，最多留最近 200 条。
+        </div>
+        <div id="biliCommentHistory"></div>
+      </div>
+
+      <div class="card" id="gameDetailCard" style="display:none">
+        <h2><span id="gameDetailTitle">游戏详情</span> <span id="gameDetailMeta">—</span></h2>
+        <div class="hint" id="gameDetailDesc" style="line-height:1.8;color:var(--muted)">—</div>
+        <div class="editor">
+          <select id="gEditFile" onchange="loadGameFile()"></select>
+          <textarea id="gEditText" spellcheck="false" placeholder="选择一篇策略/人设文档开始编辑…"></textarea>
+          <div class="meta" id="gEditHint">不限字数，保存即写盘；页面会立刻刷新。</div>
+          <div class="row" style="margin-top:0">
+            <button class="btn" type="button" onclick="saveGameFile()">保存</button>
+            <button class="btn ghost" type="button" onclick="loadGameFile()">还原</button>
+            <span class="hint" id="gEditState"></span>
+          </div>
+          <div class="hint" id="gEditEffect" style="margin-top:6px;line-height:1.7;color:var(--muted);font-size:11px">
+            生效方式：文档保存后，Agent 下次按需读取时用新内容；正在跑的这局不会热更新——实时决策提示词仍是
+            <code>decision/prompts.py</code>，改完要重启自动玩才生效。人设卡/梗走「人设配置 → 重载人设」。
+          </div>
+        </div>
+        <h2 style="margin-top:14px">游戏资料 <span>原始资料只读，策略与笔记可编辑</span></h2>
+        <div class="hint" id="gMatCounts" style="line-height:1.8;color:var(--muted)">—</div>
+        <div class="chips" id="gMatFiles"></div>
+        <pre id="gMatPreview" style="max-height:260px;overflow:auto;white-space:pre-wrap;font-size:11px;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px;margin-top:10px">点上面的资料文件查看内容。</pre>
       </div>
     </section>
 
@@ -534,8 +747,6 @@
           <p>一次决策拆成观察 / 规划 / 验算 / 执行 / 反思；节点耗时、状态和 token 都写本机 JSONL。</p>
         </div>
         <div class="head-actions">
-          <button class="btn" id="playStart" type="button">让她玩</button>
-          <button class="btn ghost" id="playStop" type="button">停手</button>
           <button class="btn ghost" id="agentRun" type="button">跑一轮演示</button>
           <a href="#telemetry">看决策日志 →</a>
         </div>
@@ -564,6 +775,7 @@
           <div class="kv"><span>合计</span><b id="tokApiTotal">—</b></div>
           <div class="kv"><span>输入 / 输出</span><b id="tokApiIO">—</b></div>
           <div class="kv"><span>LLM 调用</span><b id="tokApiCalls">—</b></div>
+          <div class="kv"><span>来源</span><b id="tokSources">—</b></div>
           <div class="kv"><span>最近一步</span><b id="tokApiLast">—</b></div>
           <div class="hint" id="tokApiHint" style="line-height:1.7;color:var(--muted);margin-top:8px">
             按 <code>logs/autoplay.jsonl</code> 的真实 usage 累计；重试失败的调用也计入。
@@ -581,34 +793,14 @@
           <div id="agentRuns"><div class="empty">还没有轨迹。</div></div>
         </div>
         <div class="card">
-          <h2>观察与优化 <span>本机</span></h2>
+          <h2>轨迹 <span id="agentTraceCount">—</span></h2>
           <div class="hint" style="line-height:1.9;color:var(--muted)">
             看三件事：哪个节点最慢、validate 重试几次、每次 token 多少。改 prompt / 加规则 / 换模型前后，
             跑同一局面比这三项。轨迹只存摘要，不存完整局面和 API Key。
           </div>
-          <div class="kv" style="margin-top:12px"><span>自动玩法</span><b id="playState">—</b></div>
-          <div class="kv"><span>局面</span><b id="playDetail">—</b></div>
-          <div class="kv"><span>路线</span><b id="playRoute">—</b></div>
-          <div class="kv"><span>步数</span><b id="playStep">—</b></div>
-          <div class="kv"><span>Token 累计</span><b id="playTokens">—</b></div>
-          <div class="kv"><span>LLM 调用</span><b id="playCalls">—</b></div>
-          <div class="kv"><span>录像</span><b id="playRecord">—</b></div>
-          <div class="field" style="margin-top:12px"><label for="playMode">玩法</label>
-            <select id="playMode">
-              <option value="local">本地算账（不烧 token）</option>
-              <option value="llm">LLM 规划（慢，按回合思考）</option>
-            </select></div>
-          <div class="field"><label for="playLlmModel">LLM 模型</label>
-            <input id="playLlmModel" placeholder="deepseek-chat"></div>
-          <div class="field"><label for="playPace">播报节奏</label>
-            <select id="playPace">
-              <option value="voice">慢速：等语音播完再打</option>
-              <option value="normal">普通：旧版快节奏</option>
-            </select></div>
-          <div class="hint" id="playHint" style="font-size:12px">运行中切换玩法会停手，重新点「让她玩」生效；节奏下一步生效。</div>
-          <div class="kv"><span>轨迹条数</span><b id="agentTraceCount">—</b></div>
-          <div class="kv"><span>运行命令</span><b><code>python main.py agent run --demo</code></b></div>
+          <div class="kv" style="margin-top:12px"><span>运行命令</span><b><code>python main.py agent run --demo</code></b></div>
           <div class="kv"><span>真实 dry-run</span><b><code>python main.py agent run</code></b></div>
+          <div class="kv"><span>自动玩设置</span><b><a href="#games">去「当前游戏」→</a></b></div>
         </div>
       </div>
     </section>
@@ -704,12 +896,15 @@ function renderPills(){
   const voice = d.voice || {};
   const mambo = (voice.voices || {}).mambo || {};
   const animal = (voice.voices || {}).animal || {};
-  const sts2 = (d.games || []).find(g => g.id === "slay-the-spire-2") || {};
+  const current = (d.games || []).find(g => g.id === String(d.config?.game || "")) || {};
+  const rec = d.recording || {};
+  const recOn = !!(rec.recording || rec.obs?.recording);
   $("#pills").innerHTML = [
     pill(`${dotFor((ov.clients || 0) > 0)}OBS <b>${ov.clients || 0}</b> 路`),
+    pill(`${dotFor(recOn, true)}录像<b>${recOn ? "进行中" : (rec.obs?.ok ? "待机" : "未连接")}</b>`),
     pill(`${dotFor(!!mambo.available, true)}曼波<b>${mambo.available ? "在线" : "离线"}</b>`),
     pill(`${dotFor(true)}动物语<b>就绪</b>`),
-    pill(`${dotFor(!!sts2.connected, true)}游戏<b>${sts2.connected ? "在线" : "未连接"}</b>`),
+    pill(`${dotFor(!!current.connected, true)}${esc(current.name || "游戏")}<b>${current.connected ? "在线" : "未连接"}</b>`),
     pill(`${dotFor(true)}内核 <b>v${esc(d.product?.version || "—")}</b>`),
   ].join("");
 }
@@ -933,16 +1128,18 @@ function renderVoice(){
 
 function renderGames(){
   const games = DATA?.games || [];
+  const current = String(DATA?.config?.game || "");
   $("#gameCount").textContent = `${games.length} 个`;
   $("#gameRows").innerHTML = games.map(g => {
     const m = g.manifest || {};
     const compat = m.compat || {};
     const corpus = m.corpus || {};
     const badges = [];
-    if(compat.api) badges.push(`<span class="badge">API ${esc(compat.api)}</span>`);
-    if(corpus.db) badges.push(`<span class="badge gold">${esc(corpus.db)}</span>`);
-    if(corpus.tables) badges.push(`<span class="badge">${esc(Object.values(corpus.tables).reduce((a,b)=>a+b,0))} 条资料</span>`);
-    return `<div class="game" style="cursor:pointer" onclick="openGame('${esc(g.id)}')">
+    if (g.id === current) badges.push(`<span class="badge gold">当前</span>`);
+    if (compat.api) badges.push(`<span class="badge">API ${esc(compat.api)}</span>`);
+    if (corpus.db) badges.push(`<span class="badge gold">${esc(corpus.db)}</span>`);
+    if (corpus.tables) badges.push(`<span class="badge">${Object.values(corpus.tables).reduce((a,b)=>a+b,0)} 条资料</span>`);
+    return `<div class="game ${g.id === current ? "current" : ""}" style="cursor:pointer" onclick="openGame('${esc(g.id)}')">
       <div class="gh">${dotFor(!!g.connected, true)}<span class="gn">${esc(g.name)}</span>
         <span class="gp">${esc(g.platform || "")}</span></div>
       <div class="gd">${esc(g.notes || "")}</div>
@@ -1018,6 +1215,100 @@ function renderBiliPlaylist(){
   }).join("");
 }
 
+function renderBiliCommentSettings(){
+  const card = $("#biliCommentCard");
+  if(!card) return;
+  const isB = String(DATA?.config?.game || "") === "bilibili-hot-commentary";
+  card.style.display = isB ? "" : "none";
+  if(!isB) return;
+  const s = DATA?.bilibili_comment_settings || {};
+  $("#biliCommentEnabled").checked = !!s.enabled;
+  $("#biliCommentMaxDay").value = Number(s.max_per_day ?? 0);
+  $("#biliCommentGap").value = Number(s.min_gap_s ?? 600);
+  $("#biliCommentChars").value = Number(s.max_chars ?? 60);
+  $("#biliCommentHint").textContent = s.can_post
+    ? "已配置登录 Cookie，可以发评论"
+    : (s.cookie_set
+      ? "Cookie 缺少 SESSDATA 或 bili_jct，评论会被跳过"
+      : "未配置登录 Cookie，评论只会生成、不会发到 B 站");
+  renderBiliCommentHistory();
+}
+
+// 已发评论账本：引擎真发成功后写 logs/bilibili_commentary.comments.jsonl。
+// 视频链接/标题/评论内容都是外部文本，渲染前一律 esc()。
+function biliCommentUrl(raw){
+  const url = String(raw || "").trim();
+  return /^https:\/\/www\.bilibili\.com\/video\//.test(url) ? url : "";
+}
+
+function fmtBiliWhen(ts){
+  const n = Number(ts);
+  if(!n) return "—";
+  const d = new Date(n * 1000);
+  const p = (x) => String(x).padStart(2, "0");
+  return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+function renderBiliCommentHistory(){
+  const box = $("#biliCommentHistory");
+  if(!box) return;
+  const data = DATA?.bilibili_video_comments || {};
+  const items = Array.isArray(data.items) ? data.items : [];
+  const count = Number.isFinite(Number(data.count)) ? Number(data.count) : items.length;
+  $("#biliCommentCount").textContent = `${count} 条`;
+  if(!items.length){
+    box.innerHTML = `<div class="hint" style="color:var(--muted);font-size:11px;padding:6px 0">还没发过视频评论。</div>`;
+    return;
+  }
+  box.innerHTML = items.map((row) => {
+    const url = biliCommentUrl(row.url);
+    const name = row.title || row.bvid || "未命名视频";
+    const head = url
+      ? `<a href="${esc(url)}" target="_blank" rel="noopener" style="color:inherit;text-decoration:none">${esc(name)}</a>`
+      : esc(name);
+    const meta = [
+      row.bvid ? esc(row.bvid) : "",
+      row.owner ? esc(row.owner) : "",
+      row.rpid ? `rpid ${esc(row.rpid)}` : "",
+    ].filter(Boolean).join(" · ");
+    return `<div style="padding:8px 0;border-top:1px solid var(--line)">
+      <div style="display:flex;gap:10px;align-items:baseline;justify-content:space-between">
+        <div style="font-size:12.5px;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${head}</div>
+        <div style="color:var(--muted);font-size:10.5px;white-space:nowrap">${esc(fmtBiliWhen(row.at))}</div>
+      </div>
+      <div style="font-size:12px;line-height:1.7;margin-top:3px;word-break:break-word">${esc(row.text || "")}</div>
+      ${meta ? `<div style="color:var(--muted);font-size:10.5px;margin-top:2px">${meta}</div>` : ""}
+    </div>`;
+  }).join("");
+}
+
+async function saveBiliCommentSettings(){
+  const btn = $("#biliCommentSave");
+  btn.disabled = true;
+  try{
+    const r = await fetch("/api/bilibili/comment", {
+      method:"POST", headers:{"content-type":"application/json"},
+      body: JSON.stringify({
+        enabled: $("#biliCommentEnabled").checked,
+        max_per_day: Number($("#biliCommentMaxDay").value || 0),
+        min_gap_s: Number($("#biliCommentGap").value || 0),
+        max_chars: Number($("#biliCommentChars").value || 60),
+      }),
+    });
+    const res = await r.json();
+    if(!res.ok) throw new Error(res.error || ("HTTP " + r.status));
+    DATA.bilibili_comment_settings = res.settings || {};
+    renderBiliCommentSettings();
+    $("#biliCommentState").textContent = "已保存；重启 B站云观影后生效";
+    toast("视频评论设置已保存");
+  }catch(e){
+    $("#biliCommentState").textContent = "";
+    toast("保存评论设置失败：" + e.message, true);
+  }finally{
+    btn.disabled = false;
+  }
+}
+
 function renderRight(){
   const ov = DATA?.overlay || {};
   const st = DATA?.studio || {};
@@ -1071,7 +1362,31 @@ function renderConfig(){
   }
   setIfIdle("#cfgGame", cfg.game || "");
   const current = games.find(g => g.id === cfg.game) || {};
-  $("#gameHint").textContent = current.name ? `当前：${current.name}` : "当前游戏未注册";
+  $("#gameHint").textContent = current.name
+    ? `切换只写 config.game，不会重启游戏；启动走 ${current.platform || "game.json 的 launch"}。`
+    : "当前游戏未注册";
+  renderCurrentGame(current);
+  if (GAME_SEL && GAME_SEL !== cfg.game) openGame(cfg.game);
+}
+
+function renderCurrentGame(game){
+  const cfg = DATA?.config || {};
+  const g = game || (DATA?.games || []).find(x => x.id === cfg.game) || {};
+  const play = DATA?.play || {};
+  const rec = DATA?.recording || {};
+  $("#curGameName").textContent = g.name || cfg.game || "未选择游戏";
+  $("#curGameMeta").textContent = [g.platform, g.id, g.notes].filter(Boolean).join(" · ").slice(0, 220) || "—";
+  const badges = [];
+  badges.push(g.connected
+    ? `<span class="badge gold">在线</span>`
+    : `<span class="badge">离线</span>`);
+  if (play.running) badges.push(`<span class="badge gold">本局运行中</span>`);
+  else if (play.error) badges.push(`<span class="badge">异常停手</span>`);
+  else badges.push(`<span class="badge">空闲</span>`);
+  if (rec.recording) badges.push(`<span class="badge gold">录像中</span>`);
+  const policy = rec.policy || {};
+  if (policy.enabled) badges.push(`<span class="badge">自动录像 · ${policy.split === "run" ? "一局一集" : "不分集"}</span>`);
+  $("#curGameBadges").innerHTML = badges.join("");
 }
 
 function renderNav(){
@@ -1080,13 +1395,18 @@ function renderNav(){
   const voices = v.voices || {};
   const game = (cfg.game_options || DATA?.games || []).find(g => g.id === cfg.game) || {};
   const said = DATA?.studio?.said ?? 0;
+  const apiTokens = Number(DATA?.agent?.tokens?.total || 0);
   const playTokens = Number(DATA?.play?.tokens_total || 0);
-  const tokens = playTokens > 0 ? playTokens : (DATA?.overlay?.usage?.total ?? 0);
+  const tokens = apiTokens > 0 ? apiTokens : (playTokens > 0 ? playTokens : (DATA?.overlay?.usage?.total ?? 0));
   $("#navVoice").textContent = cfg.voice === "mambo"
     ? (voices.mambo?.available ? "曼波在线" : "曼波离线")
     : (cfg.voice === "off" ? "静音" : "动物语");
   $("#navGame").textContent = game.name || cfg.game || "—";
   $("#navGameTip").textContent = game.name || cfg.game || "—";
+  const rec = DATA?.recording || {};
+  $("#sideRec").textContent = rec.recording
+    ? `录像中${rec.session?.kind === "run" ? " · 分集" : ""}`
+    : (rec.obs?.ok ? "待机" : "未连接");
   $("#navPersona").textContent = DATA?.persona?.id || "—";
   $("#navSaid").textContent = `${said} 句`;
   const roomCount = (DATA?.bilibili?.events || []).length;
@@ -1157,9 +1477,121 @@ function renderAgent(){
   $("#navAgent").textContent = status ? `${latest.duration_ms || 0}ms` : "—";
 }
 
+function renderRecording(){
+  const rec = DATA?.recording || {};
+  const obs = rec.obs || {};
+  const policy = rec.policy || {};
+  const script = rec.script || {};
+  const recording = !!(rec.recording || obs.recording);
+  const orb = $("#recOrb");
+  orb.className = "rec-orb " + (!obs.ok ? "" : (recording ? "on" : "ok"));
+  $("#recState").textContent = !obs.ok ? "OBS 离线" : (recording ? "录像中" : "待机");
+  $("#recTitle").textContent = !obs.ok
+    ? "OBS 未连接"
+    : (recording ? "正在录像" : "OBS 已连接");
+  $("#recSub").textContent = !obs.ok
+    ? (obs.message || "打开 OBS 并开启 WebSocket 后刷新")
+    : (recording
+      ? (rec.obs?.output_path || rec.session?.path || "已开始录制")
+      : (policy.enabled ? "自动录像已开启，开局/开播时检查脚本并开录" : "本游戏默认不自动录像，可手动开始"));
+  if (document.activeElement !== $("#recMaster")) $("#recMaster").checked = rec.master !== false;
+  if (document.activeElement !== $("#recEnabled")) $("#recEnabled").checked = !!policy.enabled;
+  if (document.activeElement !== $("#recSplit")) $("#recSplit").value = policy.split === "none" ? "none" : "run";
+  $("#recScript").textContent = script.path || "—";
+  $("#recScriptState").textContent = script.exists ? "已存在" : "未创建";
+  $("#recScriptState").className = "badge " + (script.exists ? "gold" : "");
+  const splitLabel = policy.split === "none" ? "不分集" : "一局一集";
+  $("#recHint").textContent = !obs.ok
+    ? (obs.message || "先打开 OBS；保存策略不依赖 OBS。")
+    : `当前策略：${policy.enabled ? "自动" : "手动"} · ${splitLabel}；开启时会先检查脚本，没有就创建。`;
+  const btn = $("#recToggle");
+  btn.textContent = recording ? "停止录像" : "开始录像";
+  btn.className = "btn " + (recording ? "ghost" : "");
+}
+
+// 开局设置：选项由当前游戏 game.json 的 start 块声明（角色/难度…），
+// 核心只按声明清洗并写 config.json；这里只负责渲染和提交，不写死任何游戏。
+function renderStartOptions(){
+  const card = $("#startOptionsCard");
+  if(!card) return;
+  const data = DATA?.game_start || {};
+  const spec = data.spec || {};
+  const options = Array.isArray(spec.options) ? spec.options : [];
+  if(!options.length){ card.style.display = "none"; return; }
+  card.style.display = "";
+  const values = data.values || {};
+  const gid = String(data.game || DATA?.config?.game || "");
+  $("#startOptionsMeta").textContent = gid || "—";
+  $("#startOptionsHint").textContent = spec.note || "保存后，下一局开新局时生效。";
+  $("#startOptionsFields").innerHTML = options.map((opt) => {
+    const key = String(opt.key || "");
+    const label = esc(opt.label || key);
+    const value = values[key];
+    const hint = opt.hint
+      ? `<div class="hint" style="color:var(--muted);font-size:10.5px;margin-top:3px">${esc(opt.hint)}</div>`
+      : "";
+    if((opt.type || (opt.choices ? "choice" : "")) === "choice"){
+      const rows = (opt.choices || []).map((c) => {
+        const v = String(c && c.value !== undefined ? c.value : c);
+        const text = c && c.label ? String(c.label) : v;
+        return `<option value="${esc(v)}" ${v === String(value) ? "selected" : ""}>${esc(text)}</option>`;
+      }).join("");
+      return `<div class="field"><label>${label}</label>
+        <select data-start-key="${esc(key)}">${rows}</select>${hint}</div>`;
+    }
+    if(opt.type === "int"){
+      return `<div class="field"><label>${label}</label>
+        <input type="number" step="1" data-start-key="${esc(key)}" value="${esc(value)}"
+          min="${esc(opt.min ?? 0)}" max="${esc(opt.max ?? 20)}">${hint}</div>`;
+    }
+    if(opt.type === "bool"){
+      return `<div class="field"><label>${label}</label>
+        <label class="switch-row compact"><input type="checkbox" data-start-key="${esc(key)}"
+          ${value ? "checked" : ""}><span>开启</span></label>${hint}</div>`;
+    }
+    return `<div class="field"><label>${label}</label>
+      <input type="text" data-start-key="${esc(key)}" value="${esc(value)}">${hint}</div>`;
+  }).join("");
+}
+
+function startOptionsValues(){
+  const out = {};
+  document.querySelectorAll("#startOptionsFields [data-start-key]").forEach((el) => {
+    const key = el.dataset.startKey;
+    if(!key) return;
+    if(el.type === "checkbox") out[key] = !!el.checked;
+    else if(el.type === "number") out[key] = Number(el.value || 0);
+    else out[key] = String(el.value);
+  });
+  return out;
+}
+
+async function saveStartOptions(){
+  const btn = $("#startOptionsSave");
+  btn.disabled = true;
+  try{
+    const r = await fetch("/api/game/start", {
+      method:"POST", headers:{"content-type":"application/json"},
+      body: JSON.stringify({values: startOptionsValues()}),
+    });
+    const res = await r.json();
+    if(!res.ok) throw new Error(res.error || ("HTTP " + r.status));
+    DATA.game_start = res;
+    renderStartOptions();
+    $("#startOptionsState").textContent = "已保存；下一局开新局时生效";
+    toast("开局设置已保存");
+  }catch(e){
+    $("#startOptionsState").textContent = "";
+    toast("保存开局设置失败：" + e.message, true);
+  }finally{
+    btn.disabled = false;
+  }
+}
+
 function renderPlay(){
   const p = DATA?.play || {};
   const cfg = DATA?.config || {};
+  const gid = String(cfg.game || "");
   const running = !!p.running;
   const stopping = !!p.stopping;
   const mode = p.mode || cfg.autoplay_mode || "local";
@@ -1173,14 +1605,32 @@ function renderPlay(){
   if (document.activeElement !== $("#playPace")) {
     $("#playPace").value = pace === "normal" ? "normal" : "voice";
   }
-  $("#playState").textContent = stopping
-    ? "正在停手…"
-    : (running
-      ? `运行中 · ${mode === "llm" ? "LLM" : "本地"} · ${pace === "voice" ? "慢速" : "普通"}`
-      : (p.error ? "异常停手" : "停手"));
-  const where = p.screen ? `${p.screen} · f${p.floor || "?"} · HP ${p.hp || "?"}/${p.max_hp || "?"}` : (p.last || "—");
-  $("#playDetail").textContent = where;
+  $("#runState").textContent = stopping
+    ? "正在收尾…"
+    : (running ? "运行中" : (p.error ? "异常停手" : "空闲"));
+  const screen = String(p.screen || "");
+  const screenLabel = {
+    PLAYING: "局内", MAP: "地图", COMBAT: "战斗", REWARD: "奖励", SHOP: "商店",
+    REST: "营火", EVENT: "事件", CHEST: "宝箱", LEVEL_UP: "升级选择",
+    MENU: "菜单", GAME_OVER: "结算", LOADING: "读盘", PAUSED: "暂停",
+    SELECTING: "选视频", WAITING: "等候选", STOPPED: "已停止",
+  }[screen] || screen || "—";
+  let detail = screenLabel;
+  if (!screen) {
+    detail = "—";
+  } else if (gid === "vampire-survivors") {
+    detail += ` · Lv ${p.level ?? "?"} · HP ${p.hp ?? "?"}/${p.max_hp ?? "?"} · 击杀 ${p.kills ?? "?"}`;
+  } else if (gid === "slay-the-spire-2") {
+    detail += ` · f${p.floor || "?"} · HP ${p.hp ?? "?"}/${p.max_hp ?? "?"}`;
+  } else if (gid === "bilibili-hot-commentary") {
+    detail = String(p.video_title || screenLabel);
+    if (p.position_s != null) detail += ` · ${Math.floor(Number(p.position_s)/60)}:${String(Math.floor(Number(p.position_s)%60)).padStart(2,"0")}`;
+  }
+  $("#playDetail").textContent = detail;
+  $("#runLast").textContent = p.last || (running ? "正在运行…" : "点「让她玩」开始本局。");
   const route = p.route_seq ? String(p.route_seq) : "";
+  $("#routeStat").style.display = gid === "slay-the-spire-2" ? "" : "none";
+  $("#playSettings").style.display = gid === "bilibili-hot-commentary" ? "none" : "";
   $("#playRoute").textContent = route || (p.screen === "MAP" ? "规划中…" : "—");
   $("#playRoute").title = route
     ? `opt${p.route_option ?? "?"} · f${p.route_floor ?? "?"}${p.route_note ? " · " + p.route_note : ""}`
@@ -1189,25 +1639,50 @@ function renderPlay(){
   const tin = Number(p.tokens_in || 0), tout = Number(p.tokens_out || 0);
   const total = Number(p.tokens_total || (tin + tout));
   $("#playTokens").textContent = total > 0
-    ? `${total} tok（入 ${tin} / 出 ${tout}）`
+    ? `${total} tok`
     : (mode === "llm" ? "0 tok" : "—");
+  $("#playTokens").title = total > 0 ? `入 ${tin} / 出 ${tout}` : "";
   $("#playCalls").textContent = Number(p.llm_calls || 0) > 0
     ? `${p.llm_calls} 次` : "—";
-  if (p.recording) {
-    $("#playRecord").textContent = "录像中 · 记事件";
-    $("#playRecord").title = `${p.record_path || ""}\nevents.jsonl / chapters.md`;
+  const rec = DATA?.recording || {};
+  if (p.recording || rec.recording) {
+    $("#playRecord").textContent = "录像中";
+    $("#playRecord").title = `${p.record_path || rec.obs?.output_path || ""}`;
   } else if (p.record_error) {
     $("#playRecord").textContent = `未录像：${p.record_error}`;
     $("#playRecord").title = p.record_error;
   } else if (p.record_path) {
-    $("#playRecord").textContent = "已收尾 · 时间轴";
+    $("#playRecord").textContent = "已收尾";
     $("#playRecord").title = `${p.record_path}\nchapters.md / timeline.json`;
   } else {
-    $("#playRecord").textContent = "未开录";
+    $("#playRecord").textContent = rec.policy?.enabled ? "未开录" : "策略关闭";
     $("#playRecord").title = "";
   }
   $("#playStart").disabled = running || stopping;
   $("#playStop").disabled = !(running || stopping);
+  const live = DATA?.live || {};
+  const liveRunning = !!live.running;
+  const liveModules = live.modules || [];
+  $("#liveState").textContent = liveRunning
+    ? `运行中 · 第 ${live.segments || 0} 段`
+    : (live.phase === "error" && live.error ? `异常：${live.error}` : "停手");
+  $("#liveModule").textContent = live.module_label
+    || (liveRunning ? (live.phase === "thinking" ? "正在选下一段…" : "切换中…") : "—");
+  $("#liveModule").title = live.reason || (liveModules.map(m => m.label).join(" / "));
+  if (liveRunning && Number(live.next_at) > 0) {
+    const left = Math.max(0, Math.round((Number(live.next_at) - Date.now()/1000) / 60));
+    $("#liveNext").textContent = `约 ${left} 分钟后`;
+  } else {
+    $("#liveNext").textContent = "—";
+  }
+  const liveBtn = $("#liveToggle");
+  if (liveBtn) {
+    liveBtn.textContent = liveRunning ? "停止直播模式" : "LLM 直播模式";
+    liveBtn.title = liveRunning
+      ? "让导演停手；当前模块也会停"
+      : `候选：${liveModules.map(m => m.label).join("、") || "没有可直播模块"}`;
+    liveBtn.disabled = !liveRunning && !(DATA?.config?.llm_api_key_set);
+  }
   $("#playHint").textContent = stopping
     ? "正在收尾：先停录像并写 chapters.md / timeline.json，再退出。"
     : (running
@@ -1328,15 +1803,20 @@ function renderTokens(){
   $("#tokApiTotal").textContent = total ? `${fmtTok(total)} tok` : "—";
   $("#tokApiIO").textContent = total ? `${fmtTok(t.input)} / ${fmtTok(t.output)}` : "—";
   $("#tokApiCalls").textContent = t.calls ? `${t.calls} 次` : "—";
+  const sources = (t.sources || []).filter(s => Number(s.calls || 0) > 0);
+  $("#tokSources").textContent = sources.length
+    ? sources.map(s => `${s.label || s.source} ${fmtTok(s.total)}（${s.calls} 次）`).join(" · ")
+    : "—";
   const steps = t.steps || [];
   const last = steps[steps.length - 1];
   $("#tokApiLast").textContent = last
     ? `${fmtTok(last.total)} tok · ${last.note || last.kind || "LLM"}` : "—";
   const kinds = (t.kinds || []).map(k => `${k.kind} ${fmtTok(k.total)}（${k.calls} 次）`);
   $("#tokKinds").textContent = kinds.length ? `按类型：${kinds.join(" · ")}` : "—";
-  if(t.path){
+  const paths = (t.paths || [t.path]).filter(Boolean);
+  if(paths.length){
     $("#tokApiHint").innerHTML =
-      `按 <code>${esc(t.path)}</code> 的真实 usage 累计；重试失败的调用也计入。`;
+      `按 ${paths.map(p => `<code>${esc(p)}</code>`).join(" + ")} 的真实 usage 累计；自动玩和 KOOK 聊天都计入，重试失败的调用也计入。`;
   }
   $("#tokSteps").innerHTML = steps.length ? steps.slice().reverse().map(s => {
     const time = new Date((s.at || 0) * 1000).toLocaleTimeString("zh-CN", {hour12:false});
@@ -1380,7 +1860,7 @@ async function startPlay(){
 
 async function stopPlay(){
   $("#playStop").disabled = true;
-  $("#playState").textContent = "正在停手…";
+  $("#runState").textContent = "正在收尾…";
   try{
     const r = await fetch("/api/play/stop", {
       method:"POST", headers:{"content-type":"application/json"}, body:"{}",
@@ -1392,6 +1872,34 @@ async function stopPlay(){
     setTimeout(refresh, 1800);
   }catch(e){ toast("停手失败：" + e.message, true); }
   finally{ refresh(); }
+}
+
+async function toggleLive(){
+  const running = !!(DATA?.live || {}).running;
+  const btn = $("#liveToggle");
+  btn.disabled = true;
+  try{
+    if(running){
+      toast("正在停止直播模式…");
+      const r = await fetch("/api/play/stop", {
+        method:"POST", headers:{"content-type":"application/json"}, body:"{}"});
+      const res = await r.json();
+      if(!res.ok) throw new Error(res.error || res.message || "HTTP " + r.status);
+      toast(res.message || "已停止直播模式");
+    } else {
+      if(!DATA?.config?.llm_api_key_set){ throw new Error("先在「基础配置」里配 API Key"); }
+      toast("正在启动 LLM 直播模式…");
+      const r = await fetch("/api/play/start", {
+        method:"POST", headers:{"content-type":"application/json"},
+        body: JSON.stringify({mode:"director"}),
+      });
+      const res = await r.json();
+      if(!res.ok) throw new Error(res.error || res.message || "HTTP " + r.status);
+      toast(res.message || "直播模式已开始");
+    }
+    setTimeout(refresh, 1200);
+  }catch(e){ toast("直播模式失败：" + e.message, true); }
+  finally{ btn.disabled = false; refresh(); }
 }
 
 async function runAgent(){
@@ -1442,6 +1950,57 @@ async function saveConfig(){
   }catch(e){ toast("保存失败：" + e.message, true); }
 }
 
+async function recordingPost(action, extra){
+  const r = await fetch("/api/recording", {
+    method:"POST", headers:{"content-type":"application/json"},
+    body: JSON.stringify({action, game: DATA?.config?.game || "", ...(extra || {})}),
+  });
+  const res = await r.json();
+  if(!r.ok || !res.ok) throw new Error(res.error || res.result?.error || ("HTTP " + r.status));
+  return res;
+}
+
+async function recToggle(){
+  const rec = DATA?.recording || {};
+  const recording = !!(rec.recording || rec.obs?.recording);
+  const btn = $("#recToggle");
+  btn.disabled = true;
+  try{
+    toast(recording ? "正在停录并收尾…" : "正在检查脚本并开录…");
+    const res = await recordingPost(recording ? "stop" : "start");
+    const msg = res.result?.message || (recording ? "已停止录像" : "已开始录像");
+    toast(msg);
+    await refresh();
+  }catch(e){ toast("录像操作失败：" + e.message, true); }
+  finally{ btn.disabled = false; renderRecording(); }
+}
+
+async function recEnsure(){
+  const btn = $("#recEnsure");
+  btn.disabled = true;
+  try{
+    const res = await recordingPost("ensure");
+    toast(res.result?.message || "录制脚本已检查");
+    await refresh();
+  }catch(e){ toast("检查脚本失败：" + e.message, true); }
+  finally{ btn.disabled = false; }
+}
+
+async function recSave(){
+  const btn = $("#recSave");
+  btn.disabled = true;
+  try{
+    const res = await recordingPost("save", {
+      enabled: $("#recEnabled").checked,
+      split: $("#recSplit").value,
+      recording_enabled: $("#recMaster").checked,
+    });
+    toast(res.result?.message || "录像策略已保存");
+    await refresh();
+  }catch(e){ toast("保存录像策略失败：" + e.message, true); }
+  finally{ btn.disabled = false; }
+}
+
 async function saveGame(){
   const game = $("#cfgGame").value;
   if(!game){ toast("先选一个游戏"); return; }
@@ -1454,6 +2013,7 @@ async function saveGame(){
     if(!res.ok) throw new Error(res.error || "HTTP " + r.status);
     toast("当前游戏已切换");
     await refresh();
+    openGame(game);
   }catch(e){ toast("切换失败：" + e.message, true); }
 }
 
@@ -1523,8 +2083,8 @@ function renderSamples(){
 }
 
 function render(){
-  renderPills(); renderPersona(); renderVoice(); renderGames(); renderBiliPlaylist(); renderRight(); renderFeed(); renderSamples();
-  renderConfig(); renderTelemetry(); renderAgent(); renderPlay(); renderRoom(); renderTokens(); renderNav();
+  renderPills(); renderPersona(); renderVoice(); renderGames(); renderBiliPlaylist(); renderBiliCommentSettings(); renderRight(); renderFeed(); renderSamples();
+  renderConfig(); renderTelemetry(); renderAgent(); renderPlay(); renderRecording(); renderStartOptions(); renderRoom(); renderTokens(); renderNav();
   $("#rootHint").textContent = DATA?.root ? `仓库：${DATA.root}` : "";
 }
 
@@ -1683,9 +2243,26 @@ $("#gameSave").addEventListener("click", saveGame);
 $("#gameLaunch").addEventListener("click", launchGame);
 $("#biliRefresh").addEventListener("click", () => biliControl("refresh"));
 $("#biliClose").addEventListener("click", () => biliControl("close"));
+$("#biliCommentSave").addEventListener("click", saveBiliCommentSettings);
 $("#agentRun").addEventListener("click", runAgent);
 $("#playStart").addEventListener("click", startPlay);
 $("#playStop").addEventListener("click", stopPlay);
+$("#recToggle").addEventListener("click", recToggle);
+$("#recEnsure").addEventListener("click", recEnsure);
+$("#recSave").addEventListener("click", recSave);
+$("#startOptionsSave").addEventListener("click", saveStartOptions);
+$("#recMaster").addEventListener("change", async () => {
+  try{
+    const res = await recordingPost("save", {
+      recording_enabled: $("#recMaster").checked,
+      enabled: $("#recEnabled").checked,
+      split: $("#recSplit").value,
+    });
+    toast(res.result?.message || "总开关已保存");
+    await refresh();
+  }catch(e){ toast("保存总开关失败：" + e.message, true); }
+});
+$("#liveToggle").addEventListener("click", toggleLive);
 $("#playMode").addEventListener("change", savePlaySettings);
 $("#playPace").addEventListener("change", savePlaySettings);
 $("#playLlmModel").addEventListener("change", savePlaySettings);

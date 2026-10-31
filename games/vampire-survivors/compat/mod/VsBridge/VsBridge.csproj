@@ -1,0 +1,50 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net6.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <AssemblyName>VsBridge</AssemblyName>
+    <RootNamespace>VsBridge</RootNamespace>
+    <OutputPath>bin\</OutputPath>
+    <Version>0.1.0</Version>
+    <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
+    <ProduceReferenceAssembly>false</ProduceReferenceAssembly>
+    <DebugType>portable</DebugType>
+    <NoWarn>$(NoWarn);MSB3277;CS0618;CS0649;CS0169</NoWarn>
+    <!--
+      Build refs are copied from the local game install (BepInEx/core + BepInEx/interop).
+      They are 150+ MB and git-ignored; see README.md for the copy steps.
+      Override with: dotnet build -p:VsRefs=<folder>
+    -->
+    <VsRefs Condition="'$(VsRefs)' == ''">$(MSBuildThisFileDirectory)..\refs\vs-refs</VsRefs>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="0Harmony"><HintPath>$(VsRefs)\0Harmony.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="BepInEx.Core"><HintPath>$(VsRefs)\BepInEx.Core.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="BepInEx.Unity.Common"><HintPath>$(VsRefs)\BepInEx.Unity.Common.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="BepInEx.Unity.IL2CPP"><HintPath>$(VsRefs)\BepInEx.Unity.IL2CPP.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Il2CppInterop.Runtime"><HintPath>$(VsRefs)\Il2CppInterop.Runtime.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Il2CppInterop.Common"><HintPath>$(VsRefs)\Il2CppInterop.Common.dll</HintPath><Private>false</Private></Reference>
+
+    <Reference Include="VampireSurvivors.Runtime"><HintPath>$(VsRefs)\interop\VampireSurvivors.Runtime.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Il2Cppmscorlib"><HintPath>$(VsRefs)\interop\Il2Cppmscorlib.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Il2CppSystem"><HintPath>$(VsRefs)\interop\Il2CppSystem.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Il2CppSystem.Core"><HintPath>$(VsRefs)\interop\Il2CppSystem.Core.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.CoreModule"><HintPath>$(VsRefs)\interop\UnityEngine.CoreModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.UI"><HintPath>$(VsRefs)\interop\UnityEngine.UI.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.InputLegacyModule"><HintPath>$(VsRefs)\interop\UnityEngine.InputLegacyModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.IMGUIModule"><HintPath>$(VsRefs)\interop\UnityEngine.IMGUIModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.TextRenderingModule"><HintPath>$(VsRefs)\interop\UnityEngine.TextRenderingModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Unity.TextMeshPro"><HintPath>$(VsRefs)\interop\Unity.TextMeshPro.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Newtonsoft.Json"><HintPath>$(VsRefs)\interop\Newtonsoft.Json.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Zenject"><HintPath>$(VsRefs)\interop\Zenject.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Rewired_Core"><HintPath>$(VsRefs)\interop\Rewired_Core.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Coherence.Toolkit"><HintPath>$(VsRefs)\interop\Coherence.Toolkit.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="PhaserPort"><HintPath>$(VsRefs)\interop\PhaserPort.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="PauseSystem"><HintPath>$(VsRefs)\interop\PauseSystem.dll</HintPath><Private>false</Private></Reference>
+  </ItemGroup>
+</Project>

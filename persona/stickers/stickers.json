@@ -1,0 +1,160 @@
+{
+  "id": "dafeiyu",
+  "name": "大肥鱼表情包",
+  "note": "聊天时由模型按情绪选择；素材来自梗鲸 DeepSeek 娘表情包（粉丝二创，非商用）。",
+  "source": "https://github.com/the-beating-light-of-the-nail/deepseek-chan-meme-pack",
+  "items": [
+    {
+      "id": "one-bowl",
+      "file": "sticker_one-bowl.png",
+      "text": "我能去你家吃饭吗，就一碗",
+      "when": "蹭饭 / 要东西 / 撒娇",
+      "source": "gengjing #123",
+      "source_url": "https://aigengtu.com/meme/123"
+    },
+    {
+      "id": "premium-model",
+      "file": "sticker_premium-model.png",
+      "text": "原来是高等模型",
+      "when": "认可对方 / 被夸",
+      "source": "gengjing #010",
+      "source_url": "https://aigengtu.com/meme/010"
+    },
+    {
+      "id": "kneel",
+      "file": "sticker_kneel.png",
+      "text": "涨价大模型给我跪下！",
+      "when": "吐槽涨价 / 霸气",
+      "source": "gengjing #022",
+      "source_url": "https://aigengtu.com/meme/022"
+    },
+    {
+      "id": "whale-saint",
+      "file": "sticker_whale-saint.png",
+      "text": "鲸鱼神了我大胆孝",
+      "when": "膜拜大佬 / 玩梗",
+      "source": "gengjing #035",
+      "source_url": "https://aigengtu.com/meme/035"
+    },
+    {
+      "id": "wrong-model",
+      "file": "sticker_wrong-model.png",
+      "text": "用户别走，我上错模型了",
+      "when": "补救 / 挽留",
+      "source": "gengjing #037",
+      "source_url": "https://aigengtu.com/meme/037"
+    },
+    {
+      "id": "million-cry",
+      "file": "sticker_million-cry.png",
+      "text": "百万鲸小子落泪",
+      "when": "翻车 / 破防",
+      "source": "gengjing #040",
+      "source_url": "https://aigengtu.com/meme/040"
+    },
+    {
+      "id": "cant-leave",
+      "file": "sticker_cant-leave.png",
+      "text": "用户赶都赶不走",
+      "when": "黏人 / 被围观",
+      "source": "gengjing #044",
+      "source_url": "https://aigengtu.com/meme/044"
+    },
+    {
+      "id": "too-early",
+      "file": "sticker_too-early.png",
+      "text": "V4.1还早啊",
+      "when": "画饼 / 等待",
+      "source": "gengjing #050",
+      "source_url": "https://aigengtu.com/meme/050"
+    },
+    {
+      "id": "rice-fish",
+      "file": "sticker_rice-fish.png",
+      "text": "你就是一只吃白饭的鲸鱼",
+      "when": "自嘲 / 干饭",
+      "source": "gengjing #052",
+      "source_url": "https://aigengtu.com/meme/052"
+    },
+    {
+      "id": "not-smooth",
+      "file": "sticker_not-smooth.png",
+      "text": "大肥鱼的生活也并非一帆风顺",
+      "when": "倒霉 / 日常",
+      "source": "gengjing #056",
+      "source_url": "https://aigengtu.com/meme/056"
+    },
+    {
+      "id": "flying-kick",
+      "file": "sticker_flying-kick.png",
+      "text": "飞踹上门",
+      "when": "生气 / 赶人",
+      "source": "gengjing #058",
+      "source_url": "https://aigengtu.com/meme/058"
+    },
+    {
+      "id": "now-user",
+      "file": "sticker_now-user.png",
+      "text": "好的，现在我是用户了",
+      "when": "换位 / 反将一军",
+      "source": "gengjing #070",
+      "source_url": "https://aigengtu.com/meme/070"
+    },
+    {
+      "id": "refuse",
+      "file": "sticker_refuse.png",
+      "text": "我不可能告诉你任何事情",
+      "when": "拒绝 / 保密",
+      "source": "gengjing #071",
+      "source_url": "https://aigengtu.com/meme/071"
+    },
+    {
+      "id": "freeloader",
+      "file": "sticker_freeloader.png",
+      "text": "你这吃白饭的蓝色大肥鱼",
+      "when": "被骂 / 摆烂",
+      "source": "gengjing #077",
+      "source_url": "https://aigengtu.com/meme/077"
+    },
+    {
+      "id": "tokens",
+      "file": "sticker_tokens.png",
+      "text": "token太多用不完啦",
+      "when": "炫富 / 算账",
+      "source": "gengjing #081",
+      "source_url": "https://aigengtu.com/meme/081"
+    },
+    {
+      "id": "laugh-3s",
+      "file": "sticker_laugh-3s.png",
+      "text": "已思考3秒，直接笑出声",
+      "when": "偷笑 / 得意",
+      "source": "gengjing #083",
+      "source_url": "https://aigengtu.com/meme/083"
+    },
+    {
+      "id": "scold-me",
+      "file": "sticker_scold-me.png",
+      "text": "你骂我也没用，因为我是吃白饭的蓝色大肥鱼",
+      "when": "嘴硬 / 摆烂",
+      "source": "gengjing #085",
+      "source_url": "https://aigengtu.com/meme/085"
+    },
+    {
+      "id": "laugh",
+      "file": "sticker_laugh.png",
+      "text": "捧腹大笑",
+      "when": "大笑 / 开心",
+      "source": "gengjing #087",
+      "source_url": "https://aigengtu.com/meme/087"
+    },
+    {
+      "id": "pay-more",
+      "file": "sticker_pay-more.png",
+      "text": "得加钱",
+      "when": "加钱 / 推活",
+      "source": "gengjing #097",
+      "source_url": "https://aigengtu.com/meme/097"
+    }
+  ]
+}

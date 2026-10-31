@@ -17,9 +17,8 @@
     左键拖动  → 挪位置（松手自动记住，下次原地开）
     右下角拖动 → 缩放（等比，0.5×–1.8×；缩放后大小也记住）
     滚轮      → 缩放（同一个比例，懒得找角就用它）
-    右键      → 菜单：置顶 / 点击穿透 / 声音 / 录屏里隐藏 / OBS 录像 / 语音 / 模型 /
-                配置 API / 管理端 / 示例 / 关闭
-    ☰（右下角金钮）→ 穿透模式下也能点：左键拖、右键菜单
+    右键      → 「⚙️ 设置」：打开设置页（桌宠 / 语音 / 模型 / 服务端口 / 直播 / KOOK）
+    ☰（右下角金钮）→ 穿透模式下也能点：左键拖、右键设置
     Ctrl+Alt+D 点击穿透开关（穿透后只有 ☰ 和右下缩放把手可点，其余照常穿过去）
     Ctrl+Alt+H 隐藏/显示
     Ctrl+Alt+S 声音开关
@@ -32,7 +31,7 @@
     注意：思考态没有「N 秒后自动消失」这种假逻辑；只有 240s 存活超时（Agent 崩了才回空闲）。
 
 直播时怎么用：OBS 的游戏画面源是 game_capture（只钩游戏进程），本来就不会录到这个窗；
-另外窗口默认能被录屏拍到（要隐藏可勾右键「录屏里隐藏」或加 --exclude-capture）。
+另外窗口默认能被录屏拍到（要隐藏去设置页勾「录屏里隐藏」或加 --exclude-capture）。
 声音是页面同款动物语（同一个五声音阶合成），本地播放，不进录像。
 """
 from __future__ import annotations
@@ -47,6 +46,7 @@ import os
 import random
 import re
 import struct
+import subprocess
 import sys
 import tempfile
 import threading
@@ -55,6 +55,7 @@ import urllib.request
 import wave
 from collections import deque
 from ctypes import wintypes
+from pathlib import Path
 
 try:
     from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont, ImageOps
@@ -67,16 +68,47 @@ from .. import paths
 from ..games.catalog import env_value
 from . import instance_lock              # 单实例锁：屏幕上不许出现两个弹窗
 from .caster_state import CasterState, IDLE_TEXT, THINKING_TEXT  # 主播三态状态机
+from .stream_overlay import (
+    TEMPLATES as OVERLAY_TEMPLATES,
+    OverlayWindow,
+    load_template as load_overlay_template,
+    save_template as save_overlay_template,
+)
 
 ROOT = os.fspath(paths.ROOT)
 ASSETS = os.path.join(ROOT, "ui", "overlay", "assets")
 STATE_FILE = os.path.join(ROOT, "logs", "streamer_window.json")
 TTS_CACHE = os.path.join(ROOT, "logs", "tts_cache")
 PORT = int(env_value("OVERLAY_PORT", "8730"))
+
+
+def _config_port() -> int:
+    """config.json 里的 overlay / 控制台端口；读不到再退回环境变量/8730。
+
+    设置页改端口后重启，新进程就是靠这里拿到新端口去轮询 /state 的。
+    """
+    try:
+        from ..core.config import LiveConfig
+
+        port = int(LiveConfig.load().port or 0)
+        if 1 <= port <= 65535:
+            return port
+    except Exception:
+        pass
+    return PORT
+
+
 # 可选：游戏窗口标题（只用于「把桌宠放到游戏旁边」；不填就按主屏居中）
 GAME_WINDOW_TITLE = os.environ.get("DAFEIYU_GAME_WINDOW_TITLE", "")
 PLACEHOLDER = "（还没收到弹幕 —— agent 一开口，这里就换成它说的话）"
 _VOICE_CHOICES = (("mambo", "曼波语"), ("animalese", "动物语"), ("off", "静音"))
+
+# 桌宠右键紧贴右侧弹出设置齿轮；面板模式仍保留一项菜单。旧菜单项 ID（1–6 / 10–13 / 20– / 40– / 50– / 70 / 80– / 90）
+# 不回收也不复用：docs 和外部脚本里可能还记着它们，留给历史。
+MENU_SETTINGS = 100
+# 桌宠会跟着 config.json 变的字段：设置页存完 1~2 秒内就生效，不用重启。
+_LIVE_CFG_KEYS = ("voice", "volume", "pet_muted", "pet_topmost",
+                  "pet_click_through", "pet_exclude_capture", "pet_status_bar")
 
 # ---------------------------------------------------------------- 桌宠形象
 # 精灵来自 https://github.com/1190fasheqi/dafeiyu-pet（MIT，见 assets/pet/SOURCE.md）。
@@ -121,6 +153,7 @@ FONT_BOLD = [r"C:\Windows\Fonts\msyhbd.ttc", r"C:\Windows\Fonts\msyhbd.ttf"] + F
 
 user32 = ctypes.windll.user32
 gdi32 = ctypes.windll.gdi32
+shell32 = ctypes.windll.shell32
 kernel32 = ctypes.windll.kernel32
 
 
@@ -1080,7 +1113,7 @@ def render_pet(text: str, mode: str, scale: float, now: float, pet) -> Image.Ima
 
     font = get_font(max(11, int(round(16 * scale))))
     pad_x, pad_y = int(16 * scale), int(12 * scale)
-    max_tw = max(120, min(int(420 * scale), W - int(28 * scale) - 2 * pad_x))
+    max_tw = max(120, min(int(330 * scale), W - int(180 * scale) - 2 * pad_x))
     probe = ImageDraw.Draw(canvas)
     lines = wrap_cjk(text, font, max_tw, probe)
     line_h = int(font.size * 1.42) if hasattr(font, "size") else int(23 * scale)
@@ -1137,7 +1170,9 @@ WM_DESTROY = 0x0002
 WM_MOUSEMOVE = 0x0200
 WM_LBUTTONDOWN = 0x0201
 WM_LBUTTONUP = 0x0202
+WM_LBUTTONDBLCLK = 0x0203
 WM_RBUTTONUP = 0x0205
+WM_CONTEXTMENU = 0x007B
 WM_NCLBUTTONDOWN = 0x00A1
 WM_HOTKEY = 0x0312
 WM_EXITSIZEMOVE = 0x0232
@@ -1169,6 +1204,14 @@ SWP_NOMOVE = 0x0002
 SWP_NOZORDER = 0x0004
 SWP_SHOWWINDOW = 0x0040
 SWP_NOACTIVATE = 0x0010
+HWND_TOPMOST = -1
+SW_HIDE = 0
+SW_SHOWNA = 8
+WM_TIMER = 0x0113
+WM_APP = 0x8000
+TRAY_CALLBACK = WM_APP + 17
+NIN_SELECT = 0x0400
+NIN_KEYSELECT = 0x0401
 
 
 class BLENDFUNCTION(ctypes.Structure):
@@ -1262,11 +1305,26 @@ def _init_winapi():
     u.EnumDisplayMonitors.restype = ctypes.c_bool
     u.GetMonitorInfoW.argtypes = [wintypes.HMONITOR, ctypes.c_void_p]
     u.GetMonitorInfoW.restype = ctypes.c_bool
+    u.MonitorFromWindow.argtypes = [wintypes.HWND, wintypes.DWORD]
+    u.MonitorFromWindow.restype = wintypes.HMONITOR
     u.FindWindowW.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR]
     u.FindWindowW.restype = wintypes.HWND
     u.ReleaseCapture.argtypes = []
     u.SetCapture.argtypes = [wintypes.HWND]
     u.SetCapture.restype = wintypes.HWND
+    u.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
+    u.ShowWindow.restype = ctypes.c_bool
+    u.SetTimer.argtypes = [wintypes.HWND, ctypes.c_size_t, wintypes.UINT, ctypes.c_void_p]
+    u.SetTimer.restype = ctypes.c_size_t
+    u.KillTimer.argtypes = [wintypes.HWND, ctypes.c_size_t]
+    u.KillTimer.restype = ctypes.c_bool
+    u.LoadImageW.argtypes = [wintypes.HINSTANCE, wintypes.LPCWSTR, wintypes.UINT,
+                             ctypes.c_int, ctypes.c_int, wintypes.UINT]
+    u.LoadImageW.restype = wintypes.HANDLE
+    u.LoadIconW.argtypes = [wintypes.HINSTANCE, ctypes.c_void_p]
+    u.LoadIconW.restype = wintypes.HANDLE
+    u.DestroyIcon.argtypes = [wintypes.HANDLE]
+    u.DestroyIcon.restype = ctypes.c_bool
     u.SendMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
     u.SendMessageW.restype = ctypes.c_ssize_t
     u.PostMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
@@ -1343,6 +1401,9 @@ class StreamerWindow:
         self.room_bubbles: deque = deque(maxlen=8)
         self._room_lock = threading.Lock()
         self.presence = CasterState()      # 说话/思考/空闲三态（真实信号驱动）
+        self._tray = None                 # 系统托盘图标（设置页开关）
+        self._settings_bubble = None      # 右键鱼身紧贴弹出的设置齿轮
+        self._status_text = ""
         self._think_seq = 0
         self._audio_seq = -1               # 真实播放事件的序号（旧帧不许覆盖新状态）
         self._pb_playing = False
@@ -1356,8 +1417,12 @@ class StreamerWindow:
         # 离开就恢复。保留整窗穿透（不为了能操作就把穿透关掉）。
         self._hot = False
         self._menu_open = False
-        self._menu_models: list[str] = []
         self._menu_games: list[tuple[str, str]] = []
+        # 设置页 / 快捷键共用 config.json：这里记「上次看到的值」，变了才动窗口，
+        # 命令行 --click-through 这类一次性覆盖不会被马上扳回去。
+        self._cfg_seen: dict = {}
+        self._overlay_key = load_overlay_template()
+        self.port = 0            # overlay 服务端口，由 main() 按 config 填
         # 右键「OBS 录像」：菜单勾选只认这里缓存的状态（None = 还没问过 OBS），
         # 点击时再去问真状态，所以勾晚一拍也不会点错方向。
         self._obs_rec: bool | None = None
@@ -1366,6 +1431,8 @@ class StreamerWindow:
         self._obs_gen = 0        # 点过一次就 +1，晚回来的探针不许盖掉新状态
         self._transparent = bool(click_through)
         self._watch_stop = threading.Event()
+        # 直播姬直接直播用的桌面叠加层；模板由右键菜单选，窗口由桌宠主循环驱动。
+        self._overlay = None
         self._memdc = None
         self._hit_alpha = None
         self._hbmp = None
@@ -1420,7 +1487,7 @@ class StreamerWindow:
         return 0.033
 
     def _run_hint(self) -> str:
-        return ("主播模式已启动：左键拖 · 右下角拖=缩放 · 滚轮=缩放 · 右键菜单 · "
+        return ("主播模式已启动：左键拖 · 右下角拖=缩放 · 滚轮=缩放 · 右键设置 · "
                 "穿透时点右下 ☰ · Ctrl+Alt+D 穿透 · Ctrl+Alt+S 声音 · Ctrl+Alt+H 隐藏 · Ctrl+Alt+Q 退出")
 
     @staticmethod
@@ -1479,6 +1546,9 @@ class StreamerWindow:
             user32.RegisterHotKey(self._hwnd, hid, MOD_CONTROL | MOD_ALT, key)
         self._paint(img)
         threading.Thread(target=self._watch_interaction, daemon=True).start()
+        self._cfg_seen = self._cfg_snapshot()
+        threading.Thread(target=self._watch_config, name="dafeiyu-settings-sync",
+                         daemon=True).start()
 
     def apply_capture_exclusion(self, on: bool) -> bool:
         """WDA_EXCLUDEFROMCAPTURE：这个窗对录屏/采集 API 不可见（Win10 2004+）。
@@ -1491,6 +1561,61 @@ class StreamerWindow:
             print("WARN 这个系统不支持采集排除（需要 Win10 2004+）：录屏仍可能拍到这个窗")
         self.exclude_capture = on
         return ok
+
+    def set_overlay_template(self, template: str) -> None:
+        """右键「叠加层」：切换模板；off 关闭。选择会持久化，下次启动恢复。"""
+        key = save_overlay_template(template)
+        if key == "off":
+            self._stop_overlay()
+            return
+        try:
+            if self._overlay is None or not getattr(self._overlay, "_hwnd", 0):
+                self._overlay = OverlayWindow(key, monitor=self._overlay_monitor())
+            else:
+                self._overlay.set_template(key)
+            print(f"叠加层：{OVERLAY_TEMPLATES.get(key, key)}（直播姬用显示器捕获）")
+        except Exception as exc:  # noqa: BLE001
+            print(f"叠加层启动失败：{exc}")
+
+    def _overlay_monitor(self) -> str:
+        """叠加层跟着桌宠所在的那块屏；直播姬抓这块屏就能一起进画面。"""
+        try:
+            rect = wintypes.RECT()
+            user32.GetWindowRect(self._hwnd, ctypes.byref(rect))
+            center = (rect.left + rect.right) // 2
+            for index, (left, _top, right, _bottom) in enumerate(self._monitors()):
+                if left <= center < right:
+                    return str(index)
+        except Exception:
+            pass
+        return "secondary"
+
+    def _stop_overlay(self) -> None:
+        overlay, self._overlay = self._overlay, None
+        if overlay is not None:
+            try:
+                overlay.close()
+            except Exception:
+                pass
+            print("叠加层：已关闭")
+
+    def _overlay_tick(self) -> None:
+        overlay = self._overlay
+        if overlay is not None:
+            try:
+                overlay.tick()
+            except Exception as exc:  # noqa: BLE001
+                print(f"叠加层绘制失败：{exc}")
+                self._stop_overlay()
+
+    def _restore_overlay(self) -> None:
+        key = load_overlay_template()
+        if key in OVERLAY_TEMPLATES:
+            try:
+                self._overlay = OverlayWindow(key, monitor=self._overlay_monitor())
+                print(f"叠加层：恢复{OVERLAY_TEMPLATES[key]}（直播姬用显示器捕获）")
+            except Exception as exc:  # noqa: BLE001
+                print(f"叠加层恢复失败：{exc}")
 
     # ---- 右键「OBS 录像」：一个入口开 / 关，状态问 OBS 自己
     def _probe_obs(self) -> None:
@@ -1524,7 +1649,13 @@ class StreamerWindow:
             try:
                 from ..recording import manual
 
-                out = manual.toggle(timeout=2.0)
+                try:
+                    from ..core.config import LiveConfig
+
+                    game = LiveConfig.load().game
+                except Exception:
+                    game = ""
+                out = manual.toggle_game(game, timeout=2.0)
                 if out.get("recording") is not None:
                     self._obs_rec = bool(out["recording"])
                 print("OBS：" + str(out.get("message") or out))
@@ -1603,6 +1734,13 @@ class StreamerWindow:
             if msg == WM_RBUTTONUP:
                 self._menu()
                 return 0
+            if msg == TRAY_CALLBACK:
+                event = int(lparam) & 0xFFFF
+                if event in (WM_LBUTTONUP, WM_LBUTTONDBLCLK, NIN_SELECT, NIN_KEYSELECT):
+                    self.toggle_visible()
+                elif event in (WM_RBUTTONUP, WM_CONTEXTMENU):
+                    self.open_settings()
+                return 0
             if msg == WM_HOTKEY:
                 if wparam == 1:
                     self.toggle_click_through()
@@ -1629,157 +1767,200 @@ class StreamerWindow:
         return user32.DefWindowProcW(hwnd, msg, wparam, lparam)
 
     def _menu(self):
-        # 菜单开着的时候必须保持可交互：光标会从 ☰ 移开，若这时恢复穿透，
-        # 菜单点一半就被「点穿」了。
+        """面板模式仍保留一项「⚙️ 设置」的 Win32 菜单；桌宠在子类改成气泡。"""
         self._menu_open = True
         self.tick_interaction()
         hmenu = user32.CreatePopupMenu()
-        user32.AppendMenuW(hmenu, MF_STRING | (MF_CHECKED if self.topmost else 0), 1, "置顶")
-        user32.AppendMenuW(hmenu, MF_STRING | (MF_CHECKED if self.click_through else 0), 2, "点击穿透")
-        user32.AppendMenuW(hmenu, MF_STRING | (MF_CHECKED if self.speaker.enabled else 0), 3, "声音")
-        user32.AppendMenuW(hmenu, MF_STRING | (MF_CHECKED if self.exclude_capture else 0), 4, "录屏里隐藏")
-        # 「OBS 录像」：勾上 = 正在录，点一下就是开 / 关。OBS 没开也不挡菜单——
-        # 状态是后台问来的，连接慢不能卡住右键。
-        user32.AppendMenuW(hmenu, MF_STRING | (MF_CHECKED if self._obs_rec else 0),
-                           70, "OBS 录像")
-        self._probe_obs()
+        cmd = 0
+        try:
+            user32.AppendMenuW(hmenu, MF_STRING, MENU_SETTINGS, "⚙️  设置")
+            pt = ctypes.wintypes.POINT()
+            user32.GetCursorPos(ctypes.byref(pt))
+            user32.SetForegroundWindow(self._hwnd)
+            user32.PostMessageW(self._hwnd, 0x0000, 0, 0)  # WM_NULL
+            cmd = user32.TrackPopupMenu(hmenu, TPM_RETURNCMD | TPM_LEFTALIGN,
+                                        pt.x, pt.y, 0, self._hwnd, None)
+        finally:
+            user32.DestroyMenu(hmenu)
+            self._menu_open = False
+            self.tick_interaction()
+        if cmd == MENU_SETTINGS:
+            self.open_settings()
 
-        # 语音 / 模型 / 游戏：配置写本机 config.json（.gitignore 已忽略，API Key 不在这里）
+    def show_settings_bubble(self) -> None:
+        self.open_settings()
+
+    def hide_settings_bubble(self) -> None:
+        pass
+
+    # ---- 设置页：右键唯一的入口；设置页和桌宠读写同一份 config.json
+    def open_settings(self) -> None:
+        """用 Edge 应用窗口打开设置页（没有 Edge 就退回默认浏览器）。
+
+        服务没起时 ensure_server 要等端口/健康检查，放到后台线程，别把右键菜单
+        之后的主循环卡住。
+        """
+        def work():
+            try:
+                from . import settings as settings_ui
+            except Exception as exc:  # noqa: BLE001
+                print(f"设置页加载失败：{exc}")
+                return
+            port = int(getattr(self, "port", 0) or settings_ui.default_port())
+            ensure_server(port)
+            try:
+                result = settings_ui.open_window(port)
+                print(f"设置：{result.get('url')}（{result.get('via')}）")
+            except Exception as exc:  # noqa: BLE001
+                print(f"打开设置页失败：{exc}")
+
+        threading.Thread(target=work, name="dafeiyu-open-settings", daemon=True).start()
+
+    def restart_app(self) -> None:
+        """设置页「重启桌宠」：起一个新进程，再主动关掉旧窗口。
+
+        新进程会按单实例锁接替旧窗口；这里先 close() 是给旧进程一个正常收尾
+        （存位置、关叠加层）的机会。
+        """
+        args = [sys.executable, os.path.join(ROOT, "main.py"), *sys.argv[1:]]
+        env = dict(os.environ)
+        env["DAFEIYU_RESTARTED"] = "1"
+        log = None
+        try:
+            paths.LOGS.mkdir(parents=True, exist_ok=True)
+            log = open(paths.LOGS / "pet_restart.log", "ab")
+            subprocess.Popen(
+                args, cwd=ROOT, env=env, close_fds=True,
+                stdin=subprocess.DEVNULL, stdout=log, stderr=log,
+                creationflags=0x00000008 | 0x00000200,   # DETACHED_PROCESS | NEW_GROUP
+            )
+            print("设置：正在重启桌宠…")
+        except Exception as exc:  # noqa: BLE001
+            print(f"重启失败：{type(exc).__name__}: {exc}")
+            return
+        finally:
+            if log is not None:
+                try:
+                    log.close()
+                except OSError:
+                    pass
+        self.close()
+
+    def quit_app(self) -> None:
+        print("设置：退出桌宠")
+        self.close()
+
+    @staticmethod
+    def _cfg_snapshot() -> dict:
         try:
             from ..core.config import LiveConfig
 
             cfg = LiveConfig.load()
-            models = [str(m) for m in (cfg.llm_models or []) if str(m).strip()]
-            if cfg.llm_model and cfg.llm_model not in models:
-                models.insert(0, cfg.llm_model)
         except Exception:
-            cfg, models = None, []
-        self._menu_models = models
-        voice_menu = user32.CreatePopupMenu()
-        for idx, (key, label) in enumerate(_VOICE_CHOICES):
-            user32.AppendMenuW(
-                voice_menu,
-                MF_STRING | (MF_CHECKED if self.speaker.voice == key else 0),
-                10 + idx, label)
-        user32.AppendMenuW(voice_menu, MF_SEPARATOR, 0, None)
-        user32.AppendMenuW(voice_menu, MF_STRING, 13, "启动曼波引擎")
-        user32.AppendMenuW(hmenu, MF_POPUP, voice_menu, "语音")
-        model_menu = user32.CreatePopupMenu()
-        for idx, model in enumerate(models[:12]):
-            user32.AppendMenuW(
-                model_menu,
-                MF_STRING | (MF_CHECKED if cfg and cfg.llm_model == model else 0),
-                20 + idx, model)
-        user32.AppendMenuW(model_menu, MF_STRING, 40, "自定义模型…")
-        user32.AppendMenuW(hmenu, MF_POPUP, model_menu, "模型")
+            return {}
+        return {key: getattr(cfg, key, None) for key in _LIVE_CFG_KEYS}
 
-        # 游戏：从 games/registry.json 读；切换只写 config.game，由 Agent/游戏层消费。
-        games: list[tuple[str, str]] = []
+    def _watch_config(self) -> None:
+        """1.2s 看一眼 config.json：设置页存的值直接落到窗口上，不用重启。"""
+        while not self._watch_stop.is_set() and self.running:
+            try:
+                self._apply_live_config()
+            except Exception as exc:  # noqa: BLE001
+                if env_value("STREAMER_DEBUG", ""):
+                    print(f"设置同步失败：{type(exc).__name__}: {exc}")
+            self._watch_stop.wait(1.2)
+
+    def _apply_live_config(self) -> None:
+        snap = self._cfg_snapshot()
+        if not snap:
+            return
+        seen = self._cfg_seen or {}
+        if snap.get("volume") != seen.get("volume"):
+            self.set_volume(float(snap["volume"]))
+        if snap.get("voice") != seen.get("voice") and snap.get("voice"):
+            self.set_voice(str(snap["voice"]), persist=False)
+        if snap.get("pet_muted") != seen.get("pet_muted"):
+            self.set_muted(bool(snap["pet_muted"]))
+        if snap.get("pet_topmost") != seen.get("pet_topmost"):
+            self.set_topmost(bool(snap["pet_topmost"]))
+        if snap.get("pet_click_through") != seen.get("pet_click_through"):
+            self.set_click_through(bool(snap["pet_click_through"]))
+        if snap.get("pet_exclude_capture") != seen.get("pet_exclude_capture"):
+            self.apply_capture_exclusion(bool(snap["pet_exclude_capture"]))
+        if snap.get("pet_status_bar") != seen.get("pet_status_bar"):
+            setter = getattr(self, "set_status_bar", None)
+            if callable(setter):
+                setter(bool(snap["pet_status_bar"]))
+        supervisor = getattr(self, "_kook", None)
+        if supervisor is not None:
+            try:
+                supervisor.tick()
+            except Exception:
+                pass
+        self._cfg_seen = snap
+
+    def set_volume(self, volume: float) -> None:
+        self.speaker.volume = max(0.0, min(1.5, float(volume)))
+        print(f"音量：{self.speaker.volume:.2f}")
+
+    def set_muted(self, muted: bool) -> None:
+        self.speaker.enabled = not bool(muted)
+        print("声音：" + ("关" if muted else "开"))
+
+    def set_topmost(self, on: bool) -> None:
+        on = bool(on)
+        if on == self.topmost:
+            return
+        self.topmost = on
+        user32.SetWindowPos(self._hwnd, -1 if on else -2, 0, 0, 0, 0,
+                            SWP_NOMOVE | SWP_NOSIZE)
+        print("置顶：" + ("开" if on else "关"))
+
+    def set_click_through(self, on: bool, persist: bool = False) -> None:
+        on = bool(on)
+        if on == self.click_through:
+            return
+        self.click_through = on
+        self._hot = False
+        self._apply_transparent(on)
+        self.dirty = True
+        if persist:
+            self._save_pet_flag("pet_click_through", on)
+        print("点击穿透：" + ("开（☰ 或 Ctrl+Alt+D 关）" if on else "关"))
+
+    def _save_pet_flag(self, key: str, value) -> None:
+        """快捷键改的开关也写回 config.json：设置页看到的才是真状态。"""
         try:
-            from ..games.registry import GameRegistry
+            from ..core.config import LiveConfig
 
-            games = [(p.info.id, p.info.name) for p in GameRegistry().packs()]
-        except Exception:
-            games = []
-        self._menu_games = games
-        game_menu = user32.CreatePopupMenu()
-        for idx, (game_id, name) in enumerate(games[:12]):
-            user32.AppendMenuW(
-                game_menu,
-                MF_STRING | (MF_CHECKED if cfg and cfg.game == game_id else 0),
-                50 + idx, name)
-        if not games:
-            user32.AppendMenuW(game_menu, MF_STRING | MF_GRAYED, 0, "没有注册游戏")
-        user32.AppendMenuW(hmenu, MF_POPUP, game_menu, "游戏")
-        # 「让她玩」二级菜单：玩法 + 播报节奏；选中即保存并开一局。
-        play_mode = str(getattr(cfg, "autoplay_mode", "local") or "local")
-        play_pace = str(getattr(cfg, "autoplay_pace", "voice") or "voice")
-        has_key = bool(getattr(cfg, "llm_api_key", "")) if cfg else False
-        play_menu = user32.CreatePopupMenu()
-        user32.AppendMenuW(play_menu, MF_STRING | (MF_CHECKED if play_mode == "local" else 0),
-                           46, "本地算账")
-        user32.AppendMenuW(
-            play_menu,
-            MF_STRING | (MF_CHECKED if play_mode == "llm" else 0)
-            | (0 if has_key else MF_GRAYED),
-            47, "LLM 规划" if has_key else "LLM 规划（先配 API Key）")
-        user32.AppendMenuW(play_menu, MF_SEPARATOR, 0, None)
-        user32.AppendMenuW(play_menu, MF_STRING | (MF_CHECKED if play_pace == "voice" else 0),
-                           48, "慢速播报（等语音）")
-        user32.AppendMenuW(play_menu, MF_STRING | (MF_CHECKED if play_pace == "normal" else 0),
-                           49, "普通节奏")
-        user32.AppendMenuW(hmenu, MF_POPUP, play_menu, "让她玩")
-        user32.AppendMenuW(hmenu, MF_STRING, 45, "让她停手")
-        user32.AppendMenuW(hmenu, MF_STRING, 43, "只启动游戏")
-        user32.AppendMenuW(hmenu, MF_SEPARATOR, 0, None)
-        user32.AppendMenuW(hmenu, MF_STRING, 41, "配置 API…")
-        user32.AppendMenuW(hmenu, MF_STRING, 42, "打开管理端")
-        user32.AppendMenuW(hmenu, MF_SEPARATOR, 0, None)
-        user32.AppendMenuW(hmenu, MF_STRING, 5, "重新显示示例")
-        user32.AppendMenuW(hmenu, MF_STRING, 6, "关闭")
-        pt = ctypes.wintypes.POINT()
-        user32.GetCursorPos(ctypes.byref(pt))
-        # 不加这两句，菜单点到别处不会收起（Win32 的老毛病）
-        user32.SetForegroundWindow(self._hwnd)
-        user32.PostMessageW(self._hwnd, 0x0000, 0, 0)  # WM_NULL
-        cmd = user32.TrackPopupMenu(hmenu, TPM_RETURNCMD | TPM_LEFTALIGN, pt.x, pt.y, 0, self._hwnd, None)
-        user32.DestroyMenu(hmenu)
-        self._menu_open = False
-        self.tick_interaction()
-        if 10 <= cmd < 10 + len(_VOICE_CHOICES):
-            self.set_voice(_VOICE_CHOICES[cmd - 10][0])
-        elif cmd == 13:
-            self.start_mambo()
-        elif 20 <= cmd < 20 + len(self._menu_models):
-            self.set_model(self._menu_models[cmd - 20])
-        elif 50 <= cmd < 50 + len(self._menu_games):
-            self.set_game(self._menu_games[cmd - 50][0])
-        elif cmd == 43:
-            self.launch_game()
-        elif cmd == 44:
-            self.play_game()
-        elif cmd in (46, 47):
-            self.set_play_mode("local" if cmd == 46 else "llm")
-        elif cmd in (48, 49):
-            self.set_play_pace("voice" if cmd == 48 else "normal")
-        elif cmd == 45:
-            self.stop_play()
-        elif cmd == 40:
-            self.open_studio("#settings")
-        elif cmd == 41:
-            self.open_studio("#settings")
-        elif cmd == 42:
-            self.open_studio()
-        elif cmd == 1:
-            self.topmost = not self.topmost
-            user32.SetWindowPos(self._hwnd, -1 if self.topmost else -2, 0, 0, 0, 0,
-                                SWP_NOMOVE | SWP_NOSIZE)
-        elif cmd == 2:
-            self.toggle_click_through()
-        elif cmd == 3:
-            self.toggle_sound()
-        elif cmd == 4:
-            self.apply_capture_exclusion(not self.exclude_capture)
-        elif cmd == 70:
-            self.toggle_obs_record()
-        elif cmd == 5:
-            self.push("这一手先算账：它 21，我最多挡 15。", "差 6，嗨呀。",
-                      {"character": "演示角色", "ascension": 10, "floor": 8, "hp": 23, "max_hp": 80, "gold": 20})
-        elif cmd == 6:
-            self.close()
+            LiveConfig.patch({key: value})
+            self._cfg_seen[key] = value
+        except Exception as exc:  # noqa: BLE001
+            print(f"设置保存失败：{exc}")
 
-    def set_voice(self, voice: str) -> None:
-        """切换桌宠发声并持久化；曼波未就绪时顺手拉起引擎。"""
+    def _sync_overlay_template(self) -> None:
+        """设置页换了叠加层模板：在主循环里应用（后台线程不建窗口）。"""
+        key = load_overlay_template()
+        if key == self._overlay_key:
+            return
+        self._overlay_key = key
+        self.set_overlay_template(key)
+
+    def set_voice(self, voice: str, persist: bool = True) -> None:
+        """切换桌宠发声；persist=False 用于「设置页已经写过了，只同步窗口」。"""
         self.speaker.voice = voice
-        self.speaker.enabled = voice != "off"
         try:
             from ..core.config import LiveConfig
 
             cfg = LiveConfig.load()
-            cfg.save_patch({"voice": "animal" if voice == "animalese" else voice})
+            # 静音是独立开关：换音色不能把用户按下的静音悄悄顶开。
+            self.speaker.enabled = voice != "off" and not bool(cfg.pet_muted)
+            if persist:
+                cfg.save_patch({"voice": "animal" if voice == "animalese" else voice})
             if voice == "mambo":
                 self.start_mambo(cfg)
         except Exception as exc:
+            self.speaker.enabled = voice != "off"
             print(f"语音配置保存失败：{exc}")
         print(f"语音：{dict(_VOICE_CHOICES).get(voice, voice)}")
 
@@ -1826,6 +2007,14 @@ class StreamerWindow:
     def play_game(self) -> None:
         """启动游戏并让她自动玩；后台线程不阻塞桌宠。"""
         try:
+            # 手动「让她玩」优先：先停导演，避免刚开的模块被导演下一段切走。
+            from ..agent import director
+
+            if director.status().get("running"):
+                director.stop()
+        except Exception:
+            pass
+        try:
             from ..agent.play import start_autoplay
 
             result = start_autoplay()
@@ -1836,6 +2025,14 @@ class StreamerWindow:
     def set_play_mode(self, mode: str) -> None:
         """切换本地/LLM 玩法；运行中则停手后按新模式重开。"""
         mode = "llm" if mode == "llm" else "local"
+        try:
+            # 导演在跑时先停，否则手动选的玩法会被下一段切走。
+            from ..agent import director
+
+            if director.status().get("running"):
+                director.stop()
+        except Exception:
+            pass
         try:
             from ..agent.play import start_autoplay, status, stop_autoplay
             from ..core.config import LiveConfig
@@ -1881,7 +2078,40 @@ class StreamerWindow:
         except Exception as exc:
             print(f"切换播报节奏失败：{exc}")
 
+    def toggle_live_director(self) -> None:
+        """右键「LLM 直播模式」：没开就开，开着就停（连带停当前模块）。"""
+        try:
+            from ..agent import director
+
+            state = director.status()
+            if state.get("running"):
+                result = director.stop()
+                print("直播模式：" + str(result.get("message") or "已停止"))
+                return
+            ok, why = director.available()
+            if not ok:
+                print("直播模式：" + why)
+                return
+            items = director.live_modules()
+            if not items:
+                print("直播模式：games/ 下没有可直播模块（game.json 需要 live.enabled）")
+                return
+            result = director.start()
+            message = str(result.get("message") or result.get("error") or result)
+            labels = "、".join(str(x.get("label") or x.get("id")) for x in items)
+            print(f"直播模式：{message}（候选：{labels}）")
+        except Exception as exc:  # noqa: BLE001
+            print(f"直播模式启动失败：{exc}")
+
     def stop_play(self) -> None:
+        try:
+            # 先停导演，否则「让她停手」之后导演会马上把模块再开起来。
+            from ..agent import director
+
+            if director.status().get("running"):
+                director.stop()
+        except Exception:
+            pass
         try:
             from ..agent.play import stop_autoplay
 
@@ -1902,23 +2132,21 @@ class StreamerWindow:
             print(f"模型配置保存失败：{exc}")
 
     def open_studio(self, anchor: str = "") -> None:
-        """右键菜单直达管理端（配置 API / 看决策和日志）。"""
+        """打开管理端（设置页左侧「打开控制台」也走同一个端口）。"""
         import webbrowser
 
-        webbrowser.open(f"http://127.0.0.1:{PORT}/studio{anchor}")
+        port = int(getattr(self, "port", 0) or _config_port())
+        webbrowser.open(f"http://127.0.0.1:{port}/studio{anchor}")
 
     def toggle_sound(self):
         on = self.speaker.toggle()
+        self._save_pet_flag("pet_muted", not on)
         print("声音：" + ("开" if on else "关（Ctrl+Alt+S 切回）"))
         if on:
             self.speaker.speak("声音开了。")
 
     def toggle_click_through(self):
-        self.click_through = not self.click_through
-        self._hot = False        # 切回来时先按「不在热区」算，交给 _watch_interaction 纠正
-        self._apply_transparent(self.click_through)
-        self.dirty = True
-        print("点击穿透：" + ("开（☰ 或 Ctrl+Alt+D 关）" if self.click_through else "关"))
+        self.set_click_through(not self.click_through, persist=True)
 
     def _apply_transparent(self, on: bool):
         """只改 WS_EX_TRANSPARENT 这一位；状态没变就不碰窗口（SetWindowLongW 会触发重排）。"""
@@ -1976,12 +2204,31 @@ class StreamerWindow:
 
     def toggle_visible(self):
         if user32.IsWindowVisible(self._hwnd):
-            user32.ShowWindow(self._hwnd, 0)
+            self.hide_settings_bubble()
+            user32.ShowWindow(self._hwnd, SW_HIDE)
+            if self._tray is not None:
+                self._tray.update_tip("大肥鱼 · 已收起，左键唤起")
         else:
-            user32.ShowWindow(self._hwnd, 8)
+            user32.ShowWindow(self._hwnd, SW_SHOWNA)
+            if self._tray is not None:
+                self._tray.update_tip("大肥鱼 · 左键收起，右键设置")
 
     def close(self):
         self._save_pos()
+        self._stop_overlay()
+        self.hide_settings_bubble()
+        if self._settings_bubble is not None:
+            try:
+                self._settings_bubble.close()
+            except Exception:
+                pass
+            self._settings_bubble = None
+        if self._tray is not None:
+            try:
+                self._tray.close()
+            except Exception:
+                pass
+            self._tray = None
         self.running = False
         self._watch_stop.set()
         user32.PostMessageW(self._hwnd, WM_DESTROY, 0, 0)
@@ -2049,6 +2296,16 @@ class StreamerWindow:
     def push(self, thought: str, meme: str, status: dict | None = None):
         text = compose(clip(thought, MAX_THOUGHT), clip(meme, MAX_MEME))
         if not text:
+            return
+        now = time.perf_counter()
+        showing_until = max(float(getattr(self, "bubble_until", 0.0) or 0.0),
+                            float(getattr(self, "talk_until", 0.0) or 0.0))
+        if text == self.text and now < showing_until:
+            # 同一条回复被重复推一次（聊天重连/轮询重放）时，只续命，不重播，
+            # 否则气泡会先收再弹、同一句配音也会排队播两遍。
+            if hasattr(self, "bubble_until"):
+                self.bubble_until = max(self.bubble_until, now + 3.0)
+            self.dirty = True
             return
         self.text = text
         if status:
@@ -2253,6 +2510,8 @@ class StreamerWindow:
 
     def apply_scale(self, scale: float, anchor: tuple[int, int] | None = None):
         """改整体大小：等比缩，宽度决定，高度按新字号重算。"""
+        # 尺寸变了，右键齿轮下一帧按新倍率重画，别留一个旧尺寸的按钮。
+        self.hide_settings_bubble()
         self.scale = self._clamp_scale(scale)
         img = self._render_at(self.scale)
         if anchor is None:
@@ -2304,6 +2563,25 @@ class StreamerWindow:
 
         user32.EnumDisplayMonitors(0, 0, cb, 0)
         return out or [(0, 0) + (int(user32.GetSystemMetrics(0)), int(user32.GetSystemMetrics(1)))]
+
+    @staticmethod
+    def _monitor_work_rect(hwnd) -> wintypes.RECT:
+        """窗口所在那块屏的可用区域（不是主屏）；副屏右键靠它定位。"""
+        class MONITORINFO(ctypes.Structure):
+            _fields_ = [("cbSize", wintypes.DWORD), ("rcMonitor", wintypes.RECT),
+                        ("rcWork", wintypes.RECT), ("dwFlags", wintypes.DWORD)]
+        try:
+            hmon = user32.MonitorFromWindow(hwnd, 2)  # MONITOR_DEFAULTTONEAREST
+            mi = MONITORINFO()
+            mi.cbSize = ctypes.sizeof(MONITORINFO)
+            if hmon and user32.GetMonitorInfoW(hmon, ctypes.byref(mi)):
+                r = mi.rcWork
+                return wintypes.RECT(r.left, r.top, r.right, r.bottom)
+        except Exception:
+            pass
+        work = wintypes.RECT()
+        user32.SystemParametersInfoW(0x0030, 0, ctypes.byref(work), 0)  # SPI_GETWORKAREA
+        return work
 
     @classmethod
     def _clamp(cls, x: int, y: int, w: int = 0, h: int = 0) -> tuple[int, int]:
@@ -2360,9 +2638,10 @@ class StreamerWindow:
 
     def run(self):
         print(self._run_hint())
-        print("（默认能被录屏拍到；要隐藏请右键勾「录屏里隐藏」或加 --exclude-capture）")
+        print("（默认能被录屏拍到；要隐藏去设置页勾「录屏里隐藏」或加 --exclude-capture）")
         last = 0.0
         last_guard = 0.0
+        last_overlay = 0.0
         last_mode = self.presence.state
         while self.running:
             msg = wintypes.MSG()
@@ -2376,6 +2655,10 @@ class StreamerWindow:
             if mode != last_mode:
                 last_mode = mode
                 self.dirty = True
+            self._overlay_tick()
+            if now - last_overlay > 1.5:
+                last_overlay = now
+                self._sync_overlay_template()   # 设置页改了模板，主线程里应用
             if now - last_guard > 2.0:
                 last_guard = now
                 self._ensure_on_screen()
@@ -2392,6 +2675,393 @@ class StreamerWindow:
 
 
 # ---------------------------------------------------------------- 桌宠形态
+class SettingsBubbleWindow:
+    """紧贴鱼身右侧的齿轮按钮：蓝色主体、黑色打底，只显示一个设置图标。
+
+    不抢焦点（WS_EX_NOACTIVATE），点一下打开设置页；5 秒没操作自己收起。
+    弹出时从 0.55× 弹到 1×，淡出时缩到 0.88× 再消失；分层窗口按 60fps
+    重绘，阴影和齿轮都在 2× 画布上画完再缩回来，边缘不会毛。
+    """
+
+    W, H = 54, 54
+    ANIM_IN = 0.20
+    ANIM_OUT = 0.16
+    ANIM_MS = 15
+    DISMISS_MS = 5000
+    TIMER_DISMISS = 1
+    TIMER_ANIM = 2
+
+    def __init__(self, scale: float = 1.0, on_open=None) -> None:
+        self.scale = 1.0
+        self.w = self.W
+        self.h = self.H
+        self.set_scale(scale)
+        self.on_open = on_open
+        self._wndproc = WNDPROC(self._proc)
+        self._hwnd = 0
+        self._memdc = None
+        self._hbmp = None
+        self._dib = None
+        self._dib_size = (0, 0)
+        self.pos = (0, 0)
+        self._phase = "idle"          # idle / in / shown / out
+        self._anim_start = 0.0
+        self._register()
+        self._create()
+
+    def set_scale(self, scale: float) -> None:
+        """跟桌宠同倍率缩放；不重建窗口，下一次 show_at 会用新尺寸。"""
+        self.scale = max(0.5, min(1.8, float(scale or 1.0)))
+        self.w = max(1, int(self.W * self.scale))
+        self.h = max(1, int(self.H * self.scale))
+
+    def _register(self) -> None:
+        hinst = kernel32.GetModuleHandleW(None)
+        wc = WNDCLASSW()
+        wc.style = 0
+        wc.lpfnWndProc = ctypes.cast(self._wndproc, ctypes.c_void_p)
+        wc.hInstance = hinst
+        wc.lpszClassName = f"DafeiyuSettingsBubble{os.getpid()}"
+        user32.RegisterClassW(ctypes.byref(wc))
+        self._hinst = hinst
+
+    def _create(self) -> None:
+        ex = (WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE)
+        self._hwnd = user32.CreateWindowExW(
+            ex, f"DafeiyuSettingsBubble{os.getpid()}", "大肥鱼 · 设置",
+            WS_POPUP, 0, 0, self.w, self.h, None, None, self._hinst, None)
+        if not self._hwnd:
+            raise OSError("创建设置按钮失败")
+
+    @staticmethod
+    def _ease_out_back(t: float) -> float:
+        """0→1 的轻微过冲曲线；最后回到 1，不会越弹越大。"""
+        t = min(1.0, max(0.0, t))
+        c1 = 1.70158
+        c3 = c1 + 1.0
+        return 1.0 + c3 * (t - 1.0) ** 3 + c1 * (t - 1.0) ** 2
+
+    @staticmethod
+    def _draw_gear(d: ImageDraw.ImageDraw, cx: float, cy: float, r: float,
+                   fill, hole, edge) -> None:
+        """画一个 8 齿齿轮；中心孔露出蓝色机身，不是一颗实心白点。"""
+        root = r * 0.72
+        tip = r * 0.36
+        half_root = math.pi / 8 * 0.64
+        half_tip = math.pi / 8 * 0.34
+        for i in range(8):
+            a = i * math.tau / 8
+            pts = []
+            for ang, rad in ((a - half_root, root), (a - half_tip, r),
+                             (a + half_tip, r), (a + half_root, root)):
+                pts.append((cx + math.cos(ang) * rad, cy + math.sin(ang) * rad))
+            d.polygon(pts, fill=fill)
+        d.ellipse((cx - root * 1.06, cy - root * 1.06,
+                   cx + root * 1.06, cy + root * 1.06), fill=fill)
+        hr = max(2.0, r * 0.29)
+        d.ellipse((cx - hr, cy - hr, cx + hr, cy + hr), fill=hole, outline=edge,
+                  width=max(1, int(r * 0.10)))
+        # 左上一点高光，让白色齿轮有金属感。
+        d.arc((cx - root * 0.78, cy - root * 0.78,
+               cx + root * 0.78, cy + root * 0.78),
+              200, 315, fill=(255, 255, 255, 255), width=max(1, int(r * 0.16)))
+
+    def _render(self, pop: float = 1.0, alpha: float = 1.0) -> Image.Image:
+        """画一帧按钮。pop 控制弹出比例，alpha 控制整体淡入淡出。"""
+        pop = max(0.02, min(1.12, float(pop)))
+        alpha = max(0.0, min(1.0, float(alpha)))
+        w, h = self.w, self.h
+        ss = 2                                   # 2× 画布，缩回来边缘更顺
+        W, H = w * ss, h * ss
+        img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        d = ImageDraw.Draw(img)
+        s = self.scale * ss * pop
+        cx, cy = W / 2.0, H / 2.0
+        body_r = 21.0 * s
+
+        # 阴影只负责让按钮从桌面浮起来，不再充当“底座”；底座和外圈都居中。
+        shadow = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        sd = ImageDraw.Draw(shadow)
+        sd.ellipse((cx - body_r * 1.02, cy - body_r * 0.72 + 1.8 * s,
+                    cx + body_r * 1.02, cy + body_r * 1.16 + 1.8 * s),
+                   fill=(0, 0, 0, 92))
+        img.alpha_composite(shadow.filter(ImageFilter.GaussianBlur(max(1, int(3.4 * s)))))
+
+        # 外层浅蓝圆 + 描边，内层蓝色圆，齿轮圆心全部落在 (cx, cy)。
+        base_r = body_r + 4.0 * s
+        d.ellipse((cx - base_r - 1.0 * s, cy - base_r - 1.0 * s,
+                   cx + base_r + 1.0 * s, cy + base_r + 1.0 * s),
+                  outline=(100, 158, 235, 190), width=max(1, int(1.0 * s)))
+        d.ellipse((cx - base_r, cy - base_r, cx + base_r, cy + base_r),
+                  fill=(168, 216, 255, 255), outline=(255, 255, 255, 255),
+                  width=max(1, int(1.5 * s)))
+
+        # 内层蓝色圆：上亮下深的竖向渐变。
+        grad = vgradient(W, H, (80, 156, 255, 255), (25, 76, 220, 255))
+        mask = Image.new("L", (W, H), 0)
+        ImageDraw.Draw(mask).ellipse((cx - body_r, cy - body_r,
+                                      cx + body_r, cy + body_r), fill=255)
+        img.paste(grad, (0, 0), mask)
+        d.ellipse((cx - body_r, cy - body_r, cx + body_r, cy + body_r),
+                  outline=(240, 251, 255, 255), width=max(1, int(1.5 * s)))
+
+        # 顶部玻璃高光，只压在上半圆里。
+        gloss = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        gd = ImageDraw.Draw(gloss)
+        gd.ellipse((cx - body_r * 0.76, cy - body_r * 0.82,
+                    cx + body_r * 0.76, cy + body_r * 0.36),
+                   fill=(255, 255, 255, 52))
+        img.alpha_composite(gloss)
+
+        # 齿轮居中并放大；深蓝投影只偏移 0.8px，看起来仍是正中心。
+        gear_r = 13.2 * s
+        SettingsBubbleWindow._draw_gear(
+            d, cx, cy + 0.8 * s, gear_r, (4, 18, 54, 180),
+            (4, 18, 54, 180), (4, 18, 54, 0))
+        SettingsBubbleWindow._draw_gear(
+            d, cx, cy, gear_r, (238, 249, 255, 255),
+            (34, 92, 232, 255), (10, 34, 96, 255))
+
+        out = img.resize((w, h), Image.LANCZOS)
+        if alpha < 0.999:
+            out.putalpha(out.getchannel("A").point(lambda v: int(v * alpha)))
+        return out
+
+    def _paint(self, img: Image.Image) -> None:
+        if not self._hwnd:
+            return
+        w, h = img.size
+        hdc_screen = user32.GetDC(None)
+        if self._memdc is None:
+            self._memdc = gdi32.CreateCompatibleDC(hdc_screen)
+        if self._dib_size != (w, h):
+            if self._hbmp:
+                gdi32.DeleteObject(self._hbmp)
+            bmi = BITMAPINFO()
+            bmi.bmiHeader.biSize = ctypes.sizeof(BITMAPINFOHEADER)
+            bmi.bmiHeader.biWidth = w
+            bmi.bmiHeader.biHeight = -h
+            bmi.bmiHeader.biPlanes = 1
+            bmi.bmiHeader.biBitCount = 32
+            bmi.bmiHeader.biCompression = 0
+            self._dib = ctypes.c_void_p()
+            self._hbmp = gdi32.CreateDIBSection(
+                self._memdc, ctypes.byref(bmi), 0, ctypes.byref(self._dib), None, 0)
+            gdi32.SelectObject(self._memdc, self._hbmp)
+            self._dib_size = (w, h)
+        bg = premultiplied_bgra(img)
+        ctypes.memmove(self._dib, bg, len(bg))
+        pt_dst = wintypes.POINT(self.pos[0], self.pos[1])
+        size = wintypes.SIZE(w, h)
+        pt_src = wintypes.POINT(0, 0)
+        blend = BLENDFUNCTION(AC_SRC_OVER, 0, 255, AC_SRC_ALPHA)
+        user32.UpdateLayeredWindow(self._hwnd, hdc_screen, ctypes.byref(pt_dst),
+                                   ctypes.byref(size), self._memdc,
+                                   ctypes.byref(pt_src), 0, ctypes.byref(blend),
+                                   ULW_ALPHA)
+        user32.ReleaseDC(None, hdc_screen)
+
+    def show_at(self, x: int, y: int) -> None:
+        """出现在 (x, y)，先画一帧半透明的小按钮，再让定时器把它弹开。"""
+        if not self._hwnd:
+            return
+        self.pos = (int(x), int(y))
+        user32.KillTimer(self._hwnd, self.TIMER_DISMISS)
+        user32.KillTimer(self._hwnd, self.TIMER_ANIM)
+        user32.SetWindowPos(self._hwnd, HWND_TOPMOST, self.pos[0], self.pos[1],
+                            self.w, self.h, SWP_NOACTIVATE | SWP_SHOWWINDOW)
+        self._phase = "in"
+        self._anim_start = time.perf_counter()
+        self._paint(self._render(0.55, 0.16))
+        user32.SetTimer(self._hwnd, self.TIMER_ANIM, self.ANIM_MS, None)
+        user32.SetTimer(self._hwnd, self.TIMER_DISMISS, self.DISMISS_MS, None)
+
+    def _tick_anim(self) -> None:
+        if not self._hwnd:
+            return
+        elapsed = time.perf_counter() - self._anim_start
+        if self._phase == "in":
+            t = min(1.0, elapsed / self.ANIM_IN)
+            pop = 0.55 + 0.45 * self._ease_out_back(t)
+            alpha = min(1.0, 0.12 + t * 1.35)
+            if t >= 1.0:
+                self._paint(self._render(1.0, 1.0))
+                self._phase = "shown"
+                user32.KillTimer(self._hwnd, self.TIMER_ANIM)
+            else:
+                self._paint(self._render(pop, alpha))
+            return
+        if self._phase == "out":
+            t = min(1.0, elapsed / self.ANIM_OUT)
+            ease = 1.0 - (1.0 - t) ** 2
+            alpha = (1.0 - t) ** 1.45
+            pop = 1.0 - 0.12 * ease
+            if t >= 1.0:
+                self._finish_hide()
+            else:
+                self._paint(self._render(pop, alpha))
+
+    def _finish_hide(self) -> None:
+        if not self._hwnd:
+            return
+        user32.KillTimer(self._hwnd, self.TIMER_ANIM)
+        user32.KillTimer(self._hwnd, self.TIMER_DISMISS)
+        user32.ShowWindow(self._hwnd, SW_HIDE)
+        self._phase = "idle"
+
+    def hide(self) -> None:
+        """先播 160ms 的缩小淡出，真正隐藏由 TIMER_ANIM 收尾。"""
+        if not self._hwnd or self._phase in ("idle", "out"):
+            return
+        user32.KillTimer(self._hwnd, self.TIMER_DISMISS)
+        self._phase = "out"
+        self._anim_start = time.perf_counter()
+        self._paint(self._render(1.0, 1.0))
+        user32.SetTimer(self._hwnd, self.TIMER_ANIM, self.ANIM_MS, None)
+
+    def _proc(self, hwnd, msg, wparam, lparam):
+        if msg == WM_TIMER:
+            if wparam == self.TIMER_DISMISS:
+                self.hide()
+                return 0
+            if wparam == self.TIMER_ANIM:
+                self._tick_anim()
+                return 0
+        if msg == WM_LBUTTONUP:
+            self.hide()
+            if callable(self.on_open):
+                try:
+                    self.on_open()
+                except Exception:
+                    pass
+            return 0
+        if msg == WM_RBUTTONUP:
+            self.hide()
+            return 0
+        if msg == WM_DESTROY:
+            self._hwnd = 0
+        try:
+            return user32.DefWindowProcW(hwnd, msg, wparam, lparam)
+        except Exception:
+            return 0
+
+    def close(self) -> None:
+        self.hide()
+        if self._hwnd:
+            user32.DestroyWindow(self._hwnd)
+            self._hwnd = 0
+        if self._hbmp:
+            try:
+                gdi32.DeleteObject(self._hbmp)
+            except Exception:
+                pass
+            self._hbmp = None
+        if self._memdc:
+            try:
+                gdi32.DeleteDC(self._memdc)
+            except Exception:
+                pass
+            self._memdc = None
+
+
+# ---------------------------------------------------------------- 托盘图标
+NIM_ADD = 0
+NIM_DELETE = 2
+NIF_MESSAGE = 0x00000001
+NIF_ICON = 0x00000002
+NIF_TIP = 0x00000004
+IMAGE_ICON = 1
+LR_LOADFROMFILE = 0x00000010
+LR_DEFAULTSIZE = 0x00000040
+
+
+class NOTIFYICONDATAW(ctypes.Structure):
+    _fields_ = [
+        ("cbSize", wintypes.DWORD),
+        ("hWnd", wintypes.HWND),
+        ("uID", wintypes.UINT),
+        ("uFlags", wintypes.UINT),
+        ("uCallbackMessage", wintypes.UINT),
+        ("hIcon", wintypes.HICON),
+        ("szTip", wintypes.WCHAR * 128),
+    ]
+
+
+shell32.Shell_NotifyIconW.argtypes = [wintypes.DWORD, ctypes.POINTER(NOTIFYICONDATAW)]
+shell32.Shell_NotifyIconW.restype = wintypes.BOOL
+
+
+class TrayIcon:
+    """系统托盘里的常驻大肥鱼图标：左键唤起/收起，右键打开设置。"""
+
+    def __init__(self, hwnd: int, tip: str = "大肥鱼 · 左键唤起/收起，右键设置") -> None:
+        self.hwnd = int(hwnd)
+        self.tip = tip[:120]
+        self._icon = 0
+        self._added = False
+        self._nid = NOTIFYICONDATAW()
+        self._nid.cbSize = ctypes.sizeof(NOTIFYICONDATAW)
+        self._nid.hWnd = self.hwnd
+        self._nid.uID = 1
+        self._nid.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP
+        self._nid.uCallbackMessage = TRAY_CALLBACK
+        self._nid.szTip = self.tip
+        try:
+            self._icon = self._load_icon()
+            self._nid.hIcon = self._icon
+            self._added = bool(shell32.Shell_NotifyIconW(NIM_ADD, ctypes.byref(self._nid)))
+        except Exception:
+            self._added = False
+        if not self._added:
+            self.close()
+            raise OSError("托盘图标创建失败（Explorer 未就绪？）")
+
+    def _load_icon(self) -> int:
+        """把正面精灵做成 ico；找不到素材就用系统默认应用图标。"""
+        try:
+            from PIL import Image, ImageOps
+
+            target = Path(ROOT) / "logs" / "dafeiyu_tray.ico"
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if not target.is_file():
+                src = Path(PET_DIR) / "正面_306.png"
+                with Image.open(src) as raw:
+                    img = raw.convert("RGBA")
+                    w, h = img.size
+                    # 取头部，16×16 也能认出来。
+                    head = img.crop((int(w * 0.18), 0, int(w * 0.82), int(h * 0.58)))
+                    head = ImageOps.fit(head, (64, 64), Image.LANCZOS)
+                    head.save(target, format="ICO",
+                              sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64)])
+            icon = user32.LoadImageW(None, str(target), IMAGE_ICON, 0, 0,
+                                     LR_LOADFROMFILE | LR_DEFAULTSIZE)
+            if icon:
+                return int(icon)
+        except Exception:
+            pass
+        return int(user32.LoadIconW(None, ctypes.c_void_p(32512)))  # IDI_APPLICATION
+
+    def update_tip(self, text: str) -> None:
+        self.tip = str(text)[:120]
+        self._nid.szTip = self.tip
+        if self._added:
+            shell32.Shell_NotifyIconW(1, ctypes.byref(self._nid))  # NIM_MODIFY
+
+    def close(self) -> None:
+        if self._added:
+            try:
+                shell32.Shell_NotifyIconW(NIM_DELETE, ctypes.byref(self._nid))
+            except Exception:
+                pass
+            self._added = False
+        if self._icon:
+            try:
+                user32.DestroyIcon(self._icon)
+            except Exception:
+                pass
+            self._icon = 0
+
+
 class PetWindow(StreamerWindow):
     """用三视图精灵的桌面桌宠：拖动换朝向 + 实时形变，说话走漫画气泡。
 
@@ -2422,6 +3092,55 @@ class PetWindow(StreamerWindow):
         self._hot = True
         self._transparent = False
         self._apply_transparent(False)
+        self._restore_overlay()
+        self._restore_status_bar()
+        # KOOK 监控不是桌宠线程：配置开着就自己拉一个无窗口子进程，关掉桌宠时收掉。
+        self._kook = None
+        try:
+            from ..live.kook.supervisor import KookSupervisor
+
+            self._kook = KookSupervisor()
+            self._kook.tick()
+        except Exception as exc:  # noqa: BLE001 - KOOK 起不来不能拖垮桌宠
+            print(f"KOOK 监控启动失败：{exc}", flush=True)
+
+    def close(self):
+        supervisor = getattr(self, "_kook", None)
+        if supervisor is not None:
+            try:
+                supervisor.stop()
+            except Exception:
+                pass
+            self._kook = None
+        super().close()
+
+    # ---- 系统托盘
+    def set_status_bar(self, on: bool) -> None:
+        """兼容旧配置名 ``pet_status_bar``：现在控制的是系统托盘图标。"""
+        on = bool(on)
+        if on and self._tray is None:
+            try:
+                self._tray = TrayIcon(self._hwnd, tip="大肥鱼 · 左键唤起/收起，右键设置")
+                print("托盘图标：已开启")
+            except Exception as exc:  # noqa: BLE001 - 开不起来不能拖垮桌宠
+                print(f"托盘图标启动失败：{exc}")
+                self._tray = None
+        elif not on and self._tray is not None:
+            try:
+                self._tray.close()
+            except Exception:
+                pass
+            self._tray = None
+            print("托盘图标：已关闭")
+
+    def _restore_status_bar(self) -> None:
+        try:
+            from ..core.config import LiveConfig
+
+            if LiveConfig.load().pet_status_bar:
+                self.set_status_bar(True)
+        except Exception:
+            pass
 
     # ---- 形态
     @staticmethod
@@ -2440,6 +3159,78 @@ class PetWindow(StreamerWindow):
     @staticmethod
     def _title() -> str:
         return "大肥鱼 · 桌宠"
+
+    def _menu(self):
+        """桌宠右键：不是系统菜单，而是紧贴鱼身右侧弹出设置齿轮。"""
+        self.show_settings_bubble()
+
+    def _fish_right_edge(self, win_w: int, y0: int | None = None,
+                         y1: int | None = None) -> int:
+        """最近一帧里鱼身（不含头顶说话气泡）在指定高度带的最右像素。"""
+        data = getattr(self, "_hit_alpha", None)
+        try:
+            w, h, alpha = data
+        except (TypeError, ValueError):
+            return int(win_w * 0.80)
+        if w != win_w or len(alpha) != w * h:
+            return int(win_w * 0.80)
+        # 默认只看鱼身下半段：头顶气泡的尾巴也在这附近，避开它。
+        if y0 is None:
+            y0 = h - int(PET_FISH_H * self.scale * 0.74)
+        if y1 is None:
+            y1 = h
+        y0 = max(0, min(h - 1, int(y0)))
+        y1 = max(y0 + 1, min(h, int(y1)))
+        best = 0
+        for y in range(y0, y1, 2):
+            row = y * w
+            for x in range(w - 1, best - 1, -1):
+                if alpha[row + x] > 48:
+                    if x > best:
+                        best = x
+                    break
+        return best or int(win_w * 0.80)
+
+    def show_settings_bubble(self) -> None:
+        """把齿轮按钮紧贴在鱼身右侧；不抢焦点，点它才打开设置页。"""
+        try:
+            desired = max(0.5, min(1.8, float(self.scale or 1.0)))
+            if self._settings_bubble is None:
+                self._settings_bubble = SettingsBubbleWindow(
+                    scale=desired,
+                    on_open=self.open_settings,
+                )
+            else:
+                self._settings_bubble.set_scale(desired)
+            rect = wintypes.RECT()
+            user32.GetWindowRect(self._hwnd, ctypes.byref(rect))
+            # 关键：取桌宠所在的副屏工作区。SPI_GETWORKAREA 永远只给主屏，
+            # 之前在副屏右键会被夹回主屏，按钮看起来“飞”到另一块屏。
+            work = self._monitor_work_rect(self._hwnd)
+            win_w, win_h = rect.right - rect.left, rect.bottom - rect.top
+            fish_h = int(PET_FISH_H * self.scale)
+            fish_top = rect.top + max(0, win_h - fish_h - int(10 * self.scale))
+            gear_cy = fish_top + int(fish_h * 0.36)
+            y = gear_cy - self._settings_bubble.h // 2
+            # 只取齿轮圆心附近的一条窄带，不按整个按钮高度取最右像素：
+            # 否则同一高度带里的鲸尾/发梢会把按钮推到鱼身外侧，脸旁留一条缝。
+            half = max(4, int(self._settings_bubble.h * 0.18))
+            edge = self._fish_right_edge(win_w, gear_cy - rect.top - half,
+                                         gear_cy - rect.top + half)
+            x = rect.left + edge + max(1, int(1 * self.scale))
+            x = max(work.left + 4, min(x, work.right - self._settings_bubble.w - 4))
+            y = max(work.top + 4, min(y, work.bottom - self._settings_bubble.h - 4))
+            self._settings_bubble.show_at(x, y)
+        except Exception as exc:  # noqa: BLE001 - 气泡开不起来就退回直接开设置
+            print(f"设置按钮失败：{exc}")
+            self.open_settings()
+
+    def hide_settings_bubble(self) -> None:
+        if self._settings_bubble is not None:
+            try:
+                self._settings_bubble.hide()
+            except Exception:
+                pass
 
     def _render_frame(self, text: str, status: dict, scale: float, talk: float,
                       layout_text: str | None = None, chip: bool = False) -> Image.Image:
@@ -2469,6 +3260,8 @@ class PetWindow(StreamerWindow):
     # ---- 拖动 → 朝向 / 形变
     def _proc(self, hwnd, msg, wparam, lparam):
         """桌宠自己拖：不调 HTCAPTION，否则系统移动循环会卡住渲染主循环。"""
+        if msg == WM_LBUTTONDOWN and (not self.click_through or self._hot):
+            self.hide_settings_bubble()
         if msg == WM_LBUTTONDOWN and (not self.click_through or self._hot) \
                 and self._hit_test() != HTBOTTOMRIGHT:
             pt = wintypes.POINT()
@@ -2483,6 +3276,7 @@ class PetWindow(StreamerWindow):
             user32.SetCapture(hwnd)
             return 0
         if msg == WM_MOUSEMOVE and self._dragging:
+            self.hide_settings_bubble()
             self._manual_drag()
             return 0
         if msg == WM_LBUTTONUP and self._dragging:
@@ -2662,7 +3456,7 @@ class PetWindow(StreamerWindow):
 
     def _run_hint(self) -> str:
         return ("桌宠已启动：左键拖（左右/上下换朝向，带倾斜和速度线）· 滚轮/右下角=缩放 · "
-                "右键菜单 · 穿透时鼠标贴鱼身 · Ctrl+Alt+D 穿透 · Ctrl+Alt+S 声音 · "
+                "右键设置 · 穿透时鼠标贴鱼身 · Ctrl+Alt+D 穿透 · Ctrl+Alt+S 声音 · "
                 "Ctrl+Alt+H 隐藏 · Ctrl+Alt+Q 退出")
 
 
@@ -2674,6 +3468,7 @@ def fetch_state(port: int, after: int) -> dict:
 
 def poll_loop(win: StreamerWindow, port: int, stop: threading.Event, demo: bool):
     last_id = 0
+    last_seq = 0
     fails = 0
     beat_at = 0.0
     if demo:
@@ -2701,8 +3496,13 @@ def poll_loop(win: StreamerWindow, port: int, stop: threading.Event, demo: bool)
             print("主播窗：数据恢复")
         fails = 0
         try:
-            if isinstance(d.get("seq"), int) and d["seq"] < last_id:
-                last_id = 0
+            # 只在 seq 真的回退（服务端重启）时把游标归零；不能拿 seq 和
+            # 评论 id 比大小，否则同一批评论会被每轮轮询反复重放成两个气泡。
+            seq = d.get("seq")
+            if isinstance(seq, int):
+                if last_seq and seq < last_seq:
+                    last_id = 0
+                last_seq = seq
             win.update_status(d.get("status") or {})
             # 真实播放状态先落：说话/思考由「真的在响吗」决定，不由字数估。
             win.set_playback(d.get("playback"))
@@ -2736,7 +3536,11 @@ def poll_loop(win: StreamerWindow, port: int, stop: threading.Event, demo: bool)
 
 
 def ensure_server(port: int) -> bool:
-    """overlay server 没起就拉起来（和 OBS 用的是同一个服务）。"""
+    """overlay server 没起就拉起来（和 OBS 用的是同一个服务）。
+
+    重启场景要多试几次：新进程可能比旧进程的端口释放早一步，第一次 bind
+    必然失败；等旧窗口退干净再绑，才不会出现「窗口回来了、服务没起来」。
+    """
     try:
         with urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=0.5) as r:
             if r.status == 200:
@@ -2745,13 +3549,17 @@ def ensure_server(port: int) -> bool:
         pass
 
     print(f"overlay server 没在跑，正在启动（端口 {port}）…")
-    try:
-        from .overlay_server import start_background
+    for attempt in range(4):
+        try:
+            from .overlay_server import start_background
 
-        start_background(port)
-    except Exception as exc:
-        print(f"WARN overlay server 起不来：{exc}")
-        return False
+            srv = start_background(port, quiet=attempt > 0)
+        except Exception as exc:
+            print(f"WARN overlay server 起不来：{exc}")
+            return False
+        if srv is not None:
+            break
+        time.sleep(0.6)
     for _ in range(20):
         time.sleep(0.2)
         try:
@@ -2872,8 +3680,9 @@ class GiftBridge:
 
 def main(argv: list[str] | None = None) -> int:
     raw_argv = list(sys.argv[1:] if argv is None else argv)
-    ap = argparse.ArgumentParser(description="大肥鱼桌宠：透明窗 + 漫画气泡 + 右键菜单")
-    ap.add_argument("--port", type=int, default=PORT)
+    ap = argparse.ArgumentParser(description="大肥鱼桌宠：透明窗 + 漫画气泡 + 右键设置")
+    ap.add_argument("--port", type=int, default=None,
+                    help="overlay / 控制台端口（默认用 config.json 的 port）")
     ap.add_argument("--scale", type=float, default=0.0,
                     help="缩放 0.5~1.8（默认用上次拖出来的大小；桌宠 1.0≈560px 宽，面板 1.0=1180px 宽）")
     ap.add_argument("--panel", action="store_true",
@@ -2885,7 +3694,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--mute", action="store_true", help="不出声")
     ap.add_argument("--voice", default="auto", choices=["auto", "mambo", "animalese", "off"],
                     help="配音：auto=跟随 config.json；mambo=曼波音色；animalese=动物语；off=静音")
-    ap.add_argument("--vol", type=float, default=0.55, help="音量 0~1.5（默认 0.55，和页面一致）")
+    ap.add_argument("--vol", type=float, default=None,
+                    help="音量 0~1.5（默认跟随 config.json）")
     ap.add_argument("--capture", action="store_true",
                     help="兼容旧参数：现在默认就能被录屏拍到（等于不加 --exclude-capture）")
     ap.add_argument("--exclude-capture", action="store_true",
@@ -2898,15 +3708,38 @@ def main(argv: list[str] | None = None) -> int:
                     help="和 --preview 一起用：截「思考ing」那一帧")
     a = ap.parse_args(raw_argv)
 
-    if a.voice == "auto":
-        try:
-            from ..core.config import LiveConfig
+    # 一次读全：窗口状态（置顶/穿透/静音/录屏隐藏/音量）和端口都从 config.json
+    # 来，设置页存的东西重启后才算数；这里失败也得能开窗，所以全部兜底。
+    cfg = None
+    try:
+        from ..core.config import LiveConfig
 
-            configured = LiveConfig.load().voice
-            a.voice = {"animal": "animalese", "animalese": "animalese", "off": "off"}.get(
-                configured, "mambo")
-        except Exception:
-            a.voice = "mambo"
+        cfg = LiveConfig.load()
+    except Exception as exc:      # noqa: BLE001
+        print(f"配置读取失败，用默认值开窗：{exc}", flush=True)
+
+    # 配置开着自启动但注册表被清掉（换电脑/挪目录）时自愈一次。
+    if cfg is not None and getattr(cfg, "pet_autostart", False):
+        try:
+            from ..core import autostart
+
+            if not autostart.enabled():
+                autostart.set_enabled(True)
+        except Exception as exc:  # noqa: BLE001
+            print(f"开机自启动同步失败：{exc}", flush=True)
+
+    port = int(a.port) if a.port is not None else _config_port()
+    volume = float(a.vol) if a.vol is not None else float(
+        getattr(cfg, "volume", 0.55) if cfg else 0.55)
+    muted = bool(a.mute or (cfg and cfg.pet_muted))
+    topmost = bool(getattr(cfg, "pet_topmost", True)) if cfg else True
+    click_through = bool(a.click_through or (cfg and cfg.pet_click_through))
+    exclude_capture = bool(a.exclude_capture or (cfg and cfg.pet_exclude_capture))
+
+    if a.voice == "auto":
+        configured = str(getattr(cfg, "voice", "mambo") or "mambo") if cfg else "mambo"
+        a.voice = {"animal": "animalese", "animalese": "animalese", "off": "off"}.get(
+            configured, "mambo")
 
     # 预览图的缩放：命令行优先，否则跟 DPI；装不下就自动缩（按目标显示器宽度算）
     scale = a.scale or dpi_scale()
@@ -2938,7 +3771,7 @@ def main(argv: list[str] | None = None) -> int:
             text = THINKING_TEXT if a.think else "它 21，我最多挡 15。差 6，嗨呀。"
             img = render(text, {"character": "演示角色", "ascension": 10, "floor": 8,
                                 "hp": 23, "max_hp": 80, "gold": 20}, scale,
-                         chip=a.click_through,
+                         chip=click_through,
                          layout_text=None if mode != "thinking" else "它 21，我最多挡 15。差 6，嗨呀。")
         else:
             fake = type("_PreviewPet", (), {})()
@@ -2962,7 +3795,7 @@ def main(argv: list[str] | None = None) -> int:
                             multi=a.multi, note=lambda m: print(m, flush=True))
 
     if not a.no_server:
-        ensure_server(a.port)
+        ensure_server(port)
     pos = None
     if a.pos:
         try:
@@ -2973,11 +3806,20 @@ def main(argv: list[str] | None = None) -> int:
             return 2
 
     cls = StreamerWindow if a.panel else PetWindow
-    win = cls(scale=a.scale, pos=pos, click_through=a.click_through,
-              toolwindow=not a.taskbar, volume=a.vol, muted=a.mute,
-              exclude_capture=a.exclude_capture, voice=a.voice)
+    win = cls(scale=a.scale, pos=pos, click_through=click_through, topmost=topmost,
+              toolwindow=not a.taskbar, volume=volume, muted=muted,
+              exclude_capture=exclude_capture, voice=a.voice)
+    win.port = port
+    # 设置页的「重启 / 退出」按钮落到这个窗口上；页面由同一个进程的 overlay 服务提供。
+    try:
+        from . import settings as settings_ui
+
+        settings_ui.set_app_hook("restart", win.restart_app)
+        settings_ui.set_app_hook("quit", win.quit_app)
+    except Exception as exc:      # noqa: BLE001
+        print(f"设置页注册失败：{exc}", flush=True)
     stop = threading.Event()
-    th = threading.Thread(target=poll_loop, args=(win, a.port, stop, a.demo), daemon=True)
+    th = threading.Thread(target=poll_loop, args=(win, port, stop, a.demo), daemon=True)
     th.start()
     gift_bridge = None
     if isinstance(win, PetWindow):

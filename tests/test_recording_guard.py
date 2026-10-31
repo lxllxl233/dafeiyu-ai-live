@@ -12,6 +12,7 @@ class _Usage:
 
 def test_recording_skips_when_disk_is_low(monkeypatch):
     monkeypatch.setattr(auto, "_enabled", lambda: True)
+    monkeypatch.setattr(auto.policy, "master_enabled", lambda: True)
     monkeypatch.setattr(auto.shutil, "disk_usage", lambda _p: _Usage())
     out = auto.start_session("slay-the-spire-2", note="自动玩")
     assert out["ok"] is False
@@ -21,6 +22,7 @@ def test_recording_skips_when_disk_is_low(monkeypatch):
 def test_recording_does_not_start_obs_when_skipped(monkeypatch):
     called = []
     monkeypatch.setattr(auto, "_enabled", lambda: True)
+    monkeypatch.setattr(auto.policy, "master_enabled", lambda: True)
     monkeypatch.setattr(auto.shutil, "disk_usage", lambda _p: _Usage())
     monkeypatch.setattr(auto, "ensure_obs", lambda game="": called.append(game) or (True, ""))
     auto.start_session("slay-the-spire-2", note="自动玩")

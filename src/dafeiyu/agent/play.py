@@ -37,7 +37,10 @@ def _game_id(game: str | None = None, *, trust_status: bool = False) -> str:
       否则同样回落到 ``config.game``。
     """
     if game:
-        return str(game).strip()
+        # 显式 --game 也认 game.json 的别名，和配置解析保持一致。
+        from ..games.catalog import resolve_game_id
+
+        return resolve_game_id(game)
     state = _read_status()
     current = str(state.get("game") or "").strip()
     if trust_status and current:
@@ -45,7 +48,11 @@ def _game_id(game: str | None = None, *, trust_status: bool = False) -> str:
     if state.get("running") and current:
         return current
     cfg_game = str(LiveConfig.load().game or "").strip()
-    return cfg_game or current
+    if cfg_game:
+        from ..games.catalog import resolve_game_id
+
+        return resolve_game_id(cfg_game)
+    return current
 
 
 def _plugin(game: str | None = None, *, trust_status: bool = False):

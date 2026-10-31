@@ -21,6 +21,7 @@ from .search import parse_search_html
 POPULAR = "https://api.bilibili.com/x/web-interface/popular"
 SEARCH = "https://search.bilibili.com/all"
 VIEW = "https://api.bilibili.com/x/web-interface/view"
+HISTORY = "https://api.bilibili.com/x/web-interface/history/cursor"
 REPLY_MAIN = "https://api.bilibili.com/x/v2/reply/main"
 DANMAKU_SEG = "https://api.bilibili.com/x/v2/dm/web/seg.so"
 DANMAKU_XML = "https://api.bilibili.com/x/v1/dm/list.so"
@@ -128,29 +129,40 @@ class BiliClient:
         raise BiliError("B站接口请求失败", retryable=True)
 
     # ---------------------------------------------------------------- 列表/详情
-    def popular(self, limit: int = 20) -> list[VideoRef]:
-        data = self._get_json(POPULAR, {"ps": max(1, min(20, int(limit))), "pn": 1})
-        rows = data.get("list")
-        if not isinstance(rows, list):
-            raise BiliError("热门列表缺少 data.list", retryable=True)
+    def popular(self, limit: int = 60) -> list[VideoRef]:
+        """热门列表；每页最多 20，按页拉大候选池，避免总刷同 20 条。"""
+        target = max(1, min(60, int(limit)))
         out: list[VideoRef] = []
         seen: set[str] = set()
-        for row in rows:
-            if not isinstance(row, dict):
-                continue
-            video = VideoRef.from_popular(row)
-            if video is None or video.bvid in seen:
-                continue
-            seen.add(video.bvid)
-            out.append(video)
+        for pn in range(1, (target + 19) // 20 + 1):
+            data = self._get_json(POPULAR, {"ps": 20, "pn": pn})
+            rows = data.get("list")
+            if not isinstance(rows, list) or not rows:
+                break
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                video = VideoRef.from_popular(row)
+                if video is None or video.bvid in seen:
+                    continue
+                seen.add(video.bvid)
+                out.append(video)
+                if len(out) >= target:
+                    return out
+            if data.get("no_more"):
+                break
+        if not out:
+            raise BiliError("热门列表缺少 data.list", retryable=True)
         return out
 
-    def search(self, keyword: str, limit: int = 20) -> list[VideoRef]:
+    def search(self, keyword: str, limit: int = 20, *,
+               page: int = 1) -> list[VideoRef]:
         """匿名搜索页 HTML；官方 JSON 搜索接口需要 WBI/Cookie，不能作为主路径。"""
         keyword = str(keyword or "").strip()
         if not keyword:
             raise BiliError("缺少搜索关键词")
-        body = self._get(SEARCH, {"keyword": keyword, "page": 1})
+        body = self._get(SEARCH, {"keyword": keyword,
+                                  "page": max(1, int(page))})
         return parse_search_html(body, max(1, min(50, int(limit))))
 
     def view(self, bvid: str) -> VideoDetail:
@@ -162,6 +174,39 @@ class BiliClient:
         if detail is None:
             raise BiliError(f"视频详情不可用：{bvid}", code=-404)
         return detail
+
+    def history_progress(self, bvid: str) -> dict | None:
+        """读自己账号最近一条历史里的进度数字，用于发现「已经拖到结尾」。
+
+        只取 ``progress`` / ``duration`` / ``view_at``，不读标题、不读页面 DOM；
+        Cookie 只在本机请求头里使用，不写日志。没有登录 Cookie 时返回 None。
+        """
+        bvid = str(bvid or "").strip()
+        if not bvid or not self.cookie:
+            return None
+        data = self._get_json(HISTORY, {"ps": 20, "type": "archive"})
+        rows = data.get("list")
+        if not isinstance(rows, list):
+            return None
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            history = row.get("history")
+            if not isinstance(history, dict):
+                continue
+            if str(history.get("bvid") or "") != bvid:
+                continue
+            progress = _int(row.get("progress"), -1)
+            duration = _int(row.get("duration"))
+            if progress < 0 or duration <= 0:
+                return None
+            return {
+                "bvid": bvid,
+                "progress": progress,
+                "duration": duration,
+                "view_at": _int(row.get("view_at")),
+            }
+        return None
 
     # ---------------------------------------------------------------- 热评
     def hot_comments(self, aid: int, limit: int = 30) -> list[Comment]:

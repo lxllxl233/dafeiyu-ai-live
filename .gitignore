@@ -54,6 +54,7 @@ logs/voice_test.wav
 
 # 桌宠录制/浏览器调试缓存
 logs/*.lock
+logs/*.ico
 logs/*.html
 logs/*profile*/
 logs/pet_src/
@@ -63,3 +64,14 @@ games/*.7z
 logs/bilibili_commentary/
 logs/bilibili_commentary.pause
 logs/bilibili_commentary.skip
+
+# 吸血鬼幸存者 BepInEx 桥：本机引用程序集（150MB+）和构建产物，不入库
+games/vampire-survivors/compat/mod/refs/
+games/vampire-survivors/compat/mod/VsBridge/bin/
+games/vampire-survivors/compat/mod/VsBridge/obj/
+
+# KOOK 聊天：本机记忆库、事件/账单日志、服务锁
+logs/kook/
+
+# generated video build artifacts
+build/

@@ -70,13 +70,33 @@ class ObsProfile:
     ticker_text: str = "AI 实况"
     window_match: tuple[str, ...] = ()
     window_fallback: str = ""
+    # 采集方式：game（游戏 hook）/ monitor（整块副屏）/ window（单个窗口）。
+    # B 站云观影默认用 monitor，因为 Chrome 视频页不是一个 game_capture 目标。
+    capture_mode: str = "game"
+    monitor_index: int = -1          # -1 = 优先 1920x1080；0/1 = 第几个显示器
+    # 非空时 obs setup 会创建/更新这个浏览器源；场景页自己负责画面排版。
+    overlay_url: str = ""
+    overlay_width: int = 1920
+    overlay_height: int = 1080
+    # B 站切视频会换 Chrome 窗口，按窗口抓音频会跟丢；B 场景用桌面音频。
+    audio_mode: str = "process"       # process | desktop
 
     @classmethod
     def from_dict(cls, raw: dict) -> "ObsProfile":
         values = {}
+        int_fields = {"monitor_index", "overlay_width", "overlay_height"}
         for key in cls.__dataclass_fields__:
-            if key in raw:
-                values[key] = tuple(raw[key]) if key == "window_match" else str(raw[key])
+            if key not in raw:
+                continue
+            if key == "window_match":
+                values[key] = tuple(raw[key])
+            elif key in int_fields:
+                try:
+                    values[key] = int(raw[key])
+                except (TypeError, ValueError):
+                    pass
+            else:
+                values[key] = str(raw[key])
         return cls(**values)
 
 
@@ -172,14 +192,15 @@ class Obs:
     def list_inputs(self):
         return self.request("GetInputList").get("inputs", [])
 
-    def ensure_scene(self, name: str):
+    def ensure_scene(self, name: str, *, activate: bool = True):
         try:
             self.request("CreateScene", {"sceneName": name})
         except ObsError as e:
             if "already exists" not in str(e).lower() and "1001" not in str(e):
                 # Many OBS versions return 1001 resource exists; ignore that.
                 pass
-        self.request("SetCurrentProgramScene", {"sceneName": name})
+        if activate:
+            self.request("SetCurrentProgramScene", {"sceneName": name})
 
     def get_scene_item_id(self, scene: str, source: str):
         return self.request(
@@ -188,6 +209,11 @@ class Obs:
 
     def ensure_game_capture(self, scene: str) -> dict:
         """Try game_capture; fall back to monitor/window capture. Returns chosen source info."""
+        mode = str(self.p.capture_mode or "game").lower()
+        if mode == "monitor":
+            return self.ensure_monitor_capture(scene)
+        if mode == "window":
+            return self.ensure_window_capture(scene)
         source = self.p.game_source
         existing = {i["inputName"] for i in self.list_inputs()}
         if source not in existing:
@@ -236,39 +262,255 @@ class Obs:
             return {"kind": "game_capture", "source": source}
 
         # Fallback: monitor capture (prefer the 1920x1080 secondary display)
-        msource = self.p.monitor_source
-        if msource not in existing:
+        return self.ensure_monitor_capture(scene)
+
+    def _monitor_property(self) -> str:
+        """OBS 29/30 的显示器列表属性叫 monitor_id，老版本叫 monitor。"""
+        for name in ("monitor_id", "monitor"):
+            try:
+                self.request(
+                    "GetInputPropertiesListPropertyItems",
+                    {"inputName": self.p.monitor_source,
+                     "propertyName": name},
+                )
+                return name
+            except ObsError:
+                continue
+        return "monitor_id"
+
+    def _monitor_item(self):
+        prop = self._monitor_property()
+        props = self.request(
+            "GetInputPropertiesListPropertyItems",
+            {"inputName": self.p.monitor_source, "propertyName": prop},
+        ).get("propertyItems", [])
+        # 第一项通常是「请选择要采集的显示器」的 DUMMY，不能选。
+        valid = [x for x in props
+                 if x.get("itemEnabled", True) and str(x.get("itemValue") or "") not in ("", "DUMMY")]
+        if not valid:
+            return None, prop
+        idx = int(self.p.monitor_index)
+        if 0 <= idx < len(valid):
+            return valid[idx], prop
+        for item in valid:
+            name = str(item.get("itemName", ""))
+            if "1920" in name and "1080" in name:
+                return item, prop
+        return valid[-1], prop
+
+    def ensure_monitor_capture(self, scene: str) -> dict:
+        """录一整块显示器；B 站云观影默认把 Chrome 放副屏，所以不走 game_capture。"""
+        source = self.p.monitor_source
+        existing = {i["inputName"] for i in self.list_inputs()}
+        if source not in existing:
             self.request(
                 "CreateInput",
                 {
                     "sceneName": scene,
-                    "inputName": msource,
+                    "inputName": source,
                     "inputKind": "monitor_capture",
                     "inputSettings": {},
                     "sceneItemEnabled": True,
                 },
             )
-        props = self.request(
-            "GetInputPropertiesListPropertyItems",
-            {"inputName": msource, "propertyName": "monitor"},
-        ).get("propertyItems", [])
-        chosen = None
-        for item in props:
-            name = str(item.get("itemName", ""))
-            if "1920" in name and "1080" in name:
-                chosen = item
-                break
-        if chosen is None and props:
-            chosen = props[-1]
+        try:
+            self.set_item_enabled(scene, source, True)
+        except ObsError:
+            pass
+        chosen, prop = self._monitor_item()
         if chosen is not None:
             self.request(
                 "SetInputSettings",
-                {"inputName": msource, "inputSettings": {"monitor": chosen["itemValue"]}},
+                {"inputName": source,
+                 "inputSettings": {prop: chosen["itemValue"]}},
             )
-        return {"kind": "monitor_capture", "source": msource, "monitor": chosen}
+        try:
+            self.fit_item(scene, source, self.p.overlay_width,
+                          self.p.overlay_height)
+        except ObsError:
+            pass
+        return {"kind": "monitor_capture", "source": source,
+                "monitor": chosen, "property": prop}
+
+    def ensure_window_capture(self, scene: str) -> dict:
+        """录单个窗口（例如 Chrome）；window_match 匹配不到时保留 fallback。"""
+        source = self.p.window_source
+        existing = {i["inputName"] for i in self.list_inputs()}
+        if source not in existing:
+            self.request(
+                "CreateInput",
+                {
+                    "sceneName": scene,
+                    "inputName": source,
+                    "inputKind": "window_capture",
+                    "inputSettings": {},
+                    "sceneItemEnabled": True,
+                },
+            )
+        try:
+            self.set_item_enabled(scene, source, True)
+        except ObsError:
+            pass
+        win = self.window_item(source)
+        selected = win["itemValue"] if win else self.p.window_fallback
+        if selected:
+            self.request(
+                "SetInputSettings",
+                {"inputName": source,
+                 "inputSettings": {"window": selected}},
+            )
+        try:
+            self.fit_item(scene, source, self.p.overlay_width,
+                          self.p.overlay_height)
+        except ObsError:
+            pass
+        return {"kind": "window_capture", "source": source,
+                "window": win, "fallback": bool(not win)}
+
+    def ensure_browser_source(self, scene: str) -> dict:
+        """创建/更新场景页浏览器源；仅当 profile 配了 overlay_url 时生效。"""
+        url = str(self.p.overlay_url or "").strip()
+        if not url:
+            return {"kind": "missing"}
+        name = self.p.overlay_source
+        existing = {i["inputName"] for i in self.list_inputs()}
+        if name not in existing:
+            self.request(
+                "CreateInput",
+                {
+                    "sceneName": scene,
+                    "inputName": name,
+                    "inputKind": "browser_source",
+                    "inputSettings": {
+                        "url": url,
+                        "width": int(self.p.overlay_width),
+                        "height": int(self.p.overlay_height),
+                        "reroute_audio": True,
+                        # 场景切走时关掉页面，避免它在后台继续播放/抢占 live 音频。
+                        "shutdown": True,
+                        # 切到 Bili Watch 时强制重新载入，免得浏览器源缓存了旧页/404。
+                        "restart_when_active": True,
+                    },
+                    "sceneItemEnabled": True,
+                },
+            )
+        else:
+            self.request(
+                "SetInputSettings",
+                {"inputName": name,
+                 "inputSettings": {"url": url, "reroute_audio": True,
+                                   "restart_when_active": True,
+                                   "shutdown": True},
+                 "overlay": True},
+            )
+        try:
+            self.set_item_enabled(scene, name, True)
+        except ObsError:
+            pass
+        try:
+            item_id = self.get_scene_item_id(scene, name)
+            # 场景页必须在采集画面之上，否则视频会把侧栏盖住。
+            # OBS 的 sceneItemIndex 是 0=最底层；这里必须放到最顶层。
+            count = len(self.scene_items(scene))
+            self.request("SetSceneItemIndex", {
+                "sceneName": scene, "sceneItemId": item_id,
+                "sceneItemIndex": max(0, count - 1),
+            })
+        except ObsError:
+            pass
+        try:
+            self.fit_item(scene, name, self.p.overlay_width,
+                          self.p.overlay_height)
+        except ObsError:
+            pass
+        return {"kind": "browser_source", "source": name, "url": url}
+
+    def _remove_scene_source(self, scene: str, source: str) -> None:
+        # OBS 对「还挂在场景里的 source」RemoveInput 会静默不生效，
+        # 先摘掉这个场景里所有同名 scene item，再尝试移除 source。
+        try:
+            for item in self.scene_items(scene):
+                if item.get("sourceName") == source:
+                    self.request("RemoveSceneItem", {
+                        "sceneName": scene,
+                        "sceneItemId": item.get("sceneItemId")})
+        except ObsError:
+            pass
+        try:
+            if source in {i["inputName"] for i in self.list_inputs()}:
+                self.request("RemoveInput", {"inputName": source})
+        except ObsError:
+            pass
+
+    def ensure_desktop_audio(self, scene: str) -> dict:
+        """B 站切视频会关旧 Chrome 窗口，桌面音频不会跟着某个窗口一起断。
+
+        优先复用集合里已有的桌面音频，避免 Bili Audio 和 OBS 自带桌面音频
+        同时抓一遍造成双倍音量/回声。
+        """
+        source = self.p.audio_source
+        inputs = self.list_inputs()
+        desktops = [i["inputName"] for i in inputs
+                    if i.get("inputKind") == "wasapi_output_capture"]
+        others = [n for n in desktops if n != source]
+        if others:
+            # 已经有现成的桌面音频；把之前建过的同名桌面源清掉。
+            if source in desktops:
+                self._remove_scene_source(scene, source)
+            target = others[0]
+            reused = True
+        elif source in desktops:
+            target = source
+            reused = False
+        else:
+            if any(i["inputName"] == source for i in inputs):
+                self._remove_scene_source(scene, source)
+            self.request(
+                "CreateInput",
+                {
+                    "sceneName": scene,
+                    "inputName": source,
+                    "inputKind": "wasapi_output_capture",
+                    "inputSettings": {},
+                    "sceneItemEnabled": True,
+                },
+            )
+            target = source
+            reused = False
+        # 集合自带的桌面音频可能不在新场景的 scene item 列表里，补一个引用；
+        # 但 CreateSceneItem 对同一个 source 可以重复加，先清掉重复项。
+        try:
+            items = [x for x in self.scene_items(scene)
+                     if x.get("sourceName") == target]
+            for extra in items[1:]:
+                self.request("RemoveSceneItem", {
+                    "sceneName": scene,
+                    "sceneItemId": extra.get("sceneItemId")})
+            if not items:
+                self.request("CreateSceneItem", {
+                    "sceneName": scene, "sourceName": target,
+                    "sceneItemEnabled": True})
+        except ObsError:
+            pass
+        try:
+            self.set_item_enabled(scene, target, True)
+        except ObsError:
+            pass
+        try:
+            self.request("SetInputMute", {"inputName": target,
+                                          "inputMuted": False})
+            self.request("SetInputVolume", {"inputName": target,
+                                            "inputVolumeMul": 1.0})
+            self.request("SetInputAudioTracks", {
+                "inputName": target, "inputAudioTracks": {"1": True}})
+        except ObsError:
+            pass
+        return {"source": target, "kind": "desktop", "reused": reused}
 
     def ensure_audio(self, scene: str) -> dict:
-        # Prefer application audio capture for the game process.
+        # B 站等会换窗口的模式用桌面音频；游戏默认按进程抓。
+        if str(self.p.audio_mode or "process").lower() == "desktop":
+            return self.ensure_desktop_audio(scene)
         source = self.p.audio_source
         existing = {i["inputName"] for i in self.list_inputs()}
         if source not in existing:
@@ -333,13 +575,15 @@ class Obs:
             )
             self.request("SetInputAudioTracks", {"inputName": name, "inputAudioTracks": {"1": True}})
             self.request("SetInputMute", {"inputName": name, "inputMuted": False})
-            self.request("SetInputVolume", {"inputName": name, "inputVolumeMul": 0.9})
-            return {"source": name, "reroute_audio": True, "volume": 0.9}
+            self.request("SetInputVolume", {"inputName": name, "inputVolumeMul": 1.0})
+            return {"source": name, "reroute_audio": True, "volume": 1.0}
         except ObsError as e:
             return {"error": str(e)}
 
     def ensure_ticker(self, scene: str):
         name = self.p.ticker_source
+        if not name:
+            return {"kind": "none"}
         existing = {i["inputName"] for i in self.list_inputs()}
         if name not in existing:
             self.request(
@@ -378,11 +622,17 @@ class Obs:
         return self.request("GetSceneItemList", {"sceneName": scene}).get("sceneItems", [])
 
     def set_item_enabled(self, scene: str, source: str, enabled: bool):
-        item_id = self.get_scene_item_id(scene, source)
+        try:
+            item_id = self.get_scene_item_id(scene, source)
+        except ObsError:
+            # free_mode 会顺手关掉“另一种采集源”；该游戏只建了一种源时，
+            # 这里找不到是正常的，不要让整个场景准备失败。
+            return False
         self.request(
             "SetSceneItemEnabled",
             {"sceneName": scene, "sceneItemId": item_id, "sceneItemEnabled": enabled},
         )
+        return True
 
     def fit_item(self, scene: str, source: str, width: int = 1920, height: int = 1080):
         """Scale/center the source inside the canvas (top-left alignment, like the monitor source)."""
@@ -836,16 +1086,24 @@ def main(argv: list[str] | None = None) -> int:
         if args.cmd == "status":
             print(json.dumps(obs.status(), ensure_ascii=False, indent=2))
         elif args.cmd == "setup":
-            obs.ensure_scene(profile.scene)
+            # setup noswitch：只建/更新场景，不打断正在直播的 Program Scene。
+            activate = str(args.arg or "").strip().lower() not in (
+                "noswitch", "no-switch", "false")
+            obs.ensure_scene(profile.scene, activate=activate)
             cap = obs.ensure_game_capture(profile.scene)
             audio = obs.ensure_audio(profile.scene)
+            overlay = (obs.ensure_browser_source(profile.scene)
+                       if profile.overlay_url else {"kind": "existing"})
             overlay_audio = obs.ensure_overlay_audio()
             ticker = obs.ensure_ticker(profile.scene)
-            free = obs.free_mode("game")
+            free = (obs.free_mode(profile.capture_mode or "game")
+                    if activate else {"kind": "skipped", "mode": profile.capture_mode})
             print(
                 json.dumps(
-                    {"capture": cap, "audio": audio, "overlay_audio": overlay_audio,
-                     "ticker": ticker, "free": free},
+                    {"scene": profile.scene, "activated": activate,
+                     "capture": cap, "audio": audio, "overlay": overlay,
+                     "overlay_audio": overlay_audio, "ticker": ticker,
+                     "free": free},
                     ensure_ascii=False,
                     indent=2,
                 )

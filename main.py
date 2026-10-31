@@ -39,17 +39,8 @@ def main(argv: list[str] | None = None) -> int:
 
         print(f"dafeiyu-ai-live {__version__}")
         return 0
-    if "--no-server" in argv:
-        # 交给 desktop 自己判断：不拉起服务，也不再走 ensure_server
-        pass
-    elif "--preview" not in argv and "-h" not in argv and "--help" not in argv:
-        try:
-            from dafeiyu.ui.overlay_server import start_background
-
-            start_background()
-        except Exception as exc:  # 服务起不来不影响桌宠本身
-            print(f"overlay server 未启动：{exc}", flush=True)
-
+    # overlay 服务由桌宠进程里的 ensure_server 拉起（和 OBS 用同一个服务）：
+    # 放在桌宠启动之后，重启时才能等旧进程把端口让出来再绑。
     from dafeiyu.ui.desktop import main as pet_main
 
     return int(pet_main(argv) or 0)

@@ -17,7 +17,8 @@ from .config import CommentaryConfig
 from .danmaku import build_timeline
 from .models import (
     Comment, Cue, DanmakuReply, DanmakuResult, TimelineBucket, VideoDetail,
-    VideoProfile, VideoRef, clean_text,
+    VideoProfile, VideoRef, clean_text, comment_drop_reason, is_big_fish_text,
+    strip_crowd_prefix, strip_danmaku_word,
 )
 from .prompts import commentary_system, PROFILE_GOAL, PROMPT_VERSION
 
@@ -100,6 +101,11 @@ class ProfileBuilder:
         if duration <= 0:
             raise ProfileError("视频时长不可用")
         bucket_s = self.config.bucket_seconds(duration)
+        same_fish = is_big_fish_text(
+            getattr(video, "title", ""),
+            getattr(video, "desc", ""),
+            getattr(video, "owner_name", ""),
+        )
         timeline = build_timeline(
             danmaku_result.items, duration, bucket_s,
             coverage=danmaku_result.coverage, max_buckets=20,
@@ -127,6 +133,7 @@ class ProfileBuilder:
                 "stat": dict(getattr(video, "stat", {}) or {}),
                 "tname": getattr(video, "tname", ""),
             },
+            "same_fish": same_fish,
             "hot_comments": [item.to_prompt() for item in comments[:self.config.target_comments]],
             "danmaku_timeline": [bucket.to_prompt() for bucket in timeline],
             "danmaku_meta": {
@@ -156,6 +163,9 @@ class ProfileBuilder:
             raise ProfileError("LLM 输出不是 JSON 对象")
         profile = self._from_plan(video, comments, danmaku_result, timeline, plan,
                                   source_hash)
+        profile.meta = {**dict(profile.meta or {}), "same_fish": same_fish}
+        if not same_fish:
+            profile.meta["video_comment"] = ""
         if self.cache is not None:
             self.cache.put(str(video.bvid), {
                 "source_hash": source_hash,
@@ -224,6 +234,16 @@ class ProfileBuilder:
             raise ProfileError("LLM 没有给出可用的解说 cue")
         replies = self._build_replies(plan, timeline, video)
 
+        # 视频评论是给陌生观众看的：不要“背台本”（同类台词/只有一句口癖）。
+        comment = safe_line(
+            strip_danmaku_word(strip_crowd_prefix(plan.get("video_comment"))),
+            self.config.video_comment_max_chars,
+        )
+        dropped = comment_drop_reason(
+            comment, tuple(getattr(self.persona, "quips", ()) or ()))
+        if dropped:
+            comment = ""
+
         meta = {
             "model": str(getattr(self.planner, "model", "") or ""),
             "prompt_version": PROMPT_VERSION,
@@ -233,7 +253,10 @@ class ProfileBuilder:
             "danmaku_partial": bool(danmaku_result.partial),
             "danmaku_coverage": round(coverage, 3),
             "persona": getattr(self.persona, "persona_id", "") if self.persona else "",
+            "video_comment": comment,
         }
+        if dropped:
+            meta["video_comment_dropped"] = dropped
         return VideoProfile(
             bvid=str(video.bvid),
             url=str(video.url),
@@ -306,7 +329,7 @@ class ProfileBuilder:
         for index, row in enumerate(rows):
             if not isinstance(row, dict):
                 continue
-            text = safe_line(row.get("text"), 90)
+            text = safe_line(strip_danmaku_word(strip_crowd_prefix(row.get("text"))), 90)
             if not text or text in used:
                 continue
             try:

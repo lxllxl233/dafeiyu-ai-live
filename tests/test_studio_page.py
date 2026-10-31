@@ -42,6 +42,17 @@ REQUIRED = {
     # B站播放列表 / 浏览器标签页
     "biliPlaylistCard", "biliPlaylistState", "biliPlaylistHint",
     "biliBrowserState", "biliPlaylist", "biliRefresh", "biliClose",
+    "biliSceneOpen", "biliCommentCard", "biliCommentEnabled",
+    "biliCommentMaxDay", "biliCommentGap", "biliCommentChars",
+    "biliCommentHint", "biliCommentSave", "biliCommentState",
+    "biliCommentCount", "biliCommentHistory",
+    # 当前局 / OBS 录像
+    "curGameName", "curGameMeta", "curGameBadges", "runState", "runStats",
+    "recordingCard", "recState", "recMaster", "recEnabled", "recSplit",
+    "recScript", "recScriptState", "recToggle", "recEnsure", "recSave", "recHint",
+    # 开局设置（角色/难度，选项由 game.json 声明）
+    "startOptionsCard", "startOptionsMeta", "startOptionsHint",
+    "startOptionsFields", "startOptionsSave", "startOptionsState",
 }
 
 
@@ -90,14 +101,43 @@ def test_skill_editor_is_wired():
 
 def test_bili_playlist_is_wired_to_control_api():
     assert "/api/bilibili/control" in HTML
+    assert "/api/bilibili/comment" in HTML
     assert "renderBiliPlaylist" in HTML
+    assert "renderBiliCommentSettings" in HTML
+    assert "saveBiliCommentSettings" in HTML
     assert "data-bili-play" in HTML and "data-bili-close" in HTML
     assert 'id="biliRefresh"' in HTML and 'id="biliClose"' in HTML
     assert "bilibili-hot-commentary" in HTML
     assert "play.idle_text" in HTML          # 云观影空闲文案由后端给
+    assert 'href="/bili"' in HTML            # 直播姬场景页入口
+
+
+def test_bili_comment_history_is_wired_to_backend_payload():
+    """已发评论从后端账本渲染：链接/标题/内容都在，且只读不写。"""
+    assert "renderBiliCommentHistory" in HTML
+    assert "bilibili_video_comments" in HTML
+    assert "biliCommentUrl" in HTML and "fmtBiliWhen" in HTML
+    assert "bilibili_commentary.comments.jsonl" in HTML
+
+
+def test_start_options_card_is_wired_to_backend():
+    """开局设置：按 game.json 的 start 声明渲染，读写都走 /api/game/start。"""
+    assert "/api/game/start" in HTML
+    assert "renderStartOptions" in HTML and "saveStartOptions" in HTML
+    assert "startOptionsValues" in HTML
+    assert "data-start-key" in HTML
+    assert 'id="startOptionsSave"' in HTML
 
 
 def test_token_card_is_wired_to_api_payload():
     assert "agent" in HTML and "tokens" in HTML
     assert "cumulative" in HTML
     assert re.search(r"t\.steps", HTML)
+
+
+def test_recording_policy_is_wired_to_api():
+    assert "/api/recording" in HTML
+    assert "renderRecording" in HTML
+    assert "recToggle" in HTML and "recEnsure" in HTML and "recSave" in HTML
+    assert "一局一集" in HTML and "不分集" in HTML
+    assert "recording_enabled" in HTML

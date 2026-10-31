@@ -24,7 +24,47 @@
     "app_id": "2868840",
     "note": "Steam 库里的 Slay the Spire 2；启动选项建议 --windowed"
   },
+  "live": {
+    "enabled": true,
+    "label": "杀戮尖塔2",
+    "weight": 3,
+    "role": "爬塔决策：慢节奏，适合一段一段解说选牌和路线；一局时间最长"
+  },
   "obs": "game-skill/obs.json",
+  "start": {
+    "title": "开局设置",
+    "note": "控制台保存后，下一次开新局（回主菜单/选角色）时生效；已经开着的局不会被改写。",
+    "options": [
+      {
+        "key": "character",
+        "label": "角色",
+        "type": "choice",
+        "default": "IRONCLAD",
+        "match": "character_id",
+        "hint": "决策手册主要按铁甲战士整理；换角色仍按同一套规则打，选牌会更保守",
+        "choices": [
+          {"value": "IRONCLAD", "label": "铁甲战士", "en": "The Ironclad"},
+          {"value": "SILENT", "label": "静默猎手", "en": "The Silent"},
+          {"value": "DEFECT", "label": "故障机器人", "en": "The Defect"},
+          {"value": "NECROBINDER", "label": "死灵缚者", "en": "The Necrobinder"},
+          {"value": "REGENT", "label": "星之王储", "en": "The Regent"}
+        ]
+      },
+      {
+        "key": "ascension",
+        "label": "进阶难度",
+        "type": "int",
+        "default": 10,
+        "min": 0,
+        "max": 20,
+        "hint": "0 = 普通；选人界面允许多少就升到多少，决策知识库按 A10 整理"
+      }
+    ]
+  },
+  "recording": {
+    "enabled": true,
+    "split": "run"
+  },
   "links": {
     "db": "corpus/db",
     "tools/data": "corpus/data"

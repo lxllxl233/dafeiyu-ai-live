@@ -1,5 +1,17 @@
 # 性格层（Persona）
 
+性格按「个人 → 直播 → 游戏」三层叠：
+
+| 层 | 目录 | 什么时候加载 |
+|---|---|---|
+| 个人（常驻） | `persona/<id>/` | 永远；KOOK 聊天用 `persona/companion/`（`config.kook_persona`） |
+| 直播 | `persona/live/` | 直播/上台且 `config.persona_live` 打开；KOOK 不加载 |
+| 游戏 | `games/<id>/persona/layer.md` | 只在该游戏的直播/自动玩提示词里 |
+
+装配代码是 `src/dafeiyu/persona/layers.py`：`PersonaStack.load(persona_id, game_id, live)`
+把三层按固定顺序拼成前缀；设置页「性格」能看到三层和最终提示词。下层只补「这个
+时候多出来的一点」，不要把个人层的人设再抄一遍。
+
 一个人设 = 一个目录：
 
 ```
@@ -7,6 +19,9 @@ persona/<id>/
 ├── card.json     # 机器读：长度/禁语/招牌/口癖/开场收尾
 └── style.md      # 人读：说话系统说明，给写台词的人看
 ```
+
+`persona/live/` 也是同样结构（`card.json` + `style.md`）；游戏层只需要一个
+`games/<id>/persona/layer.md`，没有卡也能加载。
 
 `card.json` 的字段：
 
@@ -28,4 +43,8 @@ persona/<id>/
 代码入口：`src/dafeiyu/persona/`（`Persona.compose` / `.lint` / `.render` / `.note_sent`）。
 
 B 站云观影是隔离人设：读 `games/bilibili-hot-commentary/persona/{card.json,style.md}`，
-不跟随这里的 `config.persona`；在控制台「游戏 → B站云观影 → 游戏详情」里编辑。
+不跟随这里的 `config.persona`；它的直播层是 `games/bilibili-hot-commentary/persona/layer.md`。
+
+表情包在 `persona/stickers/`（`stickers.json` + `sticker_<id>.png`），
+素材来自梗鲸 DeepSeek 娘表情包（粉丝二创，非商用，见 `persona/stickers/SOURCE.md`）；
+`python tools/import_stickers.py` 可重新导入，聊天回复的 `sticker` 字段引用这里的 id。

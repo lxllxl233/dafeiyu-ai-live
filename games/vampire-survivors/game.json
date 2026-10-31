@@ -1,0 +1,42 @@
+{
+  "schema": 2,
+  "id": "vampire-survivors",
+  "version": "0.1.0",
+  "name": "吸血鬼幸存者",
+  "name_en": "Vampire Survivors",
+  "status": "ready",
+  "platform": "Steam · 1794680",
+  "aliases": ["vs", "vampire", "batu"],
+  "entry": "plugin.py:VampireSurvivorsPlugin",
+  "adapter": "adapter.py:VampireSurvivorsAdapter",
+  "capabilities": {
+    "observe": true,
+    "control": true,
+    "autoplay": true,
+    "replay": false,
+    "commentary": true,
+    "modes": ["local", "llm"],
+    "state_schema": "vampire-survivors.state/v1",
+    "action_schema": "vampire-survivors.action/v1",
+    "api": "http://127.0.0.1:8091",
+    "bridge": "compat/mod/VsBridge"
+  },
+  "launch": {
+    "type": "steam",
+    "app_id": "1794680",
+    "note": "Steam 库里的 Vampire Survivors；BepInEx 6 IL2CPP 桥随游戏加载，API 在 :8091"
+  },
+  "live": {
+    "enabled": true,
+    "label": "吸血鬼幸存者",
+    "weight": 2,
+    "role": "实时割草：只需要一直走位躲怪，每局节奏快、适合开一段高能战斗"
+  },
+  "tags": ["实时", "割草", "肉鸽", "动作"],
+  "obs": "game-skill/obs.json",
+  "recording": {
+    "enabled": true,
+    "split": "run"
+  },
+  "notes": "通过游戏侧 BepInEx 6 IL2CPP 桥（compat/mod/VsBridge）的本地 HTTP API 玩：GET /state 读玩家/敌人/升级选项，POST /act 发走位和选择。Python 端不找窗口、不切前台、不发键盘，游戏可以在后台跑。桥没连上时按离线处理。"
+}

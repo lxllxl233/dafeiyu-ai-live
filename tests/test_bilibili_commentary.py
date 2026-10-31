@@ -33,6 +33,7 @@ api = _load("api")
 browser_mod = _load("browser")
 control_mod = _load("control")
 liker_mod = _load("liker")
+video_comment_mod = _load("video_comment")
 live_chat_mod = _load("live_chat")
 persona_mod = _load("persona_watch")
 skills_mod = _load("skills")
@@ -110,6 +111,7 @@ class FakeClient:
         self.danmaku_result = danmaku
         self.search_rows = list(search_rows or [])
         self.search_keywords = []
+        self.search_pages_calls = []
         self.calls = {"popular": 0, "view": 0, "comments": 0, "danmaku": 0,
                       "search": 0}
 
@@ -117,9 +119,10 @@ class FakeClient:
         self.calls["popular"] += 1
         return [self.ref]
 
-    def search(self, keyword, limit=20):
+    def search(self, keyword, limit=20, *, page=1):
         self.calls["search"] += 1
         self.search_keywords.append(keyword)
+        self.search_pages_calls.append(page)
         return list(self.search_rows)[:limit]
 
     def view(self, bvid):
@@ -140,7 +143,7 @@ class FakeClient:
 
 
 class FailingSearchClient(FakeClient):
-    def search(self, keyword, limit=20):
+    def search(self, keyword, limit=20, *, page=1):
         self.calls["search"] += 1
         self.search_keywords.append(keyword)
         raise api.BiliError("HTTP 412: search blocked", http_status=412)
@@ -175,6 +178,7 @@ class FakeBrowser:
         self.urls = []
         self.closes = 0
         self.refreshes = 0
+        self.blanks = 0
         self.opened = False
 
     def open(self, url, *, close_previous=True):
@@ -192,6 +196,11 @@ class FakeBrowser:
     def refresh(self):
         self.refreshes += 1
         return {"ok": self.opened}
+
+    def blank(self):
+        self.blanks += 1
+        self.urls.append("about:blank")
+        return {"ok": self.opened, "url": "about:blank"}
 
     def snapshot(self):
         return {"opened": self.opened, "url": self.urls[-1] if self.urls else ""}
@@ -326,15 +335,32 @@ def test_protobuf_segment_and_xml_fallback_parse():
 
 def test_load_commentary_config_accepts_pack_dir_or_game_file():
     game_file = Path(runner_mod.__file__).with_name("game.json")
-    from_file = config_mod.load_commentary_config(game_file)
-    from_dir = config_mod.load_commentary_config(game_file.parent)
+    # 不读本机 config.json：真实用户可能改过评论间隔/字数，这里只验 game.json 默认值。
+    from dafeiyu.core.config import LiveConfig
+
+    from_file = config_mod.load_commentary_config(game_file, live_config=LiveConfig())
+    from_dir = config_mod.load_commentary_config(
+        game_file.parent, live_config=LiveConfig())
     assert from_file.search_enabled is True
+    assert from_file.search_prefetch == 16
+    assert from_file.search_limit == 40
+    assert from_file.high_view_keywords == (
+        "大肥鱼", "大肥鱼 直播", "大肥鱼 切片")
+    assert from_file.high_view_min_view == 100_000
+    assert from_file.high_view_every == 1
+    assert from_file.video_comment_enabled is True
+    assert from_file.video_comment_max_chars == 60
+    assert from_file.video_comment_max_per_day == 0
+    assert from_file.video_comment_min_gap_s == 600.0
     assert from_file.open_browser is True
     assert "杀戮尖塔" in from_file.search_exclude
     assert from_file.browser_window is True
+    assert from_file.browser_isolated is True
+    assert from_file.browser_fullscreen is True
     assert from_file.browser_monitor == "secondary"
     assert from_file.like_on_watch is True
     assert from_file.live_chat_enabled is True
+    assert from_file.live_reply_send_danmu is False
     assert from_file.live_reply_max_tokens_per_hour == 5000
     assert from_dir.search_enabled is True
     assert from_dir.open_browser is True
@@ -349,6 +375,50 @@ def test_bucket_seconds_and_duration_cap():
     assert cfg.bucket_seconds(1200) == 60
     assert cfg.bucket_seconds(1201) == 120
     assert cfg.bucket_seconds(1800) == 120
+
+
+def test_client_popular_paginates_to_widen_pool():
+    client = api.BiliClient(retries=0)
+    pages = []
+
+    def fake_get_json(url, params=None):
+        assert url == api.POPULAR
+        pages.append(params["pn"])
+        return {"list": [
+            {"bvid": f"BV{params['pn']}{i:02d}", "aid": params["pn"] * 100 + i,
+             "title": f"视频 {params['pn']}-{i}", "duration": 300,
+             "owner": {"name": "UP"}, "stat": {"view": 1000}}
+            for i in range(20)
+        ]}
+
+    client._get_json = fake_get_json
+    refs = client.popular(limit=40)
+    assert len(refs) == 40
+    assert pages == [1, 2]
+    assert len({ref.bvid for ref in refs}) == 40
+
+
+def test_client_history_progress_requires_cookie_and_reads_only_numbers():
+    client = api.BiliClient(retries=0)
+    assert client.history_progress("BV1TEST") is None  # 无 Cookie 不发请求
+
+    client = api.BiliClient(retries=0, cookie="SESSDATA=secret")
+    calls = []
+
+    def fake_get_json(url, params=None):
+        calls.append(url)
+        return {"list": [{
+            "progress": 118, "duration": 120, "view_at": 1700000000,
+            "title": "不读取标题",
+            "history": {"bvid": "BV1TEST", "cid": 1},
+        }]}
+
+    client._get_json = fake_get_json
+    result = client.history_progress("BV1TEST")
+    assert result == {"bvid": "BV1TEST", "progress": 118, "duration": 120,
+                      "view_at": 1700000000}
+    assert calls == [api.HISTORY]
+    assert "secret" not in str(result)
 
 
 def test_client_danmaku_xml_fallback_and_item_cap():
@@ -448,6 +518,25 @@ def test_selection_filters_seen_failed_duration_and_multi_part(tmp_path):
     assert "多 P" in reasons["BVMULTI"]
 
 
+def test_selection_rewards_high_play_count():
+    config = config_mod.CommentaryConfig.from_dict({
+        "min_duration_s": 5, "max_duration_s": 1800,
+        "min_comments": 1, "target_comments": 30,
+    })
+    low = _ref(bvid="BVLOWVIEW", aid=1, stat={
+        "view": 10_000, "like": 5_000, "coin": 0, "favorite": 0,
+        "reply": 50, "danmaku": 20,
+    })
+    high = _ref(bvid="BVHIGHVIEW", aid=2, stat={
+        "view": 2_000_000, "like": 100_000, "coin": 0, "favorite": 0,
+        "reply": 50, "danmaku": 200,
+    })
+    result = select_mod.select_candidates([low, high], config)
+    assert [row.video.bvid for row in result.candidates] == [
+        "BVHIGHVIEW", "BVLOWVIEW"]
+    assert any("播放=" in reason for reason in result.candidates[0].reasons)
+
+
 # ---------------------------------------------------------------- 档案
 def test_profile_generated_once_cached_and_sanitizes_bad_claims(tmp_path):
     stores = cache_mod.Stores(tmp_path)
@@ -465,6 +554,7 @@ def test_profile_generated_once_cached_and_sanitizes_bad_claims(tmp_path):
     assert info["cached"] is False
     assert len(planner.calls) == 1
     assert profile_mod.safe_line("第 12 秒画面里他笑了。") == ""
+    assert all("弹幕" not in reply.text for reply in profile.replies)
     assert all("第" not in cue.text or "秒" not in cue.text for cue in profile.cues)
     assert profile.audience["disclaimer"]
 
@@ -477,6 +567,114 @@ def test_profile_generated_once_cached_and_sanitizes_bad_claims(tmp_path):
     with pytest.raises(profile_mod.ProfileError):
         profile_mod.ProfileBuilder(config, planner=planner_empty).build(
             ref, _comments(), _danmaku_result())
+
+
+def test_profile_marks_big_fish_video_for_self_deprecation(tmp_path):
+    assert models.is_big_fish_text("【大肥鱼】今天整活", "UP主")
+    assert models.is_big_fish_text("普通标题", "大肥魚切片")
+    assert not models.is_big_fish_text("普通动物视频", "别的UP")
+    stores = cache_mod.Stores(tmp_path)
+    config = config_mod.CommentaryConfig.from_dict({"min_duration_s": 1})
+    planner = FakePlanner(_plan())
+    builder = profile_mod.ProfileBuilder(
+        config, planner=planner, cache=stores.profiles)
+    ref = _ref(
+        bvid="BVBIGFISH", title="大肥鱼：今天也被自己笑到",
+        owner_name="大肥鱼")
+    builder.build(ref, _comments(), _danmaku_result())
+    context = planner.calls[0]["context"]
+    assert context["same_fish"] is True
+    assert "same_fish" in prompts_mod.COMMENTARY_SYSTEM
+    assert "自嘲" in prompts_mod.COMMENTARY_SYSTEM
+    profile, info = builder.build(ref, _comments(), _danmaku_result())
+    assert profile.meta["same_fish"] is True
+    assert info["cached"] is True
+
+    normal_planner = FakePlanner(_plan())
+    normal_builder = profile_mod.ProfileBuilder(
+        config, planner=normal_planner, cache=None)
+    normal_builder.build(_ref(), _comments(), _danmaku_result())
+    assert normal_planner.calls[0]["context"]["same_fish"] is False
+
+
+def test_video_comment_is_optional_and_only_for_same_fish(tmp_path):
+    config = config_mod.CommentaryConfig.from_dict({
+        "min_duration_s": 1, "video_comment_max_chars": 40})
+    plan = _plan()
+    plan["video_comment"] = "弹幕说这条鱼好惨，我也这么觉得"
+    planner = FakePlanner(plan)
+    builder = profile_mod.ProfileBuilder(config, planner=planner, cache=None)
+    fish = _ref(bvid="BVBIGFISH2", title="大肥鱼：今天又被捞了")
+    profile, _ = builder.build(fish, _comments(), _danmaku_result())
+    assert profile.meta["video_comment"] == "评论说这条鱼好惨，我也这么觉得"
+
+    normal_planner = FakePlanner(plan)
+    normal_builder = profile_mod.ProfileBuilder(
+        config, planner=normal_planner, cache=None)
+    normal, _ = normal_builder.build(
+        _ref(title="普通视频"), _comments(), _danmaku_result())
+    assert normal.meta["video_comment"] == ""
+    assert "video_comment" in prompts_mod.COMMENTARY_SYSTEM
+
+    empty_planner = FakePlanner(_plan())
+    empty_builder = profile_mod.ProfileBuilder(
+        config, planner=empty_planner, cache=None)
+    empty, _ = empty_builder.build(fish, _comments(), _danmaku_result())
+    assert empty.meta["video_comment"] == ""
+
+
+def test_video_comment_drops_canned_persona_lines(tmp_path):
+    """视频评论是给陌生观众看的：抄人设台词、只有一句口癖，都按“没想好”处理。"""
+    config = config_mod.CommentaryConfig.from_dict({
+        "min_duration_s": 1, "video_comment_max_chars": 60})
+    fish = _ref(bvid="BVBIGFISH3", title="大肥鱼：今天又被捞了")
+
+    class QuipPersona:
+        quips = ("我直接好家伙",)
+
+        def cache_key(self):
+            return "quip-test"
+
+    def build(text, persona=None):
+        plan = _plan()
+        plan["video_comment"] = text
+        builder = profile_mod.ProfileBuilder(
+            config, planner=FakePlanner(plan), cache=None, persona=persona)
+        profile, _ = builder.build(fish, _comments(), _danmaku_result())
+        return profile.meta
+
+    meta = build("同类看同类，这波我先共情一下。")
+    assert meta["video_comment"] == ""
+    assert meta["video_comment_dropped"] == "template"
+
+    meta = build("弹幕都在笑，我也是条鱼，先别急着笑")
+    assert meta["video_comment"] == ""
+    assert meta["video_comment_dropped"] == "template"
+
+    meta = build("我直接好家伙！", persona=QuipPersona())
+    assert meta["video_comment"] == ""
+    assert meta["video_comment_dropped"] == "quip"
+
+    # 招牌句单独成句才算背台本；接了真观察就照常发
+    meta = build("先别急着笑！", persona=QuipPersona())
+    assert meta["video_comment_dropped"] == "template"
+    meta = build("先别急着笑，这结局我是真没想到", persona=QuipPersona())
+    assert meta["video_comment"] == "先别急着笑，这结局我是真没想到"
+    assert "video_comment_dropped" not in meta
+
+    # 口癖后面接了真内容就照常发：具体细节 + 自己的反应
+    meta = build("我直接好家伙，这操作也能过？", persona=QuipPersona())
+    assert meta["video_comment"] == "我直接好家伙，这操作也能过？"
+    assert "video_comment_dropped" not in meta
+
+
+def test_commentary_prompt_asks_for_human_comment_not_canned_lines():
+    text = prompts_mod.COMMENTARY_SYSTEM
+    assert "不要写“同类看同类”" in text
+    assert "我也是条鱼" in text
+    assert "口癖" in text
+    assert "具体" in text
+    assert prompts_mod.PROMPT_VERSION.endswith("v6")
 
 
 def test_profile_prompt_treats_danmaku_and_comments_as_untrusted_text(tmp_path):
@@ -631,30 +829,58 @@ def test_search_html_parser_extracts_video_cards():
     assert rows[1].stat["view"] == 120000000
 
 
-def test_chrome_browser_uses_new_window_on_secondary_and_falls_back(monkeypatch):
+def test_start_from_zero_keeps_other_params_and_ignores_non_video_urls():
+    url = browser_mod.start_from_zero(
+        "https://www.bilibili.com/video/BV1AA4111111?p=2&t=99#reply")
+    assert url == "https://www.bilibili.com/video/BV1AA4111111?p=2&t=0#reply"
+    assert browser_mod.start_from_zero("https://www.bilibili.com/") == \
+        "https://www.bilibili.com/"
+    assert browser_mod.start_from_zero("https://example.com/video/BV1") == \
+        "https://example.com/video/BV1"
+
+
+def test_chrome_browser_reuses_current_tab_instead_of_opening_new_windows(
+        monkeypatch):
     calls = []
+    targets = []
     moves = []
+    monkeypatch.setattr(browser_mod, "_chrome_windows", lambda: {})
+    monkeypatch.setattr(browser_mod, "is_window", lambda hwnd: True)
+    monkeypatch.setattr(browser_mod, "window_title",
+                        lambda hwnd: "测试视频_bilibili - Google Chrome")
+    monkeypatch.setattr(browser_mod, "move_window",
+                        lambda hwnd, area: moves.append((hwnd, area)) or True)
     browser = browser_mod.ChromeBrowser(
         exe="C:/Chrome/chrome.exe", launcher=lambda command: calls.append(command),
         windowed=True, monitor="secondary",
         area_provider=lambda monitor: (1920, 0, 3840, 1080),
-        positioner=lambda before, area: moves.append(area) or True)
-    result = browser.open("https://www.bilibili.com/video/BV1AA4111111")
-    assert result["ok"] is True
-    assert result["browser"] == "chrome"
-    assert calls and "--new-window" in calls[0]
-    assert "--window-position=1920,0" in calls[0]
-    assert "--window-size=1920,1080" in calls[0]
-    assert calls[0][-1].startswith("https://www.bilibili.com/video/")
-    deadline = time.time() + 2.0
-    while time.time() < deadline and not moves:
-        time.sleep(0.01)
-    assert moves == [(1920, 0, 3840, 1080)]
+        finder=lambda before: 555,
+        navigator=lambda hwnd, url: targets.append((hwnd, url)) or True)
+    first = browser.open("https://www.bilibili.com/video/BV1AA4111111")
+    assert first["ok"] is True
+    assert first["browser"] == "chrome"
+    assert first["reused"] is True
+    assert calls and "--new-window" not in calls[0]
+    assert not any("bilibili.com/video" in arg for arg in calls[0])
+    assert "--disable-background-timer-throttling" in calls[0]
+    assert "--disable-background-media-suspend" in calls[0]
+    assert targets == [(555, "https://www.bilibili.com/video/BV1AA4111111?t=0")]
+    assert moves == [(555, (1920, 0, 3840, 1080))]
+
+    # 换视频不再启动 Chrome，也不再关窗，只在同一标签页导航。
+    second = browser.open("https://www.bilibili.com/video/BV1BB4222222")
+    assert second["ok"] is True
+    assert len(calls) == 1
+    assert targets[-1] == (555, "https://www.bilibili.com/video/BV1BB4222222?t=0")
 
     tab_calls = []
+    monkeypatch.setattr(browser_mod, "_chrome_windows",
+                        lambda: {999: "用户自己的页面"})
     tabbed = browser_mod.ChromeBrowser(
         exe="C:/Chrome/chrome.exe",
-        launcher=lambda command: tab_calls.append(command), windowed=False)
+        launcher=lambda command: tab_calls.append(command), windowed=False,
+        finder=lambda before: 666,
+        navigator=lambda hwnd, url: True)
     assert tabbed.open("https://example.com/video")["ok"] is True
     assert "--new-tab" in tab_calls[0]
     assert "--new-window" not in tab_calls[0]
@@ -673,6 +899,120 @@ def test_chrome_browser_uses_new_window_on_secondary_and_falls_back(monkeypatch)
     assert fallback["ok"] is True
     assert fallback["browser"] == "default"
     assert opened == ["https://example.com"]
+
+
+def test_isolated_app_reuses_window_via_devtools(tmp_path, monkeypatch):
+    events = []
+    monkeypatch.setattr(browser_mod, "is_window", lambda hwnd: True)
+    monkeypatch.setattr(browser_mod, "window_title",
+                        lambda hwnd: "新视频_bilibili - Google Chrome")
+    monkeypatch.setattr(browser_mod, "cdp_navigate",
+                        lambda profile, url: url.endswith("?t=0"))
+    browser = browser_mod.ChromeBrowser(
+        exe="C:/Chrome/chrome.exe", isolated=True,
+        profile_dir=tmp_path / "profile", fullscreen=True,
+        launcher=lambda command: events.append(("launch", command)),
+        closer=lambda hwnd: events.append(("close", hwnd)) or True)
+    browser._hwnd = 111
+    browser._browser = "chrome"
+    browser._opened = True
+    browser._tracked[111] = "https://www.bilibili.com/video/old?t=0"
+    result = browser.open("https://www.bilibili.com/video/new")
+    assert result["ok"] and result.get("reused")
+    assert events == []  # 不关窗、不重开，页面内导航
+    assert browser._last_url.endswith("?t=0")
+
+
+def test_isolated_cleanup_only_closes_this_mode_chrome(
+        tmp_path, monkeypatch):
+    events = []
+    monkeypatch.setattr(browser_mod, "_chrome_windows", lambda: {
+        11: "旧视频_bilibili - Google Chrome",
+        22: "用户自己的 B 站 - Google Chrome",
+        33: "新标签页 - Google Chrome",
+    })
+    monkeypatch.setattr(browser_mod, "window_pid",
+                        lambda hwnd: {11: 999, 22: 1000, 33: 999}[hwnd])
+    monkeypatch.setattr(browser_mod, "chrome_mode_pids", lambda: {999})
+    browser = browser_mod.ChromeBrowser(
+        exe="C:/Chrome/chrome.exe", isolated=True,
+        profile_dir=tmp_path / "profile",
+        launcher=lambda command: None,
+        closer=lambda hwnd: events.append(hwnd) or True)
+    browser._custom_launcher = False  # 模拟真实启动，走进程识别
+    browser._clean_isolated_once()
+    assert events == [11, 33]
+    assert 22 not in events
+
+
+def test_chrome_browser_isolated_app_window_is_one_fullscreen_window(
+        tmp_path, monkeypatch):
+    calls = []
+    events = []
+    fullscreens = []
+    monkeypatch.setattr(browser_mod, "_chrome_windows",
+                        lambda: {111: "旧视频_bilibili - Google Chrome"})
+    monkeypatch.setattr(browser_mod, "is_window", lambda hwnd: True)
+    monkeypatch.setattr(browser_mod, "window_title",
+                        lambda hwnd: "测试视频_bilibili - Google Chrome")
+    monkeypatch.setattr(browser_mod, "fullscreen_window",
+                        lambda hwnd, area: fullscreens.append((hwnd, area)) or True)
+    browser = browser_mod.ChromeBrowser(
+        exe="C:/Chrome/chrome.exe",
+        isolated=True, profile_dir=tmp_path / "profile",
+        fullscreen=True, monitor="secondary",
+        launcher=lambda command: calls.append(command),
+        closer=lambda hwnd: events.append(("close", hwnd)) or True,
+        finder=lambda before: 777,
+        area_provider=lambda monitor: (1920, 0, 3840, 1080))
+    browser._hwnd = 111
+    browser._browser = "chrome"
+    browser._opened = True
+    result = browser.open("https://www.bilibili.com/video/BV1AA4111111")
+    assert result["ok"] is True
+    assert result["isolated"] is True
+    assert calls and any(arg.startswith("--app=https://www.bilibili.com/video/")
+                         for arg in calls[0])
+    assert any(arg.startswith("--user-data-dir=") for arg in calls[0])
+    assert "--new-window" not in calls[0]
+    assert ("close", 111) in events
+    deadline = time.time() + 2.0
+    while time.time() < deadline and not fullscreens:
+        time.sleep(0.01)
+    assert fullscreens == [(777, (1920, 0, 3840, 1080))]
+
+
+def test_chrome_browser_closes_orphan_windows_from_previous_process(
+        tmp_path, monkeypatch):
+    state = tmp_path / "bili.chrome.json"
+    state.write_text(json.dumps({"windows": [
+        {"hwnd": 111, "url": "https://www.bilibili.com/video/BV1OLD"},
+        {"hwnd": 222, "url": "https://www.bilibili.com/video/BV2OLD"},
+    ]}), encoding="utf-8")
+    closed = []
+    browser = browser_mod.ChromeBrowser(
+        exe="C:/Chrome/chrome.exe", state_path=state,
+        closer=lambda hwnd: closed.append(hwnd) or True)
+    monkeypatch.setattr(browser_mod, "is_window", lambda hwnd: True)
+    monkeypatch.setattr(browser_mod, "window_title",
+                        lambda hwnd: "旧视频_bilibili - Google Chrome")
+    browser._close_orphans()
+    assert closed == [111, 222]
+    assert browser._tracked == {}
+    saved = json.loads(state.read_text(encoding="utf-8"))
+    assert saved["windows"] == []
+
+
+def test_chrome_browser_adopts_legacy_playlist_window(tmp_path):
+    playlist = tmp_path / "bilibili_commentary.playlist.json"
+    playlist.write_text(json.dumps({
+        "browser": {"hwnd": 333, "url": "https://www.bilibili.com/video/BVOLD"},
+    }), encoding="utf-8")
+    browser = browser_mod.ChromeBrowser(
+        exe="C:/Chrome/chrome.exe",
+        state_path=tmp_path / "bili.chrome.json")
+    browser.adopt_legacy_window(playlist)
+    assert browser._tracked == {333: "https://www.bilibili.com/video/BVOLD"}
 
 
 def test_bili_playlist_command_roundtrip(tmp_path):
@@ -695,23 +1035,77 @@ def test_bili_playlist_command_roundtrip(tmp_path):
         control_mod.send_command("delete_all", root=tmp_path)
 
 
-def test_chrome_browser_closes_previous_tab_and_refreshes_current():
+def test_bili_posted_comment_log_keeps_link_title_and_text(tmp_path):
+    """发出去的评论要留底：视频链接 / 标题 / 评论内容，新的在前。"""
+    first = control_mod.append_video_comment(
+        bvid="BV1POST0001", title="大肥鱼：今天也被捞了",
+        text="同类看同类，先共情一下。", owner="鱼塘UP",
+        rpid="123456", root=tmp_path)
+    assert first["url"] == "https://www.bilibili.com/video/BV1POST0001"
+    second = control_mod.append_video_comment(
+        bvid="BV1POST0002", title="第二条", text="这条也想说两句",
+        url="https://www.bilibili.com/video/BV1POST0002?p=2", root=tmp_path)
+
+    log_path = control_mod.comments_path(tmp_path)
+    assert log_path.name == "bilibili_commentary.comments.jsonl"
+    assert log_path.exists()
+
+    got = control_mod.read_video_comments(root=tmp_path)
+    assert got["ok"] is True and got["count"] == 2
+    assert [row["bvid"] for row in got["items"]] == ["BV1POST0002", "BV1POST0001"]
+    newest = got["items"][0]
+    assert newest["title"] == "第二条"
+    assert newest["text"] == "这条也想说两句"
+    assert newest["url"] == second["url"]
+    oldest = got["items"][1]
+    assert oldest["title"] == "大肥鱼：今天也被捞了"
+    assert oldest["text"] == "同类看同类，先共情一下。"
+    assert oldest["owner"] == "鱼塘UP" and oldest["rpid"] == "123456"
+
+    # 空评论不记账；limit 生效；坏行只跳过不炸
+    assert control_mod.append_video_comment(bvid="BV1X", text="  ", root=tmp_path) == {}
+    with log_path.open("a", encoding="utf-8") as fh:
+        fh.write("不是 JSON\n")
+    assert control_mod.read_video_comments(limit=1, root=tmp_path)["items"][0]["bvid"] == "BV1POST0002"
+
+
+def test_bili_posted_comment_log_trims_to_recent(tmp_path, monkeypatch):
+    monkeypatch.setattr(control_mod, "_COMMENT_KEEP", 3)
+    for i in range(5):
+        control_mod.append_video_comment(
+            bvid=f"BVTRIM{i}", title=f"标题{i}", text=f"评论{i}", root=tmp_path)
+    lines = control_mod.comments_path(tmp_path).read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 3
+    got = control_mod.read_video_comments(root=tmp_path)
+    assert [row["bvid"] for row in got["items"]] == ["BVTRIM4", "BVTRIM3", "BVTRIM2"]
+
+
+def test_chrome_browser_navigates_current_tab_and_refreshes_current(monkeypatch):
     events = []
+    monkeypatch.setattr(browser_mod, "_chrome_windows", lambda: {})
+    monkeypatch.setattr(browser_mod, "is_window", lambda hwnd: True)
+    monkeypatch.setattr(browser_mod, "window_title",
+                        lambda hwnd: "测试视频_bilibili - Google Chrome")
     browser = browser_mod.ChromeBrowser(
         exe="C:/Chrome/chrome.exe",
         launcher=lambda command: events.append(("launch", command[-1])),
         windowed=False,
         closer=lambda hwnd: events.append(("close", hwnd)) or True,
         refresher=lambda hwnd: events.append(("refresh", hwnd)) or True,
+        navigator=lambda hwnd, url: events.append(("navigate", hwnd, url)) or True,
     )
     browser._hwnd = 4321
     browser._browser = "chrome"
     browser._opened = True
     browser._last_url = "https://www.bilibili.com/video/BV1OLD"
     browser.open("https://www.bilibili.com/video/BV1NEW")
-    assert ("close", 4321) in events
-    assert events[-1] == ("launch", "https://www.bilibili.com/video/BV1NEW")
-    assert browser.snapshot()["url"].endswith("BV1NEW")
+    assert ("navigate", 4321, "https://www.bilibili.com/video/BV1NEW?t=0") in events
+    assert not any(event[0] == "close" for event in events)
+    assert not any(event[0] == "launch" for event in events)
+    assert browser.snapshot()["url"].startswith(
+        "https://www.bilibili.com/video/BV1NEW")
+    assert browser.blank()["ok"] is True
+    assert ("navigate", 4321, "about:blank") in events
 
     browser._hwnd = 9876
     browser._browser = "chrome"
@@ -768,6 +1162,36 @@ def test_like_requires_cookie_and_posts_csrf_aid():
         "SESSDATA=secret; bili_jct=csrf-token",
         opener=lambda: _FakeLikeOpener(payload={"code": -101, "message": "账号未登录"}))
     error = failed.like(123, "BV1TEST")
+    assert error["ok"] is False
+    assert "登录" in error["error"]
+    assert "secret" not in str(error)
+
+
+def test_video_comment_requires_cookie_and_posts_oid_message_csrf():
+    missing = video_comment_mod.BiliVideoCommenter("").comment(
+        123, "BV1TEST", "这条鱼有点东西")
+    assert missing["skipped"] is True
+    assert "Cookie" in missing["reason"]
+
+    opener = _FakeLikeOpener(
+        payload={"code": 0, "message": "0", "data": {"rpid": 98765}})
+    commenter = video_comment_mod.BiliVideoCommenter(
+        "SESSDATA=secret; bili_jct=csrf-token", opener=lambda: opener)
+    result = commenter.comment(123, "BV1TEST", "这条鱼有点东西")
+    assert result["ok"] is True
+    assert result["rpid"] == "98765"
+    body = opener.request.data.decode("utf-8")
+    assert "oid=123" in body
+    assert "type=1" in body
+    assert "message=" in body
+    assert "csrf=csrf-token" in body
+    assert "secret" not in str(result)
+
+    failed = video_comment_mod.BiliVideoCommenter(
+        "SESSDATA=secret; bili_jct=csrf-token",
+        opener=lambda: _FakeLikeOpener(
+            payload={"code": -101, "message": "账号未登录"}))
+    error = failed.comment(123, "BV1TEST", "这条鱼有点东西")
     assert error["ok"] is False
     assert "登录" in error["error"]
     assert "secret" not in str(error)
@@ -899,6 +1323,25 @@ def test_live_reply_sanitizes_links_and_ignores_injected_commands():
     assert said == []
 
 
+def test_reply_strips_repeated_crowd_address_prefix():
+    assert models.strip_crowd_prefix("兄弟们，这波不对吧") == "这波不对吧"
+    assert models.strip_crowd_prefix("家人们 谁懂啊") == "谁懂啊"
+    assert models.strip_crowd_prefix("各位观众朋友们，晚上好") == "晚上好"
+    assert models.strip_crowd_prefix("大家好") == "大家好"
+    assert models.strip_crowd_prefix("这波兄弟们真没想到") == "这波兄弟们真没想到"
+    assert models.strip_danmaku_word("弹幕说这波稳") == "评论说这波稳"
+    assert models.strip_danmaku_word("这条弹幕有点东西") == "这条评论有点东西"
+    assert "弹幕" not in models.strip_danmaku_word("弹幕游戏先放一边")
+    config = config_mod.CommentaryConfig.from_dict({"live_chat_enabled": True})
+    responder = live_chat_mod.LiveChatResponder(
+        config, feed=_FakeLiveFeed([]), planner=_FakeLivePlanner(),
+        speak=lambda text: None, send=lambda text, event: None,
+        now=lambda: 4000.0)
+    assert responder._clean_reply("兄弟们，这不对吧？") == "这不对吧？"
+    assert responder._clean_reply("兄弟们") == ""
+    assert responder._clean_reply("弹幕说这不对吧") == "评论说这不对吧"
+
+
 # ---------------------------------------------------------------- 时钟/调度
 def test_virtual_clock_pause_resume_speed_and_scheduler_once():
     now = [0.0]
@@ -984,7 +1427,7 @@ def test_speech_gate_does_not_stack_or_block():
 # ---------------------------------------------------------------- 端到端 runner
 def _engine(tmp_path, *, duration=10, speed=100, config_path=None,
             ref=None, client=None, config_extra=None, browser=None,
-            search=None, persona=None, liker=None, live_chat=None):
+            search=None, persona=None, liker=None, commenter=None, live_chat=None):
     host = _host(tmp_path)
     ref = ref or _ref(duration_s=duration)
     client = client or FakeClient(
@@ -1007,7 +1450,7 @@ def _engine(tmp_path, *, duration=10, speed=100, config_path=None,
     engine = runner_mod.BiliEngine(
         host, config, client=client, stores=stores, builder=builder,
         sink=sink, persona=persona, search=search, browser=browser, liker=liker,
-        live_chat=live_chat,
+        commenter=commenter, live_chat=live_chat,
         control_root=tmp_path, config_path=config_path,
         wait_s=0.02, sleep=0.01,
     )
@@ -1016,13 +1459,133 @@ def _engine(tmp_path, *, duration=10, speed=100, config_path=None,
     return engine, host, stores, sink, planner
 
 
+def test_live_context_marks_big_fish_video(tmp_path):
+    engine, host, stores, sink, planner = _engine(tmp_path)
+    engine._live_title = "大肥鱼：直播切片"
+    assert engine._live_context()["current_video"]["same_fish"] is True
+    engine._live_title = "普通动物视频"
+    assert engine._live_context()["current_video"]["same_fish"] is False
+
+
+def test_high_view_track_rotates_and_keeps_only_high_view(tmp_path):
+    low = _ref(bvid="BVLOWVIEW", aid=1, stat={
+        "view": 1_000, "like": 500, "coin": 0, "favorite": 0,
+        "reply": 50, "danmaku": 20,
+    })
+    high = _ref(bvid="BVHIGHVIEW", aid=2, stat={
+        "view": 2_000_000, "like": 100_000, "coin": 0, "favorite": 0,
+        "reply": 50, "danmaku": 200,
+    })
+
+    class HighClient(FakeClient):
+        def search(self, keyword, limit=20, *, page=1):
+            self.search_keywords.append(keyword)
+            return [low, high]
+
+    client = HighClient(low, _detail(low), _comments(),
+                        _danmaku_result(10), search_rows=[high])
+    engine, host, stores, sink, planner = _engine(
+        tmp_path, client=client, config_extra={
+            "search_enabled": True, "search_keywords": ["搞笑"],
+            "high_view_keywords": ["大肥鱼"],
+            "high_view_min_view": 500_000,
+            "high_view_every": 3,
+        })
+    engine._video_count = 2
+    assert engine._high_view_due() is True
+    refs = engine._high_view_refs()
+    assert [ref.bvid for ref in refs] == ["BVHIGHVIEW"]
+    assert "大肥鱼" in client.search_keywords
+    engine._video_count = 0
+    assert engine._high_view_due() is False
+
+
+def test_high_view_candidate_is_played_before_higher_scoring_normal(tmp_path):
+    low = _ref(
+        bvid="BVLOWNORMAL", aid=1, title="动物搞笑：普通候选",
+        stat={"view": 100_000, "like": 5_000, "coin": 0, "favorite": 0,
+              "reply": 100, "danmaku": 200},
+    )
+    high = _ref(
+        bvid="BVHIGHFISH", aid=2, title="大肥鱼：高播放量",
+        stat={"view": 2_000_000, "like": 20_000, "coin": 0, "favorite": 0,
+              "reply": 12, "danmaku": 200},
+    )
+
+    class MixedClient(FakeClient):
+        def search(self, keyword, limit=20, *, page=1):
+            self.calls["search"] += 1
+            self.search_keywords.append(keyword)
+            if keyword.startswith("大肥鱼"):
+                return [high]
+            return [low]
+
+    client = MixedClient(
+        low, _detail(low), _comments(), _danmaku_result(10),
+        search_rows=[low, high])
+    engine, host, stores, sink, planner = _engine(
+        tmp_path, client=client,
+        config_extra={
+            "search_enabled": True, "search_keywords": ["搞笑"],
+            "min_comments": 12, "high_view_keywords": ["大肥鱼"],
+            "high_view_min_view": 100_000, "high_view_every": 1,
+        })
+    engine._intent = search_intent_mod.SearchIntent(
+        keywords=("搞笑",), source="llm")
+    prepared = engine._prepare()
+    assert prepared is not None
+    assert prepared[0].bvid == "BVHIGHFISH"
+    assert engine._priority_bvids == {"BVHIGHFISH"}
+
+
+def test_forced_play_does_not_drop_low_comment_video(tmp_path):
+    target = _ref(
+        bvid="BVFORCEDLOW", aid=3, title="用户点播的低评论视频",
+        stat={"view": 10_000, "like": 1_000, "coin": 0, "favorite": 0,
+              "reply": 0, "danmaku": 10},
+    )
+    client = FakeClient(
+        target, _detail(target), [], _danmaku_result(10),
+        search_rows=[target])
+    other = _ref(bvid="BVKEEPLIST", aid=4, title="列表里原有的大肥鱼")
+    engine, host, stores, sink, planner = _engine(
+        tmp_path, client=client,
+        config_extra={"min_comments": 12, "min_like_view_ratio": 0.001})
+    engine._playlist_refs = [target, other]
+    engine._override_bvid = target.bvid
+    prepared = engine._prepare()
+    assert prepared is not None
+    assert prepared[0].bvid == "BVFORCEDLOW"
+    assert {ref.bvid for ref in engine._playlist_refs} == {
+        "BVFORCEDLOW", "BVKEEPLIST"}
+
+
+def test_forced_play_falls_back_when_profile_llm_fails(tmp_path):
+    target = _ref(bvid="BVFORCEDLLM", aid=5, title="点播但模型挂了")
+    client = FakeClient(target, _detail(target), _comments(),
+                        _danmaku_result(10), search_rows=[target])
+    engine, host, stores, sink, planner = _engine(
+        tmp_path, client=client,
+        config_extra={"min_comments": 1})
+    engine.builder = profile_mod.ProfileBuilder(
+        engine.config, planner=FailingPlanner(), cache=None)
+    engine._playlist_refs = [target]
+    engine._override_bvid = target.bvid
+    prepared = engine._prepare()
+    assert prepared is not None
+    detail, profile, danmaku, info = prepared
+    assert detail.bvid == "BVFORCEDLLM"
+    assert profile.meta.get("forced_fallback") is True
+    assert info.get("fallback") is True
+
+
 def test_engine_plays_one_video_marks_seen_and_stops(tmp_path):
     engine, host, stores, sink, planner = _engine(tmp_path)
     assert engine.persona.persona_id == "bili-xqc"
     thread = threading.Thread(target=engine.run, daemon=True)
     thread.start()
     deadline = time.time() + 6.0
-    while time.time() < deadline and not stores.seen.is_seen("BV1TEST000001", 7):
+    while time.time() < deadline and not any("看完" in text for text in sink.said):
         time.sleep(0.02)
     host.request_stop()
     thread.join(2.0)
@@ -1073,12 +1636,160 @@ def test_engine_switches_to_playlist_command_and_closes_old_tab(tmp_path):
         time.sleep(0.02)
     host.request_stop()
     thread.join(2.0)
-    assert browser.urls[-1].endswith(second.bvid)
-    assert any(url.endswith(first.bvid) for url in browser.urls)
+    assert second.bvid in browser.urls[-1]
+    assert any(first.bvid in url for url in browser.urls)
     assert browser.closes >= 1
 
 
-def test_engine_stop_does_not_mark_seen_or_speak_closing(tmp_path):
+def test_browser_loss_watchdog_only_counts_chrome_window_or_new_tab(tmp_path):
+    engine, host, stores, sink, planner = _engine(tmp_path)
+
+    class Browser:
+        def __init__(self, snapshot):
+            self.value = snapshot
+
+        def snapshot(self):
+            return dict(self.value)
+
+    engine.browser = Browser({"browser": "chrome", "opened": True,
+                              "title": "地狱级不要笑挑战_bilibili - Google Chrome"})
+    engine._browser_title_seen = False
+    assert engine._browser_lost() is False
+    assert engine._browser_title_seen is True
+
+    engine.browser = Browser({"browser": "chrome", "opened": False,
+                              "title": "x"})
+    assert engine._browser_lost() is True
+    engine.browser = Browser({"browser": "chrome", "opened": True,
+                              "title": "新标签页 - Google Chrome"})
+    assert engine._browser_lost() is False  # 8 秒宽限内不切
+    engine._browser_newtab_since = time.time() - 9
+    assert engine._browser_lost() is True
+
+    engine.browser = Browser({"browser": "default", "opened": True,
+                              "title": "新标签页 - Google Chrome"})
+    assert engine._browser_lost() is False
+
+
+def test_engine_advances_when_chrome_window_disappears(tmp_path):
+    first = _ref(bvid="BVCLOSE00001", aid=1, duration_s=60)
+    second = _ref(bvid="BVCLOSE00002", aid=2, duration_s=60)
+
+    class TwoVideoClient(FakeClient):
+        def popular(self, limit=20):
+            self.calls["popular"] += 1
+            return [first, second]
+
+    class ClosingBrowser(FakeBrowser):
+        def __init__(self):
+            super().__init__()
+            self.snaps = 0
+
+        def snapshot(self):
+            self.snaps += 1
+            # 播放前 publish_playlist 会先看一眼；打开后第一次为 true，
+            # 之后模拟窗口被用户关掉。
+            return {
+                "browser": "chrome",
+                "opened": self.opened and self.snaps <= 4,
+                "url": self.urls[-1] if self.urls else "",
+                "title": "测试视频 - Google Chrome",
+            }
+
+    browser = ClosingBrowser()
+    client = TwoVideoClient(
+        first, _detail(first), _comments(), _danmaku_result(60),
+        search_rows=[second])
+    engine, host, stores, sink, planner = _engine(
+        tmp_path, ref=first, client=client, browser=browser,
+        duration=60, speed=1)
+    thread = threading.Thread(target=engine.run, daemon=True)
+    thread.start()
+    deadline = time.time() + 12.0
+    while time.time() < deadline and not stores.seen.is_seen(second.bvid, 7):
+        time.sleep(0.02)
+    host.request_stop()
+    thread.join(2.0)
+    assert stores.seen.is_seen(second.bvid, 7)
+
+
+def test_engine_forces_next_when_history_progress_never_advances(tmp_path):
+    first = _ref(bvid="BVPAUSED0001", aid=1, duration_s=600)
+    second = _ref(bvid="BVPAUSED0002", aid=2, duration_s=600)
+    clock = [time.time()]
+
+    class PausedHistoryClient(FakeClient):
+        def popular(self, limit=20):
+            self.calls["popular"] += 1
+            return [first, second]
+
+        def history_progress(self, bvid):
+            # 画面停在原地：历史进度不前进，但记录是本次播放的新记录。
+            return {"bvid": bvid, "progress": 5, "duration": 600,
+                    "view_at": int(clock[0])}
+
+    client = PausedHistoryClient(
+        first, _detail(first), _comments(), _danmaku_result(600),
+        search_rows=[second])
+    browser = FakeBrowser()
+    engine, host, stores, sink, planner = _engine(
+        tmp_path, duration=600, speed=100, ref=first, client=client,
+        browser=browser)
+    engine._wall = lambda: clock[0]
+
+    def fast_sleep(seconds):
+        clock[0] += 5.0
+
+    engine._sleep = fast_sleep
+    thread = threading.Thread(target=engine.run, daemon=True)
+    thread.start()
+    deadline = time.time() + 4.0
+    while time.time() < deadline:
+        opened = [u.rsplit("/", 1)[-1].split("?")[0] for u in browser.urls]
+        if stores.failed.is_failed(first.bvid) and second.bvid in opened:
+            break
+        time.sleep(0.02)
+    host.request_stop()
+    thread.join(2.0)
+    assert stores.failed.is_failed(first.bvid)
+    assert browser.blanks >= 1
+    assert second.bvid in [u.rsplit("/", 1)[-1].split("?")[0]
+                           for u in browser.urls]
+
+
+def test_history_end_requires_a_record_from_this_play(tmp_path):
+    engine, host, stores, sink, planner = _engine(tmp_path)
+
+    class History:
+        def __init__(self, value):
+            self.value = value
+
+        def history_progress(self, bvid):
+            return dict(self.value)
+
+    now = time.time()
+    engine.client = History({"progress": 118, "duration": 120,
+                             "view_at": now})
+    assert engine._history_end("BV1TEST", now - 5) is True
+    engine.client = History({"progress": 118, "duration": 120,
+                             "view_at": now - 600})
+    assert engine._history_end("BV1TEST", now - 5) is False
+    engine.client = History({"progress": 50, "duration": 120,
+                             "view_at": now})
+    assert engine._history_end("BV1TEST", now - 5) is False
+
+
+def test_run_lock_blocks_a_second_engine(tmp_path):
+    first, _host1, _stores1, _sink1, _planner1 = _engine(tmp_path)
+    second, _host2, _stores2, _sink2, _planner2 = _engine(tmp_path)
+    try:
+        assert first._acquire_run_lock() is True
+        assert second._acquire_run_lock() is False
+    finally:
+        first._release_run_lock()
+
+
+def test_engine_stop_marks_seen_for_no_repeat_and_skips_closing(tmp_path):
     engine, host, stores, sink, planner = _engine(
         tmp_path, duration=120, speed=1)
     thread = threading.Thread(target=engine.run, daemon=True)
@@ -1093,7 +1804,8 @@ def test_engine_stop_does_not_mark_seen_or_speak_closing(tmp_path):
     host.request_stop()
     thread.join(2.0)
     assert not thread.is_alive()
-    assert not stores.seen.is_seen("BV1TEST000001", 7)
+    # 进入播放就记已看；重启/中断不会又把同一条刷回来。
+    assert stores.seen.is_seen("BV1TEST000001", 7)
     assert not any("看完了" in text for text in sink.said)
     assert not host.status().get("idle_text")
 
@@ -1132,6 +1844,21 @@ def test_engine_search_drops_candidates_from_current_game(tmp_path):
     assert [ref.bvid for ref in refs] == ["BVANIMAL0001"]
 
 
+def test_engine_search_keeps_more_than_old_twenty_cap(tmp_path):
+    rows = [_ref(bvid=f"BVSEARCH{i:04d}", aid=1000 + i,
+                 title=f"动物视频 {i}") for i in range(30)]
+    client = FakeClient(rows[0], _detail(rows[0]), _comments(),
+                        _danmaku_result(10), search_rows=rows)
+    engine, host, stores, sink, planner = _engine(
+        tmp_path, client=client,
+        config_extra={"search_enabled": True, "search_limit": 40,
+                      "search_keywords": ["动物"]})
+    engine._intent = search_intent_mod.SearchIntent(
+        keywords=("动物",), source="llm")
+    refs = engine._search_videos(engine._intent)
+    assert len(refs) == 30
+
+
 def test_engine_uses_persona_search_and_opens_browser(tmp_path):
     popular = _ref(bvid="BVPOPULAR", aid=1, duration_s=10)
     found = _ref(bvid="BVSEARCH", aid=2, duration_s=10)
@@ -1160,8 +1887,71 @@ def test_engine_uses_persona_search_and_opens_browser(tmp_path):
     assert stores.seen.is_seen("BVSEARCH", 7)
     assert client.calls["search"] >= 1
     assert set(client.search_keywords) == {"动物"}
-    assert browser.urls and browser.urls[0] == found.url
+    assert browser.urls and browser.urls[0] == browser_mod.start_from_zero(found.url)
     assert len(planner.calls) >= 1
+
+
+def test_engine_only_comments_same_fish_when_model_wrote_one(tmp_path):
+    class FakeCommenter:
+        def __init__(self):
+            self.calls = []
+
+        def available(self):
+            return True
+
+        def comment(self, aid, bvid, text):
+            self.calls.append((aid, bvid, text))
+            return {"ok": True, "rpid": "123"}
+
+    commenter = FakeCommenter()
+    engine, host, stores, sink, planner = _engine(
+        tmp_path, commenter=commenter,
+        config_extra={"video_comment_enabled": True,
+                      "video_comment_min_gap_s": 0,
+                      "video_comment_max_per_day": 0})
+    ref = _ref(bvid="BVCOMMENT01", title="大肥鱼：今天也被捞了")
+    profile = models.VideoProfile(
+        bvid=ref.bvid, url=ref.url, title=ref.title,
+        duration_s=ref.duration_s,
+        meta={"same_fish": True, "video_comment": "我直接好家伙，这操作也能过？"})
+    engine._comment_day = time.strftime("%Y-%m-%d")
+    engine._comment_count = 99
+    engine._start_video_comment(_detail(ref), profile)
+    deadline = time.time() + 2.0
+    while time.time() < deadline and not commenter.calls:
+        time.sleep(0.01)
+    assert commenter.calls == [
+        (10001, "BVCOMMENT01", "我直接好家伙，这操作也能过？")]
+
+    # 发成功就要在控制台账本里留下链接/标题/评论内容
+    deadline = time.time() + 2.0
+    posted = {"items": []}
+    while time.time() < deadline:
+        posted = control_mod.read_video_comments(root=tmp_path)
+        if posted["items"]:
+            break
+        time.sleep(0.01)
+    assert posted["items"], "成功发出的评论必须记账"
+    record = posted["items"][0]
+    assert record["bvid"] == "BVCOMMENT01"
+    assert record["title"] == "大肥鱼：今天也被捞了"
+    assert record["url"].endswith("/video/BVCOMMENT01")
+    assert record["text"] == "我直接好家伙，这操作也能过？"
+    assert record["rpid"] == "123"
+
+    profile.meta = {"same_fish": False, "video_comment": "不该发"}
+    engine._comment_last_at = 0.0
+    engine._start_video_comment(_detail(ref), profile)
+    time.sleep(0.05)
+    assert len(commenter.calls) == 1
+
+    # 旧档案里如果还留着“同类看同类”这种台本，也不能发出去
+    profile.meta = {"same_fish": True, "video_comment": "同类看同类，先共情一下。"}
+    other = _ref(bvid="BVCOMMENT02", title="大肥鱼：今天也被捞了")
+    engine._comment_last_at = 0.0
+    engine._start_video_comment(_detail(other), profile)
+    time.sleep(0.05)
+    assert len(commenter.calls) == 1
 
 
 def test_engine_likes_video_when_selected(tmp_path):

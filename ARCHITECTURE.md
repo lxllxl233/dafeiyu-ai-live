@@ -25,7 +25,7 @@
 依赖是单向的：`games` / `persona` / `voice` 不 import UI，UI 不 import 具体游戏；
 内核只依赖抽象（`GameAdapter`、`Voice` 协议、人设卡 JSON）。
 
-仓库只有一个根代码入口 `main.py`：无参数进 `dafeiyu.ui.desktop`（桌宠 + 右键菜单），
+仓库只有一个根代码入口 `main.py`：无参数进 `dafeiyu.ui.desktop`（桌宠 + 设置页），
 带子命令进 `dafeiyu.cli`。所有 Python 实现都在 `src/dafeiyu/`；`ui/`、`persona/`、
 `voice/`、`games/` 根目录只放资产与清单。
 
@@ -130,6 +130,12 @@ class GameAdapter:
 按配置/状态文件找插件，创建 `AutoplayHost` 并通过 `plugin.runner(host)` 注入，
 再转发 `start_autoplay / stop_autoplay / status`。
 
+**开局设置（可选）**：游戏包可以在 `game.json` 里声明 `start.options`
+（`choice` / `int` / `bool`，带 label、default、choices 或 min/max）。控制台按声明渲染
+「开局设置」卡片，值存 `config.json` 的 `start_options.<game-id>`；清洗逻辑在
+`src/dafeiyu/games/start_options.py`（不认识任何具体游戏），游戏包自己的模块
+（如 `games/slay-the-spire-2/start_options.py`）负责在开新局前读取。
+
 工具返回值统一走 `dafeiyu.games.contracts.ActionResult`（`ok / action / code /
 message / retryable / data`）。迁移期 LangGraph 入口仍接受旧 `{ok, err}` dict，
 通过 `as_action_result()` 归一化；旧调用方也可以用 `ActionResult.to_legacy()`
@@ -146,6 +152,13 @@ STS2 的决策引擎也已整体迁进游戏包：`ctx.py` / `act.py` / `advisor
 `runner.py` 用同一个 `AutoplayHost` 自动玩 12 步；不启动 Steam、不读 STS2 状态。
 它证明 `GameRegistry` / facade / host / 工具协议没有绑定《杀戮尖塔 2》。
 
+`games/vampire-survivors/` 是第三个包，演示实时动作类怎么「用 API 而不是窗口」
+接：游戏侧 `compat/mod/VsBridge`（BepInEx 6 IL2CPP）在 `127.0.0.1:8091` 暴露
+`GET /state` 和 `POST /act`，`compat/vs.py` 只走 HTTP；`engine.py` 不发键盘、
+不找窗口，`adapter.py` 以桥是否在线判断可用性。桥负责过菜单、升级和结算，
+Python 只负责走位/选择，所以游戏可以在后台跑，不会抢焦点。实现参考了 MIT 的
+jev_vampire_survivors（Linux/Mono）和 Off the Clock 的 BepInEx 6 IL2CPP 模板。
+
 `games/catalog.py` 负责跨游戏的“身份”查询：默认游戏、别名、显示名和旧环境变量
 前缀都从 `games/registry.json` + `game.json` 读取。`LiveConfig.game` 为空时自动
 选默认游戏；录像目录、`replay --game` 和 `DAFEIYU_*` / 旧 `<ALIAS>_*` 环境变量
@@ -161,7 +174,7 @@ STS2 的决策引擎也已整体迁进游戏包：`ctx.py` / `act.py` / `advisor
 | `exe` | `path` / `args` / `cwd` | 相对游戏包目录或绝对路径启动 |
 | `url` | `url` | 默认浏览器打开 |
 
-右键「只启动游戏」、控制台按钮、`POST /api/game/launch` 和
+设置页「运行 → 只启动游戏」、控制台按钮、`POST /api/game/launch` 和
 `python main.py game launch` 共用这个入口；没配置 `launch` 的游戏明确报错，不会悄悄失败。
 
 ### 让她玩
@@ -183,9 +196,33 @@ STS2 的决策引擎也已整体迁进游戏包：`ctx.py` / `act.py` / `advisor
 - `GAME_OVER`：回主菜单再开一局；未知界面/同一失败连续 3 次会停手并写 `error`。
 
 播报节奏也在同一份配置里：`voice` 按上一句字数估算播完时间（至少 2 秒），
-`normal` 是旧版 0.7 秒。模式/节奏写 `config.json`，桌宠二级菜单、控制台和 CLI 共用；
+`normal` 是旧版 0.7 秒。模式/节奏写 `config.json`，桌宠设置页、控制台和 CLI 共用；
 跨进程控制不靠内存：`logs/autoplay.stop` 是停手文件，`logs/autoplay.json` 是状态，
 `logs/autoplay.jsonl` 是步骤日志。未知界面不猜按钮，直接停在那一步并写 `last/error`。
+
+### LLM 直播模式（导演）
+
+`src/dafeiyu/agent/director.py` 是跨游戏的编排层，只做三件事：
+
+```
+modules()  ← games/<id>/game.json 的 live 块（enabled/label/role/weight）
+   │
+   ▼
+LLMPlanner.plan(候选 + 最近历史 + 已播时长)  →  {module, minutes, say, reason}
+   │
+   ▼
+stop_autoplay() → config.game = <module> → start_autoplay(game, mode)
+```
+
+- 候选完全来自游戏包：核心不写死 id / 显示名，`toy-duel` 这类验收包不声明
+  `live` 就不会出现；`bilibili-hot-commentary` 声明了 `live` 就自动进候选。
+- 模型只决定「播哪个、播多久、过渡说一句」；怎么玩仍由各游戏包的 runner 决定。
+- 模型不可用/输出不合法 → 按顺序轮换并记 `director_fallback`；状态写
+  `logs/live_director.json`，停止标志是 `logs/live_director.stop`。
+- Token 账单仍走 `AutoplayHost.add_usage(..., note="直播导演 选择模块")`，
+  汇总仍由 `logs/autoplay.jsonl` 出。
+- 手动「让她玩」/「让她停手」/`play --stop` 会先停导演，避免手动启动的模块被
+  导演下一段切走。
 
 ## 6. UI 服务
 
@@ -198,7 +235,8 @@ STS2 的决策引擎也已整体迁进游戏包：`ctx.py` / `act.py` / `advisor
 | `/api/studio` | 四层状态聚合 + 决策/日志/Token 遥测（人设/语音/游戏/overlay/最近台词） |
 | `/api/config` | GET 配置（Key 只报是否已配置）/ POST 保存语音、模型、游戏、API |
 | `/api/game/launch` | 按 `config.game` 或 `{game}` 只启动游戏 |
-| `/api/play/start` | `{mode?, pace?}` 启动自动玩；默认读 config |
+| `/api/game/start` | 开局设置：GET 返回声明 + 当前值，POST `{values}` 按声明清洗后写 `config.json` |
+| `/api/play/start` | `{mode?, pace?}` 启动自动玩；`mode=director` 启动 LLM 直播模式；默认读 config |
 | `/api/play/stop` | 跨进程停手 |
 | `/api/agent/run` | 跑一轮离线 Agent 演示（不碰游戏） |
 | `/api/voice/start` | 启动本地曼波引擎（MamboTTS `run_engine.py`） |
@@ -211,10 +249,17 @@ STS2 的决策引擎也已整体迁进游戏包：`ctx.py` / `act.py` / `advisor
 这样 seq 单调、页面不会把新台词当旧消息、桌面窗和 OBS 永远同一句。`add_comment()` 同时
 写决策和日志环形缓冲，并用本地字符估算 Token；API Key 只在内存/`config.json`，不进响应。
 
-桌面桌宠右键菜单与 `/api/config` 共用同一份本机配置：语音、模型、游戏、API 都写 `config.json`，
-菜单里的「打开管理端 / 配置 API」直接开 `/studio#settings`。语音菜单在曼波离线时会调用
-`voice/startup.py` 后台拉起 `run_engine.py`；控制台 `/api/voice/start` 走同一个启动器。
-空闲/思考气泡文案在 `caster_state.py` 固定为「吃饭ing」「思考ing」，说话时显示台词。
+**设置页和后台是同一份状态**：右键鱼身在右侧浮出「⚙️ 设置」小气泡，点气泡打开
+`GET /settings` 得到
+`ui/settings/index.html`，页面读写 `GET/POST /api/settings`（`src/dafeiyu/ui/settings.py`）。
+保存直接合并进 `LiveConfig`（`config.json`），控制台下一次轮询和桌宠的 1.2s 配置轮询看到的
+就是同一份；`POST /api/config`（控制台）与它落的是同一个文件。端口这类启动时绑定过的值
+（`port` / `tts_url` / `host`）保存后回 `restart_required`，页面点亮「重启桌宠」：
+`POST /api/app/restart` 调用桌宠进程注册的 hook，拉起新进程并关掉旧窗口（单实例锁接替）。
+「退出桌宠」走 `POST /api/app/quit`，同样是 hook，不在桌宠进程里时明确报错。
+语音/音量/置顶/穿透/录屏隐藏/静音由桌宠的 `_watch_config` 轮询 `config.json` 直接应用，
+快捷键改的点击穿透和静音也写回同一份配置。空闲/思考气泡文案在 `caster_state.py` 固定为
+「吃饭ing」「思考ing」，说话时显示台词。
 
 ### 录像回放
 
@@ -229,9 +274,15 @@ recordings/<game-id>/run-NNNN/
 - `start` 先 `SetRecordDirectory` 指到该局，再 `StartRecord`；老 OBS 不支持就退回默认目录。
 - `stop` 读 `StopRecord.outputPath`，`os.replace` 成 `run.mp4`（同盘瞬间），再写 meta。
 - 目标 `run.mp4` 已存在默认报错，不静默覆盖；多出的段进 `_extra/`。
-- 桌宠右键「OBS 录像」走 `src/dafeiyu/recording/manual.py`：先探 `GetRecordStatus`，没录就开、
-  在录就停（一个入口两用）；这一局是 `replay` 开的那就顺手收尾成 `run.mp4`，否则只停 OBS，
-  文件留在 OBS 自己的输出目录。连不上 OBS 时只返回一句提示，异常不上抛到窗口线程。
+- 每游戏策略在 `src/dafeiyu/recording/policy.py`：`games/<id>/game.json` 的 `recording`
+  （`enabled` + `split=run|none`）是默认值，控制台保存到 `config.json` 的
+  `recording.games.<id>` 覆盖；`recording_enabled` 是总开关。打开录像时先检查
+  `game-skill/obs.json`，没有就按游戏名生成，再 `ensure_scene/ensure_game_capture/ensure_audio`。
+- 自动玩（STS2 / 幸存者）按 `split=run` 每局开一段；`split=none` 用
+  `recordings/<id>/continuous/` 连续录。刷B站默认关闭、不分集。
+- 控制台「当前游戏 → OBS 录像」走 `src/dafeiyu/recording/manual.py`：先探 `GetRecordStatus`，没录就按
+  当前游戏策略开、在录就停；有本进程会话就按 run/continuous 收尾，没有就走旧的
+  `replay`/`stop_recording_now` 兜底。连不上 OBS 时尝试拉起，仍失败只返回提示，异常不上抛到窗口线程。
 - `recordings/INDEX.md` 由 `scan()` 生成；视频被 `.gitignore` 排除，只提交说明和索引。
 
 ## 6.5 Agent 层（LangGraph）
@@ -258,17 +309,55 @@ observe ──► plan ──► validate ──► execute ──► reflect
   控制台「Agent 流程」展示；不依赖 LangSmith。
 - `langgraph` 是可选依赖（`pip install -e .[agent]`）；不装时桌宠、语音、游戏启动照常。
 
+## 6.6 性格层与 KOOK 记忆
+
+性格按「个人 → 直播 → 游戏」三段拼接，由 `src/dafeiyu/persona/layers.py` 统一装配：
+
+| 层 | 来源 | 何时生效 |
+|---|---|---|
+| 个人（常驻） | `persona/<id>/card.json` + `style.md` | 永远；KOOK 聊天用 `kook_persona`，桌宠/直播用 `persona` |
+| 直播 | `persona/live/card.json` + `style.md` | `live=True` 且 `persona_live` 打开；KOOK 不加载 |
+| 游戏 | `games/<id>/persona/layer.md` | 传入 `game_id` 时叠加（游戏 runner / 自动玩） |
+
+`PersonaStack.load(...).prompt()` 只负责拼文本，不改人设卡/lint；设置页 `persona_layers`
+返回三层的来源、字数和最终提示词，方便定位「这句话从哪层来的」。
+
+KOOK 聊天的长期记忆在 `src/dafeiyu/live/chat_memory.py`：
+
+- `turns` 保存全部原文；`facts` 保存抽取出的长期事实；`seen` 做事件去重。
+- `summaries` + `meta.summary_upto` 做压缩：未压缩原文超过 `kook_summary_trigger`
+  时，保留最后 8 条，把更老的一段交给 LLM 压成摘要；原文不删。
+- `memory.context(turns)` = 最近 N 条原文 + 最近几段摘要，`facts` 由提示词另行注入；
+  这样上下文有上限，但长期信息不丢。
+- 机器人收消息走 `src/dafeiyu/live/kook/service.py` 的 WebSocket 循环，发消息走
+  `KookClient`；频道用 `/message/create`，私聊用 `/direct-message/create`。
+- 图片：`type=2` 直接取 `content`/`attachments.url`；网页端粘贴图片会变成 `type=10`
+  卡片，服务从卡片 `image` 模块取 `src`，下载后走 `chat.image_message()` 视觉模型。
+- 语音：TTS 出 WAV → `lameenc` 转 MP3 → `/asset/create` 上传 → `type=10`
+  卡片 `audio` 模块 + 「重听」link 按钮；KOOK 机器人直发 `type=8` 会被拒（40000）。
+  手机端内嵌播放器重播 WAV 不稳定，MP3/按钮是兼容兜底；表情包同样先上传 PNG，再发 `type=2`。
+- 回复协议是 `messages` 数组（1–3 条），服务逐条发；旧 `reply` 单字符串仍兼容。
+  安静够久后会按概率主动发一条，只发到最近聊过的 `target_id`；发过一次后要等
+  对方回话才重新计时，不会连发。
+- Token：聊天进程每次回复/记忆抽取/压缩/主动消息写 `logs/kook/usage.jsonl`（带 `msg_id`），
+  控制台把该文件与 `logs/autoplay.jsonl` 合并成一张账单，自动玩和聊天各占一个来源。
+
 ## 7. 扩展点
 
 | 想做什么 | 改哪里 |
 |---|---|
 | 换人设/语气/禁语/招牌 | `persona/<id>/card.json` |
+| 加/改直播性格 | `persona/live/style.md`（设置页可关 `persona_live`） |
+| 加/改某游戏性格 | `games/<id>/persona/layer.md` |
+| 换聊天表情包 | `persona/stickers/stickers.json` + `tools/import_stickers.py` |
+| 改 KOOK 上下文/压缩阈值 | `config.json` 的 `kook_context_turns` / `kook_summary_trigger` |
 | 换开场/收尾/口头禅 | 同上 `openers` / `closers` / `quips` |
 | 换动物语音色 | `voice/animal/scale.json` |
 | 换曼波参考音 | `voice/mambo/ref.json` 或 `DAFEIYU_TTS_REF` |
 | 换默认语音/音量/间奏 | `config.json` 或 `DAFEIYU_*` 环境变量 |
 | 换默认游戏/别名 | `games/registry.json` + `game.json` 的 `aliases` |
 | 加游戏 | `games/<id>/` + `plugin.py:Plugin` + `games/registry.json`（最小完整示例：`games/toy-duel/`） |
+| 让游戏进「LLM 直播模式」候选 | 该游戏 `game.json` 加 `live.enabled/label/role/weight` |
 | 加 UI 面板 | `ui/studio/index.html` + `/api/studio` 字段 |
 | 换 OBS 场景/采集源名 | `games/<id>/game-skill/obs.json` |
 | 换桌宠精灵 | `src/dafeiyu/ui/assets/pet/`（正面/侧面/背面） |

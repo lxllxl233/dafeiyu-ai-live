@@ -1,5 +1,118 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- **性格三层**：个人性格（常驻）→ 直播性格（直播时叠加）→ 游戏性格（玩该游戏时叠加），
+  由 `src/dafeiyu/persona/layers.py::PersonaStack` 按固定顺序拼进系统提示词。
+  新增 `persona/live/card.json` + `style.md`、`persona/companion/`（KOOK 个人层）和
+  `games/<id>/persona/layer.md`（杀戮尖塔 2 / 吸血鬼幸存者 / B站）；设置页新增「性格」，
+  可看三层来源/字数、关直播层、预览最终提示词。KOOK 只用个人层（`kook_persona`）。
+- **KOOK 聊天记忆压缩**：`memory.db` 新增 `summaries` + `meta.summary_upto`；每次请求只带
+  最近 `kook_context_turns` 条原文 + 最近几段摘要，未压缩原文超过
+  `kook_summary_trigger` 时保留最后 8 条、把更老的压成摘要（原文不删）。设置页
+  「KOOK → 聊天记忆」可看原文/摘要/待压缩条数并改阈值。
+- **KOOK 私聊/频道机器人**：桌宠启动时按 `kook_enabled` 自动拉起无窗口的 KOOK
+  监控子进程，退出/关开关时收掉；`logs/kook/service.lock` 防止手动和桌宠各起一份。
+  Bot 走 WebSocket 长连接，不需要公网 IP，频道和私聊都回复；对话进本地 SQLite
+  记忆，`logs/kook/events.jsonl` 只记事件类型/字数/耗时，不记正文。
+- **KOOK 图片 / 语音 / 表情包**：能接收 `type=2` 图片和网页端卡片图片，走
+  `llm_vision_model` 看图；回复可带大肥鱼表情包（`asset/create` 上传后发 `type=2`）
+  和语音音频卡片（TTS WAV 上传后发卡片 `audio` 模块；KOOK 不允许机器人直发
+  `type=8`）。新增 `kook_allow_voice` / `kook_stickers` 开关，设置页可关。
+- **KOOK 聊天 Token 账单**：每次回复/记忆抽取/记忆压缩的真实 usage 写
+  `logs/kook/usage.jsonl`（带 `msg_id`），控制台「Agent 流程 → Token 花费」把
+  它和自动玩账单合并，新增「来源」拆分（自动玩 / KOOK 聊天）和每步明细。
+- **KOOK 连发与主动消息**：回复协议改为 `messages` 数组（1–3 条短消息），服务逐条
+  发成独立气泡，旧 `reply` 单字符串仍兼容；安静 `kook_proactive_minutes` 后按概率
+  主动找最近聊过的频道/私聊说一句（`kook_proactive` 开关，默认开；发过一次后要等
+  对方回话才重新计时）。设置页改主动消息开关/间隔最多 1 分钟生效；主动消息的 usage
+  也计入 Token 账单。
+- **KOOK 语音手机端可重听**：TTS 的 WAV 先用 `lameenc` 转成 MP3 再上传（编码失败才
+  回退 WAV），音频卡片追加「重听」link 按钮；解决手机端内嵌播放器第二次播放没声音的
+  兼容问题。新增 `lameenc>=1.8` 依赖。
+- **KOOK 接入**：配置、设置页、常驻进程、测试和文档都改走 `kook_*` 字段。
+- **曼波引擎可关闭**：设置页「语音 → 关闭引擎」和 `POST /api/voice/stop` 调
+  `voice/startup.py::stop_mambo`，只杀 python/pythonw 进程树，等待端口释放；不碰其他程序。
+- **Windows 托盘图标 / 开机自启动**：`pet_status_bar` 开一个系统托盘图标
+  （左键唤起/收起桌宠，右键打开设置），`pet_autostart` 写
+  `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`（pythonw + `main.py`，无需管理员）。
+  两项都在设置页「桌宠 → 启动与常驻」。
+- **桌宠右侧设置齿轮**：右键鱼身会紧贴鱼身右缘弹出双层同心圆按钮
+  （外圈浅蓝、内圈蓝、中央一枚更大的设置图标，层层居中；大小跟桌宠倍率同步），
+  弹出时轻微过冲、
+  收起时缩小淡出；点它才打开设置页，5 秒不点自动收起。定位按桌宠所在显示器的
+  工作区计算，副屏右键不会再飞到主屏。不再弹 Win32 系统菜单。
+
+- **杀戮尖塔 2 开局设置（角色 / 进阶）**：`game.json` 新增 `start` 块声明开局选项
+  （铁甲战士 / 静默猎手 / 故障机器人 / 死灵缚者 / 星之王储 + 进阶 0–20，默认铁甲 A10）。
+  控制台「当前游戏 → 开局设置」按声明渲染，保存写 `config.json` 的
+  `start_options.<game-id>`（核心只按声明清洗，不认识具体游戏）。`runner.py::_ensure_run`
+  每次开新局前按 mtime 重读：角色按 `character_id` 选、进阶上下两个方向都调、
+  超过游戏 `max_ascension` 停在上限；角色没解锁只记 `start_character_unavailable`，
+  不卡在选人界面。`tools/run_start.py` 也读这份设置（`--character/--ascension` 可覆盖），
+  决策提示词改成「角色/难度以 ctx 为准」。
+- **B站视频评论留档**：`bilibili-hot-commentary` 真发出一条视频评论后，引擎把
+  视频链接、标题、UP 主、评论内容和 rpid 追加到
+  `logs/bilibili_commentary.comments.jsonl`（最近 200 条）；控制台「视频评论」
+  卡片新增「已发评论」列表，按时间倒序展示，点标题直接打开原视频。没发成功
+  （Cookie 失效、风控、限流、空评论）的不记，避免把草稿当已发。
+  `GET /api/bilibili/comment` 同时返回 `posted` 账本。
+
+- **OBS 录像策略**：新增 `src/dafeiyu/recording/policy.py`。每个游戏在 `game.json`
+  的 `recording` 块声明默认（`enabled` + `split=run|none`），控制台「当前游戏 → OBS 录像」
+  按当前游戏修改并写 `config.json` 的 `recording.games.<id>`；`recording_enabled`
+  是总开关。开启录像时先检查/创建 `games/<id>/game-skill/obs.json` 场景脚本，再按
+  一局一集（`run-NNNN`）或不分集（`continuous/`）开录；关闭按会话类型收尾。
+  默认杀戮尖塔 2 / 吸血鬼幸存者开启一局一集，刷B站关闭不分集。右键「OBS 录像」
+  走同一套 `manual.toggle_game`，OBS 没开时尝试拉起。控制台游戏页重做为当前游戏
+  workspace，只展示本局数据、当前游戏录像策略和操作，其他游戏收进折叠列表。
+- **吸血鬼幸存者（第三个游戏包）**：新增 `games/vampire-survivors/`。游戏是
+  Unity 6 / IL2CPP，配套 `compat/mod/VsBridge`（BepInEx 6 IL2CPP 插件）在
+  `127.0.0.1:8091` 暴露 `GET /state` / `POST /act`；`compat/vs.py`、`engine.py`、
+  `runner.py` 全部走 HTTP，**不找窗口、不切前台、不发键盘**，游戏可以在后台跑。
+  桥读取玩家/敌人/升级选项，并驱动警告页、角色/关卡选择、升级、宝箱、结算和
+  重开；`runner.py` 支持 `local` 躲怪走位和 `llm` 定期问模型，实时游戏不等待
+  语音。`game.json` 用 Steam `1794680` 启动，并声明 `live` 直播模块。
+- **LLM 直播模式（导演）**：新增 `src/dafeiyu/agent/director.py`。导演扫 `games/`
+  下声明了 `live` 的模块（刷B站 / 杀戮尖塔2 / 吸血鬼幸存者），把候选、最近历史
+  和已播时长交给模型，模型只回 `{module, minutes, say, reason}`；导演停掉当前模块、
+  切 `config.game`、按模块声明的模式重新开播，并把过渡台词走 `/comment`。
+  模型失败按顺序轮换并记 `director_fallback`；状态写 `logs/live_director.json`，
+  停止标志 `logs/live_director.stop`，Token 仍走 `AutoplayHost.add_usage`。
+  桌宠右键新增「LLM 直播模式」（运行中显示当前模块，再点是停），控制台「Agent
+  流程」新增按钮和当前模块/下次切换显示，CLI 新增 `python main.py live`
+  （`--stop` / `--status` / `--module`）。手动「让她玩」/「让她停手」/`play --stop`
+  会先停导演。
+- **直播模块声明**：`games/slay-the-spire-2/game.json`、
+  `games/bilibili-hot-commentary/game.json` 增加 `live` 块（label/role/weight）；
+  核心只认字段，不写死游戏 id。`games/registry.json` 注册 `vampire-survivors`。
+
+### Changed
+
+- **B站视频评论更像真人**：`video_comment` 提示词改成「一个具体细节 + 一句自己的反应」，
+  明确禁止抄人设台词（同类看同类 / 我也是条鱼 / 先别急着笑 / 我们鱼界）和空话
+  （求赞 / 已三连 / 沙发），并给了两条写法参考；人设卡去掉了这两句招牌稿，
+  `style.md` 的同类时刻改成“说视频里的事，不背台词”。档案层新增
+  `models.comment_drop_reason()`：命中同类台词、或整句只有一句口癖的评论直接丢掉
+  （meta 记 `video_comment_dropped`），引擎发之前再兜底查一次，宁可不发也不发台本。
+  `PROMPT_VERSION` 升到 `bili-commentary-v6`（解说提示词末尾追加该包
+  `persona/layer.md` 的游戏层），旧档案缓存会自动重建。
+
+### Fixed
+
+- **跨域 POST 偶发 ConnectionAborted**：拒绝 `Origin` 不匹配的请求时，先把请求体读掉
+  再关连接，避免 Windows 带未读数据 close 回 RST，客户端能看到正常的 403 而不是
+  连接被中止（设置页集成测试因此偶发失败）。
+- **overlay 断线不再刷 traceback**：OBS 切场景、直播姬刷新浏览器源时，还在等 `/tts`
+  的连接会被掐断（WinError 10053/10054），`socketserver` 会给每条断线打一整页
+  traceback，看着像服务崩了。现在 `Handler.handle` / `_send` 把连接层的错按「响应
+  没人要了」处理，服务继续跑；TTS 合成失败会在 `[tts]` 行尾带上真实原因
+  （`ConnectionRefusedError` / 超时 / 非 WAV 响应），并写进 `/health` 的 `tts.last_error`。
+- `python main.py game state --game vs` 现在会先按 `game.json` 的 aliases 解析，
+  不再把别名当游戏 id 直接查注册表。
+
 ## [2.5.0] - 2026-10-29
 
 ### Added
@@ -10,6 +123,79 @@
   cue，播放中按虚拟时钟说话，不每 tick 调模型；开场/收尾各一句问候，直播弹幕按频次/
   预算回复并优先 SC。控制台「游戏 → B站云观影」可看播放列表、指定播放/关闭/刷新
   Chrome 标签页，并编辑 B 站专属人设；运行中桌宠/控制台空闲文案是「看视频ing」。
+  直播姬/OBS 新增 `Bili Watch` 场景页 `/bili`（1920×1080 透明）：右侧显示当前视频、
+  虚拟进度、直播弹幕和下一条，左下是大肥鱼与解说，带 AI 生成标识；场景页自己播 TTS。
+  OBS 下 `python main.py obs setup` 会按 B 包 `game-skill/obs.json` 自动建副屏采集、
+  `Bili Scene` 浏览器源和桌面音频引用（切 Chrome 窗口不断，且不重复建桌面源）。
+- **B 模式去重与续播修正**：视频一进入播放就记“已看”，中途停掉/重启不会再把同一条
+  选回来；搜索每个关键词首屏取 40 条、候选池补详情上限提到 16，热门回退最多拉
+  60 条，不再总在前 8 条里循环。打开视频统一加 `?t=0`，压过 B 站历史记录续播，避免视频从
+  上次位置开始导致实际剩余时长变短；跨进程加运行锁，防止两个云观影进程同时选片。
+  播放中增加外部结束检测：Chrome 窗口关闭立即、页面关掉后约 8 秒进入下一条；
+  每 10 秒读一次自己账号的历史 `progress/duration`，拖到结尾也会自动接下一个。
+- **B 模式高播放量「大肥鱼」专线**：除人设的搞笑/高能搜索外，默认每条视频准备时
+  都先按「大肥鱼 / 大肥鱼 直播 / 大肥鱼 切片」搜一遍，只保留播放量 ≥10 万、时长合格、
+  没看过/没在失败冷却的结果；补详情后只要过了评论/互动门槛，就置顶到本轮第一条。
+  `high_view_keywords` / `high_view_min_view` / `high_view_every` 可在
+  `bilibili_commentary` 覆盖，`high_view_every=0` 关闭专线。
+- **B 模式同类自嘲/共情**：标题、UP 主或简介带“大肥鱼”时，视频档案会收到
+  `same_fish=true`，提示词允许她自然自嘲“我自己也是条鱼”、开同类玩笑、共情视频里的
+  鱼/UP 主；同一段最多一两句，不冒充视频里的鱼。人设 `card.json` / `style.md` 和
+  直播回复也同步加了“同类时刻”，`PROMPT_VERSION` 升到 v4，`LIVE_PROMPT_VERSION` 升到 v3。
+- **B 模式同类视频可选评论**：模型在 `same_fish=true` 且有具体想法时，可以在档案里写
+  一条 `video_comment`；引擎用登录 Cookie 发到 B 站视频评论区。不是每条都评，默认
+  不限制每日条数、间隔至少 10 分钟、同视频只发一次；没想法/没 Cookie/间隔太近都只记日志。
+  控制台「B站播放列表 → 视频评论」可改启用、每日上限（0 = 不限）、间隔和字数；
+  保存后重启 B 模式生效。
+  `video_comment_enabled` / `video_comment_max_chars` / `video_comment_max_per_day` /
+  `video_comment_min_gap_s` 也可直接覆盖。
+- **B 模式点播与列表修正**：控制台点播放不再因为视频冷热评少于 12 条被丢弃；
+  点播准备时保留原有候选列表，不再把列表清成只剩这一条，旁边的大肥鱼还在。
+  点播时评论/弹幕接口失败或模型档案失败，会先用兜底开场/收尾档案把视频放起来；
+  只有详情都拿不到才报错，不会偷偷改播别的视频。
+- **B 模式防卡死/防标签堆积**：默认改用独立 Chrome profile 的 `--app` 窗口播放，
+  只有一个页面、没有标签栏，启动后移到副屏并铺满工作区；不碰用户正常 Chrome 的
+  标签页，也不再依赖“抢前台后往地址栏打字”（之前前台被 DeepSeek 占用时会导航失败、
+  空窗口 + 兜底 URL 窗口叠成两个）。同一个 app 窗口开着时，下一条通过本机 DevTools
+  的 `Page.navigate` 原地换页，不关窗/不新开/不抢前台；只有窗口被关或导航失败才重开。
+  启动参数带禁用后台节流、遮挡暂停和恢复上次标签页的开关；开始独立模式时会按启动
+  开关识别本模式以前启动的 Chrome 进程，清掉它遗留的 B 站/空窗口，不影响普通用户
+  Chrome。历史进度连续 30 秒不动就判定视频没有在播放，先把 app 页面切到
+  `about:blank`、标记失败并强制下一条，避免直播画面静帧被平台判违规。播放器里手动
+  暂停也会触发强制下一条。`browser_isolated=false` 可退回旧版当前标签页复用，但会
+  受前台焦点影响。
+- **B 模式直播弹幕回复默认不回流到直播间**：`live_reply_send_danmu` 默认改为
+  `false`，读到的弹幕/SC 仍然会由大肥鱼用 overlay + 语音回应，但不会再用登录账号
+  往 B 站直播间发一条文字弹幕；需要时可在 `bilibili_commentary` 里显式改回 `true`。
+  这样既不会让回复刷屏，也少一层“自动发弹幕”的机器特征。直播回复和视频
+  `danmaku_replies` 同时加了开头称呼清洗：提示词要求直接接内容，输出再去掉
+  “兄弟们/家人们/各位”等前缀，避免每句都带同一句口头禅。
+- **回复里不再提“弹幕”两个字**：直播弹幕回复和视频 `danmaku_replies` 的提示词
+  要求直接接内容，不描述消息来源；输出再加一层 `strip_danmaku_word` 清洗，
+  把“弹幕说/这条弹幕/弹幕里”改成“评论说/这条评论/评论里”。已缓存的旧档案
+  在播放时也会清洗，无需等缓存过期。`PROMPT_VERSION` / `LIVE_PROMPT_VERSION`
+  已升到 v2，新生成的档案不会再把“弹幕”写进回复。
+- **OBS 叠加层被视频盖住修复**：`obs setup` 创建 `Bili Scene` 时把
+  `SetSceneItemIndex` 写成了 0（OBS 里 0 是最底层），后加的 `Bili Monitor` 会盖住
+  侧栏和大肥鱼；现在改为放到源列表最顶层。当前场景已用 WebSocket 重排为
+  `Bili Monitor` 在下、`Bili Scene` 在上，截图确认叠加层可见。
+- **B 模式直播重音修复**：`Bili Scene` 页面现在通过 `/events?role=live` 登记为
+  live 音频主，并在 TTS 起播时用 `/mark?ev=audio&role=live` 刷新音频时间；桌宠
+  进程原有的 `Speaker` 会让位，避免“页面 TTS + 桌宠 TTS”同时进直播。当前 OBS
+  页面已刷新，`/health` 确认 `live=1`。
+- **B 模式直播音量偏小修复**：曼波 TTS 的峰值接近满刻度、平均响度只有约
+  `-20 dBFS`，之前 `Bili Scene` 直接用 0.9 的音量播放，听感比游戏声音小一截。
+  场景页现在走一条 TTS 母线：先提 6 dB，经过 `-12 dB / 8:1` 的限幅器后再补
+  3 dB，平均音量提上来但峰值不削爆；OBS 浏览器源默认音量也从 0.9 提到 1.0。只影响 `/bili`
+  页面，桌宠窗口和别的浏览器源不受影响。页面同时只允许 OBS 浏览器源出声：
+  普通浏览器或直播姬内置浏览器打开 `/bili` 只显示字幕，不再登记 live、不再播
+  第二路 TTS。
+- **直播姬桌面叠加层（不用 OBS）**：桌宠右键新增「叠加层 ▸ 关闭 / 状态条 /
+  电影框 / 弹幕栏 / 极简字幕」。叠加层是 Win32 真透明、置顶、点击穿透的全屏窗口，
+  跟随桌宠所在显示器；直播姬用「显示器捕获」即可把游戏/视频和叠加层一起进画面，
+  不需要 OBS 浏览器源。选择写 `logs/streamer_overlay.json`，下次启动自动恢复。
+  数据只读 `/state` 和 `logs/bilibili_events.jsonl`，不发弹幕、不读页面，空闲时
+  只在状态变化时重画。
 - **桌宠右键「OBS 录像」**：一个入口既开也关——勾上表示正在录，再点一下停。
   点击时先问 OBS 的 `GetRecordStatus` 再决定开还是停，所以缓存晚一拍也点不错方向；
   这一局是自动玩开的，停的时候顺手收尾成 `recordings/<游戏>/run-NNNN/run.mp4`，

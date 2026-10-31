@@ -21,6 +21,7 @@ from pathlib import Path
 from dafeiyu import paths
 
 from .config import CommentaryConfig
+from .models import strip_crowd_prefix, strip_danmaku_word
 from .persona_watch import PersonaWatch
 from .profile import safe_line
 from .prompts import LIVE_GOAL, live_chat_system
@@ -395,6 +396,7 @@ class LiveChatResponder:
         if not text:
             return ""
         text = re.sub(r"^(回复|主播|大肥鱼)[：:]\s*", "", text)
+        text = strip_danmaku_word(strip_crowd_prefix(text))
         text = safe_line(text, self.config.live_reply_max_chars)
         return text.strip()
 

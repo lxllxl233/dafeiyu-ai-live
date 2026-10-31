@@ -15,11 +15,16 @@ def test_start_mambo_launches_run_engine(tmp_path):
     assert result["ok"] is True
     assert result["starting"] is True
     marker = tmp_path / "started.txt"
+    content = ""
     for _ in range(60):
-        if marker.exists():
+        try:
+            content = marker.read_text(encoding="utf-8")
+        except OSError:
+            content = ""
+        if content == "ok":
             break
         time.sleep(0.05)
-    assert marker.read_text(encoding="utf-8") == "ok"
+    assert content == "ok"
 
 
 def test_start_mambo_reports_missing_script(tmp_path):

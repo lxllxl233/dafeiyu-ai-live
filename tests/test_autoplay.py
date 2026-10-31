@@ -5,11 +5,14 @@ import json
 import os
 import time
 
+from dafeiyu import paths
 from dafeiyu.agent.planner import _extract_plan
 from dafeiyu.games.registry import GameRegistry
 
 play = GameRegistry().load_game_module("slay-the-spire-2", "autoplay.runner")
 assert play is not None
+start_opts = GameRegistry().load_game_module("slay-the-spire-2", "start_options")
+assert start_opts is not None
 actions = GameRegistry().load_game_module("slay-the-spire-2", "decision.actions")
 assert actions is not None
 
@@ -101,10 +104,113 @@ def test_character_select_embarks_ironclad():
     }
     fake = _FakeSts2([state, {**state, "character_select": {
         **state["character_select"], "ascension": 1}}, {"screen": "MAP"}])
-    out = play._ensure_run(fake, state)
+    out = play._ensure_run(fake, state, options={"character": "IRONCLAD", "ascension": 1})
     assert out["screen"] == "MAP"
     assert ("increase_ascension", {}) in fake.calls
     assert ("embark", {}) in fake.calls
+
+
+def _cs_state(selected="IRONCLAD", asc=0, mx=10, chars=None):
+    return {
+        "screen": "CHARACTER_SELECT",
+        "available_actions": ["select_character", "increase_ascension",
+                              "decrease_ascension", "embark"],
+        "character_select": {
+            "selected_character_id": selected, "ascension": asc,
+            "max_ascension": mx,
+            "characters": chars or [
+                {"character_id": "IRONCLAD", "index": 0},
+                {"character_id": "DEFECT", "index": 2},
+            ],
+        },
+    }
+
+
+def _start_run(options, states):
+    fake = _FakeSts2(states)
+    out = play._ensure_run(fake, states[0], options=options)
+    return fake, out
+
+
+def test_character_select_uses_console_character_and_ascension():
+    """控制台选了故障机器人 + A7：先换角色，再一路升到 7，最后开局。"""
+    states = [_cs_state("IRONCLAD", 0, 10), _cs_state("DEFECT", 0, 10)]
+    states += [_cs_state("DEFECT", a, 10) for a in range(1, 8)]
+    states.append({"screen": "MAP"})
+    fake, out = _start_run({"character": "DEFECT", "ascension": 7}, states)
+    assert out["screen"] == "MAP"
+    assert fake.calls[0] == ("select_character", {"option_index": 2})
+    assert fake.calls.count(("increase_ascension", {})) == 7
+    assert fake.calls[-1] == ("embark", {})
+
+
+def test_character_select_lowers_ascension_to_target():
+    """游戏会记住上次 A10；选 A3 时必须能降下来，不能只会往上加。"""
+    states = [_cs_state("IRONCLAD", 10, 10)]
+    states += [_cs_state("IRONCLAD", a, 10) for a in range(9, 2, -1)]
+    states.append({"screen": "MAP"})
+    fake, out = _start_run({"character": "IRONCLAD", "ascension": 3}, states)
+    assert out["screen"] == "MAP"
+    assert fake.calls.count(("decrease_ascension", {})) == 7
+    assert ("increase_ascension", {}) not in fake.calls
+
+
+def test_ascension_target_clamped_to_game_max():
+    states = [_cs_state("IRONCLAD", 0, 4)]
+    states += [_cs_state("IRONCLAD", a, 4) for a in range(1, 5)]
+    states.append({"screen": "MAP"})
+    fake, out = _start_run({"character": "IRONCLAD", "ascension": 20}, states)
+    assert out["screen"] == "MAP"
+    assert fake.calls.count(("increase_ascension", {})) == 4
+
+
+def test_unlocked_character_missing_falls_back_to_current():
+    """选的角没解锁：不点 select_character，保持当前角色照常开局，别卡住。"""
+    states = [_cs_state("IRONCLAD", 0, 1), {"screen": "MAP"}]
+    fake, out = _start_run({"character": "SILENT", "ascension": 0}, states)
+    assert out["screen"] == "MAP"
+    assert not any(name == "select_character" for name, _ in fake.calls)
+    assert ("embark", {}) in fake.calls
+
+
+def test_ensure_run_reads_console_start_options(tmp_path, monkeypatch):
+    """没显式传 options 时，_ensure_run 读 config.json 里控制台保存的值。"""
+    cfg = tmp_path / "config.json"
+    cfg.write_text(json.dumps({"start_options": {
+        "slay-the-spire-2": {"character": "DEFECT", "ascension": 2}}}), encoding="utf-8")
+    monkeypatch.setattr(paths, "CONFIG_FILE", cfg)
+    monkeypatch.setattr(play, "_start_options_cache", {"sig": object(), "values": {}})
+
+    states = [_cs_state("IRONCLAD", 0, 10), _cs_state("DEFECT", 0, 10)]
+    states += [_cs_state("DEFECT", a, 10) for a in (1, 2)]
+    states.append({"screen": "MAP"})
+    fake, out = _start_run(None, states)
+    assert out["screen"] == "MAP"
+    assert fake.calls[0] == ("select_character", {"option_index": 2})
+    assert fake.calls.count(("increase_ascension", {})) == 2
+
+
+def test_sts2_start_options_defaults_from_manifest(tmp_path, monkeypatch):
+    monkeypatch.setattr(paths, "CONFIG_FILE", tmp_path / "config.json")
+    assert start_opts.load() == {"character": "IRONCLAD", "ascension": 10}
+    spec = start_opts.spec()
+    keys = [opt["key"] for opt in spec["options"]]
+    assert keys == ["character", "ascension"]
+    values = [c["value"] for c in spec["options"][0]["choices"]]
+    assert "IRONCLAD" in values and "DEFECT" in values
+
+
+def test_sts2_start_options_save_cleans_values(tmp_path, monkeypatch):
+    cfg = tmp_path / "config.json"
+    monkeypatch.setattr(paths, "CONFIG_FILE", cfg)
+    saved = start_opts.save({"character": "SILENT", "ascension": 99})
+    assert saved == {"character": "SILENT", "ascension": 20}   # 夹到 game.json 的上限
+    assert start_opts.load() == saved
+    assert json.loads(cfg.read_text(encoding="utf-8"))["start_options"][
+        "slay-the-spire-2"] == saved
+
+    saved = start_opts.save({"character": "BOGUS", "ascension": "x"})
+    assert saved == {"character": "IRONCLAD", "ascension": 10}
 
 
 def test_map_follows_route_next_node(tmp_path):
@@ -1572,6 +1678,25 @@ def test_recording_splits_on_new_run(monkeypatch):
     play._maybe_split_recording({"run": {"run_id": "b", "floor": 3}})
     assert calls == [("stop", "run_end"), ("start", "g", "llm")]
     assert play._rec_run_id == "b"
+
+
+def test_recording_none_policy_does_not_split(monkeypatch):
+    calls = []
+    monkeypatch.setattr(play, "_log", lambda *a, **k: None)
+    monkeypatch.setattr(play, "_rec_split", "none")
+    monkeypatch.setattr(play, "_rec_active", True)
+    monkeypatch.setattr(play, "_rec_run_id", "a")
+    monkeypatch.setattr(play, "_rec_game", "g")
+    monkeypatch.setattr(play, "_rec_mode", "llm")
+    monkeypatch.setattr(play, "_rec_pending", 0.0)
+    monkeypatch.setattr(play, "_finish_autoplay_recording",
+                        lambda *a, **k: calls.append("stop") or {"ok": True})
+    monkeypatch.setattr(play, "_start_autoplay_recording",
+                        lambda *a, **k: calls.append("start") or {"ok": True})
+    play._maybe_split_recording({"run": {"run_id": "b", "floor": 3}})
+    play._record_new_run()
+    assert calls == []
+    assert play._rec_run_id == "a"
 
 
 def test_recording_adopts_first_run_without_splitting(monkeypatch):

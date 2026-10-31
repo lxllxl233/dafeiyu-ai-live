@@ -45,14 +45,33 @@ class CommentaryConfig:
     # 云观影不应该被当前游戏污染：例如在 B 站刷到正在玩的《杀戮尖塔2》。
     # 这些词同时约束搜索意图和候选标题；用户可在 config.json 覆盖。
     search_exclude: tuple[str, ...] = ()
-    search_prefetch: int = 8
-    search_limit: int = 20
+    # 搜索页首屏有 40+ 张卡；一次多取一些，配合更大的补详情上限。
+    search_prefetch: int = 16
+    search_limit: int = 40
+    # 除了人设的搞笑/高能搜索，每隔 high_view_every 条补一条高播放量的
+    # “大肥鱼”视频；high_view_every=0 关闭。默认每条都先试一次，
+    # 没有未看过的大肥鱼时才回落到普通候选。
+    high_view_keywords: tuple[str, ...] = ()
+    high_view_min_view: int = 100_000
+    high_view_every: int = 1
     open_browser: bool = False
     browser_path: str = ""
     browser_window: bool = True
+    # B 模式默认用独立 Chrome profile + app 窗口：只有一个页面、不碰用户正在
+    # 浏览的标签页，也不需要抢前台/键盘输入。
+    browser_isolated: bool = True
+    browser_profile_dir: str = ""
+    browser_fullscreen: bool = True
     # secondary = 优先副屏；primary = 主屏；数字 = 显示器索引（0 起）。
     browser_monitor: str = "secondary"
     like_on_watch: bool = False
+    # 刷到“大肥鱼同类”视频时，模型可以自己决定要不要在视频评论区留一句；
+    # 不是每条都评，另有每日上限和最小间隔。需要登录 Cookie 才会真正发。
+    video_comment_enabled: bool = True
+    video_comment_max_chars: int = 60
+    # 0 = 不限每日条数；仍受 video_comment_min_gap_s 控制最小间隔。
+    video_comment_max_per_day: int = 0
+    video_comment_min_gap_s: float = 600.0
     # 直播弹幕互动：事件来自桌宠监听进程写的 logs/bilibili_events.jsonl。
     live_chat_enabled: bool = False
     live_reply_min_interval_s: float = 20.0
@@ -65,7 +84,7 @@ class CommentaryConfig:
     live_reply_danmu_chars: int = 20
     live_reply_max_tokens_per_hour: int = 5000
     live_reply_max_tokens_per_day: int = 20000
-    live_reply_send_danmu: bool = True
+    live_reply_send_danmu: bool = False
     live_reply_speak: bool = True
     exclude_keywords: tuple[str, ...] = DEFAULT_EXCLUDE
     llm_timeout_s: float = 45.0
@@ -79,7 +98,8 @@ class CommentaryConfig:
             if key not in known or value is None:
                 continue
             values[key] = value
-        for key in ("exclude_keywords", "search_keywords", "search_exclude"):
+        for key in ("exclude_keywords", "search_keywords", "search_exclude",
+                    "high_view_keywords"):
             if key not in values:
                 continue
             value = values[key]
@@ -125,13 +145,27 @@ class CommentaryConfig:
             search_enabled=bool(self.search_enabled),
             search_keywords=tuple(self.search_keywords or ()),
             search_exclude=tuple(self.search_exclude or ()),
-            search_prefetch=_clamp_int(self.search_prefetch, 1, 20, 8),
-            search_limit=_clamp_int(self.search_limit, 1, 50, 20),
+            search_prefetch=_clamp_int(self.search_prefetch, 1, 30, 16),
+            search_limit=_clamp_int(self.search_limit, 1, 50, 40),
+            high_view_keywords=tuple(self.high_view_keywords or ()),
+            high_view_min_view=_clamp_int(
+                self.high_view_min_view, 0, 1_000_000_000, 100_000),
+            high_view_every=_clamp_int(self.high_view_every, 0, 20, 1),
             open_browser=bool(self.open_browser),
             browser_path=str(self.browser_path or "").strip(),
             browser_window=bool(self.browser_window),
+            browser_isolated=bool(self.browser_isolated),
+            browser_profile_dir=str(self.browser_profile_dir or "").strip(),
+            browser_fullscreen=bool(self.browser_fullscreen),
             browser_monitor=str(self.browser_monitor or "secondary").strip().lower(),
             like_on_watch=bool(self.like_on_watch),
+            video_comment_enabled=bool(self.video_comment_enabled),
+            video_comment_max_chars=_clamp_int(
+                self.video_comment_max_chars, 10, 200, 60),
+            video_comment_max_per_day=_clamp_int(
+                self.video_comment_max_per_day, 0, 100000, 0),
+            video_comment_min_gap_s=_clamp_float(
+                self.video_comment_min_gap_s, 0.0, 86400.0, 600.0),
             live_chat_enabled=bool(self.live_chat_enabled),
             live_reply_min_interval_s=_clamp_float(
                 self.live_reply_min_interval_s, 5.0, 300.0, 20.0),
@@ -173,6 +207,7 @@ class CommentaryConfig:
         out["exclude_keywords"] = list(self.exclude_keywords)
         out["search_keywords"] = list(self.search_keywords)
         out["search_exclude"] = list(self.search_exclude)
+        out["high_view_keywords"] = list(self.high_view_keywords)
         return out
 
 

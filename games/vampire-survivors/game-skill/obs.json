@@ -1,0 +1,13 @@
+{
+  "scene": "Vampire Survivors",
+  "game_source": "VS Game",
+  "window_source": "VS Window",
+  "monitor_source": "VS Monitor",
+  "audio_source": "VS Audio",
+  "overlay_source": "AI Commentary",
+  "ticker_source": "AI Ticker",
+  "ticker_text": "AI 实况 · 吸血鬼幸存者",
+  "window_match": ["Vampire Survivors", "VampireSurvivors"],
+  "window_fallback": "Vampire Survivors:UnityWndClass:VampireSurvivors.exe",
+  "capture_mode": "game"
+}

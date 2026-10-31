@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import math
 import time
 from dataclasses import dataclass, field
 
@@ -46,16 +47,19 @@ def _score(video: VideoRef, config: CommentaryConfig, now: float) -> tuple[float
 
     comment_signal = min(1.0, reply / max(1, config.target_comments))
     engagement = min(1.0, (like + 2 * coin + 2 * favorite + reply) / view * 20.0)
+    # 10M 播放约等于 1；高播放量拿到明显但不压倒互动/评论的权重。
+    view_signal = min(1.0, math.log10(max(1, view)) / 7.0)
     target = 600
     duration_fit = max(0.0, 1.0 - abs(video.duration_s - target) / max(target, video.duration_s))
     desc_fit = min(1.0, len(video.desc) / 300.0)
     age_days = max(0.0, (now - video.pubdate) / 86400.0) if video.pubdate else 0.0
     freshness = max(0.0, min(1.0, 1.0 - age_days / 30.0))
-    score = (0.35 * comment_signal + 0.25 * engagement + 0.20 * duration_fit
-             + 0.15 * desc_fit + 0.05 * freshness)
+    score = (0.30 * comment_signal + 0.20 * engagement + 0.15 * duration_fit
+             + 0.10 * desc_fit + 0.05 * freshness + 0.20 * view_signal)
     return round(score, 6), [
         f"评论信号={comment_signal:.2f}", f"互动={engagement:.2f}",
         f"时长适配={duration_fit:.2f}", f"简介={desc_fit:.2f}",
+        f"播放={view_signal:.2f}",
     ]
 
 

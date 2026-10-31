@@ -12,6 +12,16 @@
       "notes": "铁甲战士 A10 实况；mod 本地 HTTP :8080 只读状态，出牌走兼容层 CLI。"
     },
     {
+      "id": "vampire-survivors",
+      "name": "吸血鬼幸存者",
+      "platform": "Steam · 1794680",
+      "status": "ready",
+      "pack": "vampire-survivors",
+      "adapter": "adapter.py:VampireSurvivorsAdapter",
+      "tags": ["实时", "割草", "肉鸽", "动作"],
+      "notes": "BepInEx 6 IL2CPP 桥 + 本地 HTTP :8091；只走 API 走位/选择，不切前台、不发键盘。"
+    },
+    {
       "id": "toy-duel",
       "name": "玩具决斗",
       "platform": "内置",

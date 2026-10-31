@@ -22,7 +22,7 @@ python -m pip install -r requirements.txt
 
 ```powershell
 start.bat                    # 一键启动桌宠（双击也行）
-python main.py               # 或直接跑；右键鱼身看菜单
+python main.py               # 或直接跑；右键鱼身紧贴弹出设置齿轮
 python main.py setup         # 建 db/、tools/data/ 兼容链接
 python main.py doctor        # 自检：人设卡 / 两种语音 / overlay / 语料库 / 录像
 python main.py demo          # 离线跑「游戏 → 性格 → 语音 → UI」
@@ -38,6 +38,8 @@ python main.py studio        # 控制台 http://127.0.0.1:8730/studio
 
 只想要 OBS 桌宠弹幕：`python main.py studio` 起服务（不用打开 `/studio` 即可），
 OBS 浏览器源指向 `http://127.0.0.1:8730/`，宽 560 高 470，背景透明（气泡 + 大肥鱼 + 名字）。
+B 站云观影换成 `http://127.0.0.1:8730/bili`（1920×1080，透明，自带场景侧栏和 TTS），
+底层放 Chrome/副屏捕获；不要再同时挂 `/` 源，避免同一句配音响两次。
 
 ### 2.1 看 Agent 流程（可选）
 
@@ -56,16 +58,31 @@ python main.py agent graph          # Mermaid
 ```powershell
 start.bat                    # 双击也行；pythonw 启动，无控制台
 python main.py               # 默认桌宠；加 --panel 回旧版横幅
-# 左键拖（左右/上下换朝向）· 滚轮缩放 · 右键菜单 · Ctrl+Alt+D 穿透 · Ctrl+Alt+S 声音
+# 左键拖（左右/上下换朝向）· 滚轮缩放 · 右键设置 · Ctrl+Alt+D 穿透 · Ctrl+Alt+S 声音
 ```
 
-右键菜单：置顶 / 点击穿透 / 声音 / 录屏里隐藏 / 语音 / 模型 / 游戏 / **让她玩 ▸ 本地算账 / LLM 规划 / 慢速播报 / 普通节奏** / **让她停手** / **只启动游戏** / 配置 API /
-打开管理端 / 示例 / 关闭。空闲气泡「吃饭ing」，决策「思考ing」，说话显示台词。游戏子菜单只切换
-当前游戏（写入 `config.game`）；「只启动游戏」只按 `game.json` 的 `launch` 拉起 Steam / exe，
-「让她玩」会启动并自动跑一局；二级菜单可选本地算账或 LLM 规划。
+右键鱼身会紧贴右侧弹出**同心圆齿轮按钮**（外层浅蓝、内层蓝、中央一枚更大的设置图标，层层居中，大小跟随桌宠，弹出/淡出动画，5 秒不点自动收起），点它打开
+分组设置页：桌宠 / 语音 / 性格 / 模型 / 服务端口 / 直播 / KOOK / 运行 / 关于。
+页面和桌宠读写同一份 `config.json`：保存后 1~2 秒内生效，端口这类在启动时绑定过的值
+（控制台 8730 / 曼波 9880）要点页面右下角的「重启桌宠」。空闲气泡「吃饭ing」，决策「思考ing」，
+说话显示台词。
+「桌宠 → 启动与常驻」可以开 Windows 托盘图标（左键唤起/收起，右键设置）和开机自启动
+（HKCU Run，不需要管理员）；「语音」页的「关闭引擎」可以停掉曼波进程释放内存。
+「运行」页可以让她玩（本地算账 / LLM 规划）、停手、只启动游戏、开关 LLM 直播模式；
+游戏切换在「桌宠 → 当前游戏」（写入 `config.game`），只切配置，不重启游戏。
+「LLM 直播模式」让导演在 `games/` 的直播模块（刷B站 / 杀戮尖塔2 / 吸血鬼幸存者）之间自己切：
+模型决定下一段播哪个、播多久、过渡说什么；没有 API Key 时会返回错误提示。
+吸血鬼幸存者需要先按 [games/vampire-survivors/README.md](games/vampire-survivors/README.md)
+装一次 BepInEx 6 IL2CPP 桥；装好后走本地 HTTP，不切前台、不抢键盘。
 
 `python main.py` 默认在后台顺带起 overlay 服务；端口被占用会复用，不想起服务加
 `--no-server`。
+
+性格在设置页「性格」看：个人性格常驻，直播时加 `persona/live/`，玩某个游戏时再加
+`games/<id>/persona/layer.md`；三层按顺序拼，预览区能直接看到最终提示词。
+KOOK 聊天开启后由桌宠自动拉起监控（也可手动 `python main.py kook`），聊天记忆在本机 SQLite：
+最近 N 条原文进上下文，超过阈值自动压成摘要（原文不删）。它用 WebSocket 长连接，
+频道/私聊都行，不需要公网 IP；配置见 [docs/KOOK.md](docs/KOOK.md)。
 
 ## 3. 打杀戮尖塔 2（v1 流程）
 
@@ -81,7 +98,7 @@ Copy-Item .\games\slay-the-spire-2\compat\mod\* $mods -Force
 
 ### 3.2 启动游戏并验证
 
-Steam 启动选项加 `--windowed`（全屏独占 OBS 会黑屏）。右键「只启动游戏」或：
+Steam 启动选项加 `--windowed`（全屏独占 OBS 会黑屏）。设置页「运行 → 只启动游戏」或：
 
 ```powershell
 python main.py game launch  # 只按 config.game 启动（STS2 = Steam 2868840）
@@ -100,7 +117,7 @@ python main.py play --pace normal # 旧版快节奏
 python main.py play --stop       # 另一个进程里停手
 ```
 
-右键「让她玩」二级菜单、管理端「Agent 流程」和 CLI 是同一套控制。默认 **本地算账 +
+设置页「运行」、管理端「Agent 流程」和 CLI 是同一套控制。默认 **本地算账 +
 慢速播报**：每一步至少留 2 秒，台词更长时会等估算播完再动。LLM 模式把所有玩家决策交给
 模型：战斗牌序走 `decision/act.py`，地图/事件/营火/商店/宝箱/奖励/选牌走
 `decision/actions.py` 的白名单菜单；模型超时或输出不可执行才本地兜底（记
@@ -114,7 +131,8 @@ B 站礼物：控制台「基础配置 → B 站直播间」填房间号，勾�
 桌宠会在后台连 B 站直播 WebSocket，收到礼物/醒目留言/上舰就让鱼绕两圈；若提示
 `-352` 风控，在同一张卡填浏览器里的 `SESSDATA` Cookie（只存本机 config.json）。
 房间号/Cookie 改动会自动重连，不用重启桌宠。
-python main.py games        # 应该看到「杀戮尖塔 2 ● 在线」
+python main.py games        # 应该看到「杀戮尖塔 2 ● 在线」；装了 Steam 版还会看到「吸血鬼幸存者」
+python main.py live         # LLM 直播模式：导演自己切模块（需要 API Key）
 ```
 
 ### 3.3 起 OBS + 录屏
