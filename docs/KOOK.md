@@ -53,6 +53,9 @@ python main.py kook           # 常驻；Ctrl+C 停止
 - 回复发回原频道 / 原私聊；文字会引用原消息，图片/语音/表情包跟在文字后；
 - 聊天记忆默认开启：最近 N 条原文 + 摘要进上下文，事实存本机
   `logs/kook/memory.db`；
+- **B站摸鱼训练记忆**：`persona/training.json` 里的长期记忆会在
+  `bili_training_apply_kook` 打开时全量注入聊天人格；设置页「运行 → B站摸鱼训练」
+  可启动/停止，控制台「人设」页可查看/编辑；
 - 机器人自己发的消息、系统消息、视频/文件不会回复。
 
 ## 4. 配置项
@@ -71,13 +74,14 @@ python main.py kook           # 常驻；Ctrl+C 停止
 | `kook_proactive` | true | 安静一阵后偶尔主动发消息 |
 | `kook_proactive_minutes` | 60 | 至少安静多少分钟才可能主动开口（10–720）；对方回话后才重新计时 |
 | `kook_allowed_users` | `[]` | 只允许这些 KOOK 用户 id；空 = 不限制 |
+| `bili_training_apply_kook` | true | 是否把 B 站摸鱼训练记忆全量注入 KOOK 聊天 |
 
 ## 5. 日志与排错
 
 - 事件：`logs/kook/events.jsonl`（只记类型/字数/耗时，不记正文；多条回复记
   `parts`，主动消息记 `proactive`）；
 - 用量：`logs/kook/usage.jsonl`（每次回复/记忆抽取/压缩/主动消息的 input/output/total、
-  model、`msg_id`）；控制台「Agent 流程 → Token 花费」会和自动玩账单合并，
+  model、`msg_id`）；控制台「Agent 流程 → Token 花费」会和自动玩、B站训练账单合并，
   并显示来源拆分；
 - 服务输出：`logs/kook/service.log`；
 - 锁：`logs/kook/service.lock`（防止桌宠和手动启动各开一条连接）。

@@ -283,8 +283,11 @@ class StudioRuntime:
             live = live_director.status()
         except Exception as exc:  # noqa: BLE001 - 导演状态坏了不能拖垮控制台
             live = {"running": False, "error": f"{type(exc).__name__}: {exc}"}
-        # 自动玩和 KOOK 聊天各写各的账本；控制台合并成一张真实 API 账单。
-        tokens = merge_usage(token_usage(40), kook_token_usage(limit=40), limit=40)
+        # 自动玩、KOOK、B站训练各写各的账本；控制台合并成一张真实 API 账单。
+        from ..live.bili_training import token_usage as training_token_usage
+
+        tokens = merge_usage(token_usage(40), kook_token_usage(limit=40),
+                             training_token_usage(limit=40), limit=40)
         return {
             "ok": True,
             "product": {"name": __product__, "version": __version__, "codename": __codename__},
@@ -774,7 +777,29 @@ class StudioRuntime:
                 texts[item["name"]] = p.read_text(encoding="utf-8")
             except OSError:
                 texts[item["name"]] = ""
-        return {"ok": True, "persona": self.persona.card.id, "files": files, "texts": texts}
+        return {"ok": True, "persona": self.persona.card.id, "files": files,
+                "texts": texts, "training": self._training_payload()}
+
+    def _training_payload(self) -> dict:
+        try:
+            from ..persona.training import TrainingMemoryStore
+
+            return TrainingMemoryStore().to_dict()
+        except Exception as exc:  # noqa: BLE001
+            return {"path": "persona/training.json", "entries": [], "count": 0,
+                    "enabled": 0, "error": f"{type(exc).__name__}: {exc}"}
+
+    def save_training(self, value) -> dict:
+        """控制台编辑训练记忆：接受数组或 {entries: [...]}，整表校验后原子写。"""
+        from ..persona.training import TrainingMemoryStore
+
+        entries = value.get("entries") if isinstance(value, dict) else value
+        if not isinstance(entries, list):
+            raise ValueError("训练记忆需要 entries 数组")
+        store = TrainingMemoryStore()
+        store.save(entries)
+        return {"ok": True, "message": f"训练记忆已保存（{len(entries)} 条）",
+                "training": store.to_dict()}
 
     def _game_memes_db(self) -> Path | None:
         """梗库 DB 由游戏包声明（核心不硬编码具体游戏路径）。"""

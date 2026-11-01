@@ -31,7 +31,7 @@
 ## 能做什么
 
 - **桌面桌宠**：Win32 透明分层窗口，三视图精灵可拖；空闲「吃饭ing」，决策「思考ing」，说话弹漫画气泡。右键鱼身会在右侧弹出蓝色设置齿轮，点开是分组设置页；默认能被录屏拍到，也可以选「录屏里隐藏」。
-- **直播姬控制台**：`http://127.0.0.1:8730/studio`，左侧是基础配置 / 游戏 / 人设配置 / 直播间 / 互动 / Agent 流程 / 决策与日志。语音、模型、游戏、B 站互动、Token 账单和 Agent 轨迹都在这里。
+- **直播姬控制台**：`http://127.0.0.1:8730/studio`，左侧是基础配置 / 游戏 / 人设配置 / 训练记忆 / 直播间 / 互动 / Agent 流程 / 决策与日志。语音、模型、游戏、B 站互动、Token 账单和 Agent 轨迹都在这里。
 - **OBS 桌宠弹幕**：浏览器源 `/`，大肥鱼精灵 + 漫画气泡，带逐像素 alpha，直接进录像。
 - **桌面叠加层**：设置页可选状态条 / 电影框 / 弹幕栏 / 极简字幕，窗口置顶、点击穿透，跟随桌宠所在屏幕；不用 OBS 也能给直播姬加透明叠层。
 - **B 站直播间**：监听进入 / 关注 / 点赞 / 弹幕 / 礼物 / 醒目留言 / 上舰，桌宠会用气泡和动画回应；控制台能筛选事件、直接发弹幕（需要登录 Cookie）。
@@ -40,7 +40,7 @@
 - **让她玩**：本地算账 / LLM 规划两种模式。LLM 模式下所有玩家决策都进模型，本地启发式只在超时或输出不可执行时兜底；默认慢速播报，等语音再走下一步。
 - **LLM 直播模式（导演）**：导演从各游戏包 `game.json` 的 `live` 声明里挑下一段播什么、播多久、说一句过渡台词，然后停当前模块、切游戏、重新开播；模型不可用时按顺序轮换。
 - **录像回放**：自动玩按游戏策略开 OBS，杀戮尖塔 2 / 吸血鬼幸存者默认一局一个视频；停止时收成 `recordings/<游戏>/run-NNNN/run.mp4`，同目录带 `meta.json`、`events.jsonl`、`chapters.md`、`timeline.json`。
-- **真实 Token 账单**：自动玩每次 LLM 调用、KOOK 每次回复 / 记忆抽取 / 压缩都写本机 usage；控制台把两份账单合并，按来源、类型和每一步展示，不是估算。
+- **真实 Token 账单**：自动玩每次 LLM 调用、KOOK 每次回复 / 记忆抽取 / 压缩、B站训练每次总结都写本机 usage；控制台把三份账单合并，按来源、类型和每一步展示，不是估算。
 - **Agent 流程**：LangGraph 把一回合拆成观察 → 规划 → 验算 → 执行 → 反思，节点耗时 / token / 重试写本机轨迹。
 - **离线演示**：`python main.py demo` 不需要游戏，跑通「游戏 → 性格 → 语音 → UI」。
 
@@ -120,6 +120,7 @@ python main.py --preview out.png   # 只渲染一张图
 | 看导演状态 | `python main.py live --status` |
 | 启动 KOOK 机器人 | `python main.py kook` |
 | 只校验 KOOK Token | `python main.py kook --check` |
+| B站摸鱼训练（不打开视频） | `python main.py train` |
 | 录一局 / 收尾 / 列表 | `python main.py replay start` / `stop` / `list` |
 | 说一句并 lint / 配音 | `python main.py say --thought "..." --meme "..."` |
 | Agent 离线演示 | `python main.py agent run --demo` |
@@ -213,6 +214,24 @@ python main.py kook           # 常驻；Ctrl+C 停止
 B站热门视频云观影是独立游戏包：独立 Chrome profile 的 app 窗口播放，单页面、无标签栏、
 副屏全屏，不碰你正常浏览器的标签页；直播场景页是 `http://127.0.0.1:8730/bili`。
 细节见 [`games/bilibili-hot-commentary/README.md`](games/bilibili-hot-commentary/README.md)。
+
+### B站摸鱼训练人格
+
+设置页「运行 → B站摸鱼训练」可以让她**不打开视频**地刷 B 站：按热门/关键词挑“值得看”
+的长视频，拉标题、简介、热评和弹幕时间线，让指定人格写一段第一人称长期记忆；按配置点赞、
+把同一段发到评论区，然后**等视频时长**再刷下一条（状态气泡显示「摸鱼ing」）。不播放画面/声音，
+不推 OBS，不说 TTS，也不会和自动玩 / LLM 直播导演同时跑。
+
+- 「是否点赞」「是否评论」默认勾选；评论需要带 `SESSDATA` 和 `bili_jct` 的登录 Cookie。
+- 可配置「单个视频最大时长」（2–180 分钟，默认 30）和「最低播放量」（0 = 不限）。
+- 「打开搜索关键词」可填一行一个关键词，空 = 只刷热门；最多 12 个。
+- 训练人格只决定写记忆的口吻；记忆是全局的，KOOK 与直播可分别在「记忆生效范围」开关。
+- 记忆写到 `persona/training.json`，控制台新增独立「训练记忆」页：分页查看看了哪条视频、
+  留下什么评论、点赞/评论状态，点「查看 / 编辑」逐条改摘要和评论，也可停用或删除；
+  聊天/直播**全量注入**，不做最近 N 条截断。
+- 独立进程：`python main.py train`；设置页启动后会持续后台刷，单条异常/状态写失败只跳过
+  这一条，不会让整个训练退出；设置页按 `logs/bili_training/status.json` 显示进度。
+  训练进程和设置页/桌宠分开，关掉设置页不会中断正在刷的那条。
 
 ---
 
@@ -372,6 +391,7 @@ session.say("它 21，我最多挡 15", "差 6，嗨呀。")
 | 层 | 位置 | 何时加载 |
 |---|---|---|
 | 个人性格（常驻） | `persona/<id>/card.json` + `style.md` | 永远；KOOK 用 `config.kook_persona`（默认 `companion`） |
+| B站摸鱼记忆 | `persona/training.json` | 训练后用 `bili_training_apply_kook` / `bili_training_apply_live` 分开注入；全量 |
 | 直播性格 | `persona/live/card.json` + `style.md` | 直播 / 上台且 `config.persona_live` 打开；KOOK 不加载 |
 | 游戏性格 | `games/<id>/persona/layer.md` | 只在该游戏的直播 / 自动玩提示词里叠加 |
 
@@ -445,8 +465,9 @@ observe ──► plan ──► validate ──► execute ──► reflect
 - 默认 dry-run，只有 `python main.py agent run --execute` 才真的出牌；
 - 每个节点的耗时 / 状态 / token / 重试写 `logs/agent_trace.jsonl`，控制台「Agent 流程」直接看；
 - **Token 账单**在「Agent 流程 → Token 花费」卡：合计 / 输入输出 / 调用次数 / 来源
-  （自动玩 / KOOK 聊天）/ 按类型 / 最近 20 步每步多少 token。数据来自
-  `logs/autoplay.jsonl` 和 `logs/kook/usage.jsonl` 的真实 `usage`，跨进程重启也能读；
+  （自动玩 / KOOK 聊天 / B站训练）/ 按类型 / 最近 20 步每步多少 token。数据来自
+  `logs/autoplay.jsonl`、`logs/kook/usage.jsonl` 和 `logs/bili_training/usage.jsonl`
+  的真实 `usage`，跨进程重启也能读；
 - **连续玩不继承上一局**：`LLMPlanner` 每次只发 system + 一条 user（`goal/feedback/context`），
   `context` 由当前局面现场构建，不带聊天历史；跨局只共享硬闸、经验卡和提示词；
 - 不走 LangSmith 云端，轨迹只存摘要，不存完整局面和 API Key。
@@ -536,7 +557,7 @@ dafeiyu-ai-live/
 ## 测试与发布
 
 ```powershell
-python -m pytest -q tests          # 598 项：总线 / 性格 / 语音 / 游戏 / 插件 / Agent / 自动玩 / 录像 / B站 / KOOK / 发布
+python -m pytest -q tests          # 609 项：总线 / 性格 / 语音 / 游戏 / 插件 / Agent / 自动玩 / 录像 / B站训练 / KOOK / 发布
 python tools/test_ctx_act.py       # 决策层：ctx + act（离线）
 python tools/test_streamer.py      # 桌宠渲染 / 透明 / 换行 / 配音
 python tools/test_overlay_playback.py

@@ -50,6 +50,10 @@ _BOOL_FIELDS = (
     "kook_stickers",
     "kook_proactive",
     "persona_live",
+    "bili_training_like",
+    "bili_training_comment",
+    "bili_training_apply_kook",
+    "bili_training_apply_live",
 )
 
 # 纯字符串字段（长度在 _clean_text 里统一截断）。
@@ -61,6 +65,8 @@ _TEXT_FIELDS = (
     "llm_vision_model",
     "mambo_dir",
     "kook_persona",
+    "bili_training_persona",
+    "bili_training_keywords",
 )
 
 _ENUM_FIELDS = {
@@ -218,13 +224,41 @@ def memory_state() -> dict:
         return {"available": False, "error": f"{type(exc).__name__}: {exc}"}
 
 
+def _training_state() -> dict:
+    try:
+        from ..live import bili_training
+
+        data = bili_training.status()
+        data["ok"] = True
+        return data
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "running": False, "error": f"{type(exc).__name__}: {exc}"}
+
+
+def persona_options() -> list[dict]:
+    """可选人格目录：只列带 card.json 的，供训练/聊天下拉用。"""
+    try:
+        rows = []
+        for folder in sorted(paths.PERSONA.iterdir()):
+            if not folder.is_dir() or folder.name == "live":
+                continue
+            if not (folder / "card.json").is_file():
+                continue
+            rows.append({"id": folder.name, "label": folder.name})
+        return rows
+    except OSError:
+        return []
+
+
 def persona_state(cfg: LiveConfig) -> dict:
-    """三层性格：个人（常驻）/ 直播 / 游戏；带预览文本。"""
+    """性格层：个人（常驻）/ 摸鱼记忆 / 直播 / 游戏；带预览文本。"""
     try:
         from ..persona.layers import PersonaStack
 
         stack = PersonaStack.load(cfg.persona, game_id=cfg.game,
-                                  live=bool(cfg.persona_live), include_inactive=True)
+                                  live=bool(cfg.persona_live),
+                                  training=bool(cfg.bili_training_apply_live),
+                                  include_inactive=True)
         out = stack.to_dict()
         out["preview"] = stack.prompt()[:4000]
         out["live_enabled"] = bool(cfg.persona_live)
@@ -271,6 +305,8 @@ def payload() -> dict:
     data["game_api"] = game_api()
     data["logs_path"] = paths.rel(paths.LOGS)
     data["persona_layers"] = persona_state(cfg)
+    data["personas"] = persona_options()
+    data["bili_training"] = _training_state()
     data["stickers"] = sticker_state()
     data["memory"] = {**memory_state(), "enabled": bool(cfg.kook_memory)} if cfg.kook_memory else {
         "available": False, "enabled": False}
@@ -364,6 +400,18 @@ def save(body: dict) -> dict:
     for field in ("llm_model", "autoplay_llm_model"):
         if field in patch and not patch[field]:
             raise ValueError("模型名不能为空")
+    if "bili_training_persona" in patch:
+        pid = str(patch["bili_training_persona"] or "").strip()
+        known = {row["id"] for row in persona_options()}
+        if not pid or pid not in known:
+            raise ValueError("训练人格不存在（persona/ 下没有这个 card.json）")
+        patch["bili_training_persona"] = pid
+    if "bili_training_keywords" in patch:
+        words = [w.strip() for w in patch["bili_training_keywords"].replace(
+            "，", ",").replace("；", ";").replace(";", ",").split(",") if w.strip()]
+        if len(words) > 12:
+            raise ValueError("训练关键词最多 12 个")
+        patch["bili_training_keywords"] = ",".join(words)
 
     for field, choices in _ENUM_FIELDS.items():
         if field in body:
@@ -394,6 +442,9 @@ def save(body: dict) -> dict:
         "kook_context_turns": ("聊天上下文条数", 4, 40),
         "kook_summary_trigger": ("记忆压缩阈值", 8, 80),
         "kook_proactive_minutes": ("主动消息间隔", 10, 720),
+        "bili_training_comment_chars": ("训练评论字数", 80, 1000),
+        "bili_training_max_minutes": ("训练视频最大时长", 2, 180),
+        "bili_training_min_views": ("训练视频最低播放量", 0, 1_000_000_000),
     }.items():
         if field in body:
             patch[field] = int(_number(body[field], label, low, high))

@@ -311,16 +311,25 @@ observe ──► plan ──► validate ──► execute ──► reflect
 
 ## 6.6 性格层与 KOOK 记忆
 
-性格按「个人 → 直播 → 游戏」三段拼接，由 `src/dafeiyu/persona/layers.py` 统一装配：
+性格按「个人 → 摸鱼记忆 → 直播 → 游戏」拼接，由 `src/dafeiyu/persona/layers.py` 统一装配：
 
 | 层 | 来源 | 何时生效 |
 |---|---|---|
 | 个人（常驻） | `persona/<id>/card.json` + `style.md` | 永远；KOOK 聊天用 `kook_persona`，桌宠/直播用 `persona` |
+| 摸鱼记忆 | `persona/training.json` | `bili_training_apply_kook` / `bili_training_apply_live` 打开；全量注入 |
 | 直播 | `persona/live/card.json` + `style.md` | `live=True` 且 `persona_live` 打开；KOOK 不加载 |
 | 游戏 | `games/<id>/persona/layer.md` | 传入 `game_id` 时叠加（游戏 runner / 自动玩） |
 
 `PersonaStack.load(...).prompt()` 只负责拼文本，不改人设卡/lint；设置页 `persona_layers`
-返回三层的来源、字数和最终提示词，方便定位「这句话从哪层来的」。
+返回各层的来源、字数和最终提示词，方便定位「这句话从哪层来的」。
+
+B 站摸鱼训练是独立进程：`games/bilibili-hot-commentary/training.py` 选片/读公开文本/写记忆，
+`src/dafeiyu/live/bili_training.py` 管起停和 `logs/bili_training/status.json`，
+`src/dafeiyu/persona/training.py` 管 `persona/training.json`（全量注入，不做最近 N 条）。
+训练不打开浏览器、不播放视频/声音，和自动玩/直播导演互斥。状态文件用唯一临时文件
+原子替换并对 Windows 占用重试；单条视频异常只记失败并继续下一条，后台训练不因一次
+状态写失败退出。控制台的「训练记忆」是独立分页页面，逐条编辑；训练 LLM usage 写
+`logs/bili_training/usage.jsonl`，和自动玩/KOOK 账本一起进 Agent Token 账单。
 
 KOOK 聊天的长期记忆在 `src/dafeiyu/live/chat_memory.py`：
 
@@ -340,7 +349,8 @@ KOOK 聊天的长期记忆在 `src/dafeiyu/live/chat_memory.py`：
   安静够久后会按概率主动发一条，只发到最近聊过的 `target_id`；发过一次后要等
   对方回话才重新计时，不会连发。
 - Token：聊天进程每次回复/记忆抽取/压缩/主动消息写 `logs/kook/usage.jsonl`（带 `msg_id`），
-  控制台把该文件与 `logs/autoplay.jsonl` 合并成一张账单，自动玩和聊天各占一个来源。
+  控制台把该文件、`logs/autoplay.jsonl` 和 `logs/bili_training/usage.jsonl` 合并成一张账单，
+  自动玩、聊天和 B 站训练各占一个来源。
 
 ## 7. 扩展点
 

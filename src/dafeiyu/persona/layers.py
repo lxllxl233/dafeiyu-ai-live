@@ -27,9 +27,13 @@ from .. import paths
 from .card import PersonaCard
 
 _MAX_TEXT = 6000
-_SCOPE_LABEL = {"personal": "个人性格", "live": "直播性格", "game": "游戏性格"}
+_SCOPE_LABEL = {
+    "personal": "个人性格", "training": "摸鱼记忆",
+    "live": "直播性格", "game": "游戏性格",
+}
 _SCOPE_NOTE = {
     "personal": "常驻",
+    "training": "B 站训练出来的长期记忆，聊天/直播按开关注入",
     "live": "叠加在个人性格上，只在直播/上台时加载",
     "game": "叠加在直播性格上，只在玩这个游戏时加载",
 }
@@ -88,7 +92,8 @@ class PersonaStack:
 
     @classmethod
     def load(cls, persona_id: str = "dafeiyu", game_id: str = "",
-             live: bool = False, *, include_inactive: bool = False,
+             live: bool = False, *, training: bool = False,
+             include_inactive: bool = False,
              base: Path | None = None, root: Path | None = None) -> "PersonaStack":
         base = Path(base or paths.PERSONA)
         root = Path(root or paths.ROOT)
@@ -105,6 +110,20 @@ class PersonaStack:
             source=paths.rel(base_dir / "style.md") if (base_dir / "style.md").is_file() else "",
             active=True,
         )]
+
+        # B 站训练记忆：全量注入，不做“最近 N 条”。关闭时整层不加载，
+        # 控制台仍从 training.json 单独查看她训练过什么。
+        from . import training as training_mod
+
+        training_text = training_mod.prompt_text(base / "training.json") if training else ""
+        if training_text:
+            layers.append(Layer(
+                scope="training", id="training", name="B站摸鱼",
+                title="训练记忆", text=training_text,
+                source=(paths.rel(base / "training.json")
+                        if (base / "training.json").is_file() else ""),
+                active=True,
+            ))
 
         live_dir = base / "live"
         live_card = _load_card(live_dir, "live")
@@ -142,7 +161,9 @@ class PersonaStack:
         blocks: list[str] = []
         for layer in self.active():
             head = f"【{_SCOPE_LABEL.get(layer.scope, layer.scope)}】"
-            if layer.scope == "live":
+            if layer.scope == "training":
+                head += "（她平时摸鱼刷 B 站留下的长期记忆）"
+            elif layer.scope == "live":
                 head += "（叠加在个人性格上，只在直播/上台时生效）"
             elif layer.scope == "game":
                 head += f"（叠加在直播性格上，只在玩《{layer.name}》时生效）"
@@ -203,11 +224,26 @@ def _game_name(root: Path, game_id: str) -> str:
         return str(game_id)
 
 
-def prompt_prefix(cfg, game_id: str = "", live: bool = False) -> str:
-    """给提示词用的便捷入口：读 cfg.persona / cfg.persona_live。"""
+def prompt_prefix(cfg, game_id: str = "", live: bool = False,
+                  training: bool | None = None) -> str:
+    """给提示词用的便捷入口：读 cfg.persona / cfg.persona_live。
+
+    ``training`` 默认跟 ``bili_training_apply_live`` 走；KOOK 自己显式传
+    ``bili_training_apply_kook``，两边可以分开关。
+    """
     persona_id = str(getattr(cfg, "persona", "dafeiyu") or "dafeiyu")
     allow_live = bool(getattr(cfg, "persona_live", True)) if live else False
-    stack = PersonaStack.load(persona_id, game_id=game_id, live=allow_live)
+    if training is None:
+        training = bool(getattr(cfg, "bili_training_apply_live", True)) if live else False
+        if live:
+            try:
+                from ..core.config import LiveConfig
+
+                training = bool(LiveConfig.load().bili_training_apply_live)
+            except Exception:
+                pass
+    stack = PersonaStack.load(persona_id, game_id=game_id, live=allow_live,
+                              training=bool(training))
     return stack.prompt()
 
 

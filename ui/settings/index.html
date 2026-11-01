@@ -149,6 +149,8 @@
     filter:none;opacity:1}
   .btn.sm{padding:6px 11px;font-size:11.5px;border-radius:8px}
   .btn.danger:hover{border-color:rgba(240,106,106,.5);color:#ffb9b9}
+  #trainToggle.danger{background:linear-gradient(180deg,#b84141,#8f2727);border-color:#d86565;color:#fff}
+  #trainToggle.danger:hover{color:#fff;filter:brightness(1.06)}
   /* 徽标 / 提示 */
   .badge{font-size:10.5px;padding:3px 8px;border-radius:999px;border:1px solid #2c3245;
     color:var(--muted);background:rgba(255,255,255,.02);white-space:nowrap}
@@ -643,6 +645,46 @@
       </section>
 
       <section class="card">
+        <h3>B站摸鱼训练</h3>
+        <div class="actions">
+          <label class="sw" title="刷到视频时点赞"><input type="checkbox" data-k="bili_training_like"><span></span></label>
+          <span class="badge">是否点赞</span>
+          <label class="sw" title="看完后在评论区留一段话"><input type="checkbox" data-k="bili_training_comment"><span></span></label>
+          <span class="badge">是否评论</span>
+          <button class="btn" id="trainToggle" data-act="train-toggle">启动训练</button>
+          <button class="btn ghost" data-act="train-keywords">打开搜索关键词</button>
+        </div>
+        <div class="row">
+          <div><span class="t">训练人格</span><small>只决定“用什么口吻写记忆”；记忆本身是全局的，KOOK/直播共用。</small></div>
+          <div class="ctl"><select class="w-input" id="trainPersona" data-k="bili_training_persona"></select></div>
+        </div>
+        <div class="row">
+          <div><span class="t">记忆生效范围</span><small>两边可以分开开关；默认都开，保存后下一条消息/下一段直播生效。</small></div>
+          <div class="ctl">
+            <label class="sw" title="KOOK 聊天注入训练记忆"><input type="checkbox" data-k="bili_training_apply_kook"><span></span></label>
+            <span class="badge">KOOK</span>
+            <label class="sw" title="直播/游戏注入训练记忆"><input type="checkbox" data-k="bili_training_apply_live"><span></span></label>
+            <span class="badge">直播</span>
+          </div>
+        </div>
+        <div class="row">
+          <div><span class="t">单个视频最大时长</span><small>超过这个时长的视频不刷；默认 30 分钟。</small></div>
+          <div class="ctl"><input class="w-num" type="number" min="2" max="180" step="1" data-k="bili_training_max_minutes"><span class="badge">分钟</span></div>
+        </div>
+        <div class="row">
+          <div><span class="t">最低播放量</span><small>低于这个播放量不刷；0 = 不限。</small></div>
+          <div class="ctl"><input class="w-num" type="number" min="0" max="1000000000" step="10000" data-k="bili_training_min_views"><span class="badge">播放</span></div>
+        </div>
+        <div class="row" id="trainKeywordsRow" hidden>
+          <div><span class="t">搜索关键词</span><small>一行一个，逗号也认；空 = 只刷热门。最多 12 个。</small></div>
+          <div class="ctl"><textarea class="w-input" rows="3" data-k="bili_training_keywords" placeholder="例如：人工智能, 游戏史, 做饭"></textarea></div>
+        </div>
+        <div class="hint-line" id="trainStatus">训练会按视频时长等间隔“云看”，不打开视频；状态气泡会变成「摸鱼ing」。</div>
+        <div class="hint-line">训练记忆在控制台「人设」页可查看、编辑、停用；点赞/评论需要 B 站登录 Cookie。
+          <a href="/studio#persona" target="_blank" rel="noopener">打开训练记忆</a></div>
+      </section>
+
+      <section class="card">
         <h3>直播模式</h3>
         <div class="actions">
           <button class="btn" data-act="director">开启 LLM 直播模式</button>
@@ -720,6 +762,9 @@
 
   const $ = (sel, root = document) => root.querySelector(sel);
   const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
+  const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+  }[c]));
 
   const state = {
     cfg: null,          // 后台此刻的配置（唯一状态源）
@@ -866,6 +911,14 @@
       `<option value="${g.id}">${g.name}</option>`).join("");
     if (gsValue) gs.value = gsValue;
 
+    const tp = $("#trainPersona");
+    if (tp) {
+      const cur = tp.value;
+      tp.innerHTML = (cfg.personas || []).map((p) =>
+        `<option value="${esc(p.id)}">${esc(p.label || p.id)}</option>`).join("");
+      tp.value = cur || cfg.bili_training_persona || "";
+    }
+
     const list = $("#modelList");
     list.innerHTML = (cfg.llm_models || []).map((m) => `<option value="${m}"></option>`).join("");
   }
@@ -1011,10 +1064,69 @@
       : "";
   }
 
+  function renderTraining(t) {
+    t = t || {};
+    const running = !!t.running;
+    const btn = $("#trainToggle");
+    if (btn) {
+      btn.textContent = running ? "停止训练（摸鱼中）" : "启动训练";
+      btn.classList.toggle("danger", running);
+    }
+    const line = $("#trainStatus");
+    if (!line) return;
+    if (running) {
+      const phase = t.phase === "watching" ? "摸鱼看视频" :
+        t.phase === "loading" ? "看评论/弹幕" :
+        t.phase === "saving" || t.phase === "saved" ? "写记忆" : "摸鱼ing";
+      const pos = Number(t.position_s || 0), dur = Number(t.duration_s || 0);
+      const clock = dur > 0 ? ` ${fmtClock(pos)}/${fmtClock(dur)}` : "";
+      line.textContent = `${phase}${clock} · ${t.last || "摸鱼ing"}`;
+    } else if (t.error) {
+      line.textContent = `上次训练中断：${t.error}`;
+    } else {
+      line.textContent = "训练会按视频时长等间隔“云看”，不打开视频；状态气泡会变成「摸鱼ing」。";
+    }
+  }
+
+  function fmtClock(sec) {
+    const s = Math.max(0, Math.floor(Number(sec) || 0));
+    return String(Math.floor(s / 60)).padStart(2, "0") + ":" + String(s % 60).padStart(2, "0");
+  }
+
+  async function getTrainingStatus() {
+    try {
+      const r = await fetch("/api/bili/training/status", {cache: "no-store"});
+      return await r.json();
+    } catch (_) {
+      return {running: false};
+    }
+  }
+
+  async function trainToggle() {
+    const st = await getTrainingStatus();
+    if (st.running) {
+      const res = await api("/api/bili/training/stop", {});
+      toast(res.stopping ? "正在停止训练…" : "训练已停止");
+      setTimeout(async () => renderTraining(await getTrainingStatus()), 800);
+      return;
+    }
+    if (dirtyCount()) {
+      const saved = await save();
+      if (!saved) return;
+    }
+    const res = await api("/api/bili/training/start", {
+      persona: $("#trainPersona")?.value || "",
+      keywords: $('[data-k="bili_training_keywords"]')?.value || "",
+    });
+    renderTraining(res.status || await getTrainingStatus());
+    toast(res.message || "训练已启动");
+  }
+
   function renderAll(data) {
     state.data = data;
     state.cfg = data.config;
     applyConfig(data.config);   // 里面会调 refreshDirty()，底栏文案以它为准
+    renderTraining(data.config.bili_training);
     $("#dockDot").classList.add("ok");
   }
 
@@ -1109,6 +1221,20 @@
   // ------------------------------------------------------------------ 动作
   async function runAction(name) {
     if (state.busy) return;
+    if (name === "train-toggle") {
+      state.busy = true;
+      refreshDirty();
+      try { await trainToggle(); }
+      catch (err) { toast("训练操作失败：" + err.message, true); }
+      finally { state.busy = false; refreshDirty(); }
+      return;
+    }
+    if (name === "train-keywords") {
+      const row = $("#trainKeywordsRow");
+      row.hidden = !row.hidden;
+      if (!row.hidden) $('[data-k="bili_training_keywords"]').focus();
+      return;
+    }
     const calls = {
       "play-local": () => api("/api/play/start", { mode: "local" }),
       "play-llm": () => api("/api/play/start", { mode: "llm" }),
@@ -1180,7 +1306,7 @@
       // 没有未保存修改、也没在输入框里时才覆盖表单，避免把光标/选区打回去
       const typing = ["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement?.tagName);
       if (dirtyCount() === 0 && !typing) renderAll(data);
-      else { state.data = data; }
+      else { state.data = data; renderTraining(data.config.bili_training); }
     } catch (_) {
       $("#dot").classList.remove("ok");
       $("#srvText").textContent = "后台未响应";

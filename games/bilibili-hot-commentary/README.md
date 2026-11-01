@@ -25,6 +25,20 @@
 直播弹幕互动会读取桌宠监听进程写的 `logs/bilibili_events.jsonl`，按频次和 token 预算
 回复普通弹幕，醒目留言（SC）优先；用户名和弹幕正文一律按不可信文本处理。
 
+## 摸鱼训练（不打开视频）
+
+同一个包还提供 `training.py`：设置页「运行 → B站摸鱼训练」或 `python main.py train`
+启动一个独立进程。它按热门/关键词选“值得看”的长视频，只拉公开标题/简介/热评/弹幕，
+让 `bili_training_persona` 指定的人格写成一段第一人称长期记忆；按配置点赞、把同一段
+发到评论区，然后按视频时长等待下一条（桌宠气泡「摸鱼ing」）。不打开 Chrome、不播放
+声音、不推 OBS、不说 TTS。训练循环对单条视频异常和状态文件写失败做了隔离，会继续刷下一条。
+记忆写 `persona/training.json`，控制台独立「训练记忆」页可分页查看、逐条编辑/启用/删除；
+训练总结的真实 usage 写 `logs/bili_training/usage.jsonl`，并合并进 Agent Token 账单。
+KOOK 和直播分别由 `bili_training_apply_kook` /
+`bili_training_apply_live` 控制是否全量注入。设置页还能限制单条视频最大时长
+（`bili_training_max_minutes`，默认 30 分钟）和最低播放量
+（`bili_training_min_views`，0 = 不限）。
+
 ## 启动
 
 需要 overlay/studio 正在运行（默认 `http://127.0.0.1:8730`），并配置了可用的
@@ -385,6 +399,7 @@ python main.py obs setup
 | `schedule.py` | 虚拟时钟、cue 调度、空档回应 |
 | `speaker.py` | overlay 输出和单槽语音门 |
 | `runner.py` | 模块级生命周期、搜索/选视频、播放循环、状态/日志 |
+| `training.py` | 摸鱼训练：选视频、摘要、点赞/评论、按时长等待、写 `persona/training.json` |
 | `adapter.py` | 只读伪 `GameState`，不启动线程 |
 | `plugin.py` | 插件入口 |
 

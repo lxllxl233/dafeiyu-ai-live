@@ -440,12 +440,14 @@ def add_comment(payload: dict) -> dict:
 
 
 def update_status(payload: dict) -> dict:
-    """只更新少量 UI 状态（目前是云观影的 idle_text），不出台词。"""
+    """只更新少量 UI 状态（云观影/训练的 idle_text、last），不出台词。"""
     global _seq
     with _lock:
         _seq += 1
         if "idle_text" in payload:
             _status["idle_text"] = str(payload.get("idle_text") or "")[:32]
+        if "last" in payload:
+            _status["last"] = str(payload.get("last") or "")[:200]
         return {"seq": _seq, "status": dict(_status)}
 
 
@@ -517,7 +519,22 @@ def route_payload() -> dict:
 def snapshot(after: int = 0) -> dict:
     with _lock:
         items = [c for c in _comments if c["id"] > after]
-        return {"seq": _seq, "comments": items, "status": dict(_status),
+        status = dict(_status)
+    # 训练进程独立于桌宠：它活着时桌宠气泡显示“摸鱼ing”，不要每 1 秒把
+    # 自己的状态写回主进程，否则关掉训练还会残留。
+    try:
+        from dafeiyu.live import bili_training
+
+        train = bili_training.status()
+        if train.get("running"):
+            status["idle_text"] = "摸鱼ing"
+            if train.get("last"):
+                status["last"] = str(train["last"])
+            status["training"] = True
+    except Exception:
+        pass
+    with _lock:
+        return {"seq": _seq, "comments": items, "status": status,
                 "thinking": dict(_thinking), "playback": audio_state(),
                 "ui_rev": _ui_rev()}
 
@@ -692,6 +709,16 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, body, "application/json; charset=utf-8")
             except Exception as exc:
                 self._send(500, json.dumps({"ok": False, "error": f"{type(exc).__name__}: {exc}"},
+                                           ensure_ascii=False).encode("utf-8"),
+                           "application/json; charset=utf-8")
+        elif path == "/api/bili/training/status":
+            try:
+                from dafeiyu.live import bili_training
+
+                self._send(200, json.dumps(bili_training.status(), ensure_ascii=False)
+                           .encode("utf-8"), "application/json; charset=utf-8")
+            except Exception as exc:  # noqa: BLE001
+                self._send(500, json.dumps({"ok": False, "error": str(exc)},
                                            ensure_ascii=False).encode("utf-8"),
                            "application/json; charset=utf-8")
         elif path == "/api/persona":
@@ -965,6 +992,8 @@ class Handler(BaseHTTPRequestHandler):
 
                 if payload.get("reload"):
                     result = get_runtime().reload_persona()
+                elif "training" in payload:
+                    result = get_runtime().save_training(payload.get("training"))
                 else:
                     result = get_runtime().save_persona(str(payload.get("name") or ""),
                                                         str(payload.get("text") or ""))
@@ -1081,11 +1110,60 @@ class Handler(BaseHTTPRequestHandler):
                                            ensure_ascii=False).encode("utf-8"),
                            "application/json; charset=utf-8")
             return
+        if self.path in ("/api/bili/training/start", "/api/bili/training/stop"):
+            try:
+                n = int(self.headers.get("Content-Length", "0") or 0)
+                body = json.loads(self.rfile.read(n) or b"{}") if n else {}
+                body = body if isinstance(body, dict) else {}
+                from dafeiyu.live import bili_training
+
+                if self.path.endswith("/stop"):
+                    result = bili_training.stop()
+                    try:
+                        update_status({"idle_text": "吃饭ing", "last": ""})
+                    except Exception:
+                        pass
+                else:
+                    # 训练和自动玩/导演互斥：先停手，再起独立训练进程。
+                    try:
+                        from dafeiyu.agent.play import stop_autoplay
+
+                        stop_autoplay()
+                    except Exception:
+                        pass
+                    try:
+                        from dafeiyu.agent import director
+
+                        director.stop()
+                    except Exception:
+                        pass
+                    result = bili_training.start(
+                        persona=str(body.get("persona") or ""),
+                        keywords=str(body.get("keywords") or ""))
+                code = 200 if result.get("ok") else 409
+                self._send(code, json.dumps(result, ensure_ascii=False).encode("utf-8"),
+                           "application/json; charset=utf-8")
+            except Exception as exc:  # noqa: BLE001
+                self._send(500, json.dumps({"ok": False, "error": str(exc)},
+                                           ensure_ascii=False).encode("utf-8"),
+                           "application/json; charset=utf-8")
+            return
         if self.path == "/api/play/start":
             try:
                 n = int(self.headers.get("Content-Length", "0") or 0)
                 body = json.loads(self.rfile.read(n) or b"{}") if n else {}
                 body = body if isinstance(body, dict) else {}
+                try:
+                    from dafeiyu.live import bili_training
+
+                    if bili_training.status().get("running"):
+                        self._send(409, json.dumps(
+                            {"ok": False, "error": "摸鱼训练正在跑，先停止训练再开播/自动玩"},
+                            ensure_ascii=False).encode("utf-8"),
+                            "application/json; charset=utf-8")
+                        return
+                except Exception:
+                    pass
                 if str(body.get("mode") or "").strip().lower() == "director":
                     from dafeiyu.agent import director
 

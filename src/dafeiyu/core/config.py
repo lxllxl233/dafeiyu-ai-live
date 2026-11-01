@@ -141,6 +141,20 @@ class LiveConfig:
     bilibili_room_id: int = 0
     bilibili_cookie: str = ""       # 可选：需要登录态时填 SESSDATA 等；只写本机
 
+    # B 站摸鱼训练：只看公开文字信息，按视频时长等间隔，把摘要写成长期记忆。
+    # 目标人格只决定“用什么口吻写”；记忆本身是全局的，KOOK/直播可分别开关。
+    bili_training_persona: str = "companion"
+    bili_training_like: bool = True
+    bili_training_comment: bool = True
+    # 一行一个搜索词（逗号也认）；空 = 只刷热门。
+    bili_training_keywords: str = ""
+    # 单条视频的时长/播放量门槛：0 播放量 = 不限；时长单位分钟。
+    bili_training_max_minutes: int = 30
+    bili_training_min_views: int = 0
+    bili_training_apply_kook: bool = True
+    bili_training_apply_live: bool = True
+    bili_training_comment_chars: int = 300
+
     # KOOK 聊天：Bot WebSocket 长连接（纯出站，不用公网 IP）。
     kook_enabled: bool = False
     kook_bot_token: str = ""        # 只写本机；to_dict() 只报是否已配置

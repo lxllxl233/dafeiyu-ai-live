@@ -462,6 +462,43 @@ def cmd_live(args) -> int:
     return 0
 
 
+def cmd_train(args) -> int:
+    """跑游戏包声明的训练器（目前是 B 站摸鱼训练）。
+
+    核心不写死游戏 id：扫描 ``games/`` 里带 ``training.py`` 的包，按
+    ``--game`` 或清单顺序选一个。训练进程由设置页/``main.py train`` 启动。
+    """
+    from dafeiyu.core.config import LiveConfig
+    from dafeiyu.games.registry import GameRegistry
+
+    registry = GameRegistry()
+    packs = [p for p in registry.packs()
+             if p.root is not None and (p.root / "training.py").is_file()]
+    if not packs:
+        print("ERR 没有游戏包提供 training.py")
+        return 2
+    wanted = str(getattr(args, "game", "") or "").strip()
+    if wanted:
+        packs = [p for p in packs if p.info.id == wanted]
+        if not packs:
+            print(f"ERR {wanted} 没有训练器")
+            return 2
+    pack = packs[0]
+    try:
+        module = registry.load_game_module(pack.info.id, "training")
+        return int(module.run(
+            LiveConfig.load(),
+            persona=str(getattr(args, "persona", "") or ""),
+            keywords=str(getattr(args, "keywords", "") or ""),
+        ) or 0)
+    except KeyboardInterrupt:
+        from dafeiyu.live import bili_training as proc
+
+        proc.request_stop()
+        print("已停止训练")
+        return 0
+
+
 def cmd_obs(args) -> int:
     from dafeiyu.recording.obs import main as obs_main
 
@@ -763,6 +800,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--status", action="store_true", help="只打印状态和候选模块")
     p.add_argument("--module", default=None, help="第一段固定用这个模块 id")
     p.set_defaults(func=cmd_live)
+
+    p = sub.add_parser("train", help="跑游戏包自带的训练器（B 站摸鱼训练）")
+    p.add_argument("--game", default=None, help="指定游戏包；默认取第一个 training.py")
+    p.add_argument("--persona", default="", help="写记忆用的人格 id；空 = 配置值")
+    p.add_argument("--keywords", default="", help="搜索关键词（逗号/换行分隔）")
+    p.set_defaults(func=cmd_train)
 
     p = sub.add_parser("obs", help="OBS WebSocket 控制")
     p.add_argument("action", choices=["status", "setup", "start", "stop", "shot",

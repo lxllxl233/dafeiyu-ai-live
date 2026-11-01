@@ -575,8 +575,16 @@ class KookService:
             facts = self.memory.search(query, 6)
             context = self.memory.context(int(self.cfg.kook_context_turns or 12))
         try:
-            stack = PersonaStack.load(self.cfg.kook_persona or "companion",
-                                      live=False, include_inactive=False)
+            # 训练记忆的总开关允许在设置页随时改；这里读一次最新配置，
+            # 不用重启 KOOK 进程（其它字段仍按服务启动时的配置）。
+            apply_training = bool(getattr(self.cfg, "bili_training_apply_kook", True))
+            try:
+                apply_training = bool(LiveConfig.load().bili_training_apply_kook)
+            except Exception:
+                pass
+            stack = PersonaStack.load(
+                self.cfg.kook_persona or "companion", live=False,
+                training=apply_training, include_inactive=False)
             persona_text = stack.prompt()
         except Exception:
             persona_text = ""

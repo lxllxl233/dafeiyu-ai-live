@@ -286,6 +286,26 @@
   .game-list-card summary small{margin-left:auto;color:var(--muted);font-size:10.5px}
   .game-list-card #gameRows{padding:0 18px 8px}
   .game.current{background:rgba(244,201,104,.055);border-radius:10px;padding-left:9px;padding-right:9px}
+  .train-toolbar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:4px}
+  .train-toolbar h2{margin:0}
+  .train-tools{margin-left:auto;display:flex;align-items:center;gap:10px}
+  .train-tools select{background:var(--bg);color:var(--text);border:1px solid var(--line);
+    border-radius:7px;padding:5px 7px;font-size:11.5px}
+  .train-row{border-top:1px solid #222a36;padding:11px 0}
+  .train-row:first-child{border-top:0}
+  .train-row-head{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+  .train-row-head b{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:min(560px,100%)}
+  .train-row-head .train-actions{margin-left:auto;display:flex;gap:8px;align-items:center}
+  .train-row-head .btn{padding:4px 9px;font-size:11px}
+  .train-summary{margin:7px 0 3px;line-height:1.65;color:#dfe6f3}
+  .train-pager{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:14px;
+    padding-top:12px;border-top:1px solid #222a36;color:var(--muted);font-size:11.5px}
+  .train-pager button{background:rgba(255,255,255,.03);border:1px solid var(--line);color:var(--text);
+    border-radius:7px;padding:5px 10px;cursor:pointer;font-size:11.5px}
+  .train-pager button:disabled{opacity:.35;cursor:not-allowed}
+  .train-editor-grid{display:grid;grid-template-columns:2fr 1fr 2fr 1fr;gap:10px}
+  .train-editor-grid input{width:100%}
+  @media (max-width:900px){.train-editor-grid{grid-template-columns:1fr 1fr}}
   @media (max-width:1100px){.run-grid,.game-hero{grid-template-columns:1fr}.hero-control{max-width:none}}
   @media (max-width:720px){.stat-grid,.play-settings,.rec-policy{grid-template-columns:repeat(2,minmax(0,1fr))}
     .run-headline{flex-direction:column}.run-actions{width:100%}.run-actions .btn{flex:1}}
@@ -341,6 +361,8 @@
         <i>▦</i><span>当前游戏</span><b id="navGame">—</b></button>
       <button class="nav-item" type="button" data-view="persona">
         <i>✎</i><span>人设配置</span><b id="navPersona">—</b></button>
+      <button class="nav-item" type="button" data-view="training">
+        <i>▤</i><span>训练记忆</span><b id="navTraining">—</b></button>
       <div class="nav-group">直播</div>
       <button class="nav-item" type="button" data-view="room">
         <i>◉</i><span>直播间</span><b id="navRoom">—</b></button>
@@ -668,6 +690,61 @@
       </div>
     </section>
 
+    <section class="view" data-view="training" id="view-training">
+      <div class="view-head">
+        <div>
+          <span class="eyebrow">TRAINING / WATCH &amp; REMEMBER</span>
+          <h2>训练记忆</h2>
+          <p>她摸鱼刷视频后写下的段落，会全量注入 KOOK / 直播的人格提示词。这里分页查看、逐条编辑；停用后仍保留记录，但不再进人格。</p>
+        </div>
+        <div class="head-actions">
+          <button class="btn ghost" type="button" onclick="loadPersona()">刷新记忆</button>
+        </div>
+      </div>
+      <div class="grid wide">
+        <div class="card" style="grid-column:1/-1">
+          <div class="train-toolbar">
+            <h2>B站训练记忆 <span id="trainCount">—</span></h2>
+            <div class="train-tools">
+              <label class="hint">每页
+                <select id="trainPerPage" onchange="trainPerPage(this.value)">
+                  <option value="5">5 条</option>
+                  <option value="10" selected>10 条</option>
+                  <option value="20">20 条</option>
+                </select>
+              </label>
+            </div>
+          </div>
+          <p class="meta" style="margin-bottom:10px">新学的排在前面。点「查看 / 编辑」改摘要和评论；停用不删除原始记录。</p>
+          <div id="trainList"></div>
+          <div id="trainPager" class="train-pager"></div>
+          <span class="hint" id="trainState"></span>
+        </div>
+
+        <div class="card" id="trainEditorCard" style="display:none;grid-column:1/-1">
+          <h2>查看 / 编辑 <span id="trainEditorId">—</span></h2>
+          <div class="train-editor-grid">
+            <div class="field"><label>标题</label><input id="trainEditTitle"></div>
+            <div class="field"><label>UP 主</label><input id="trainEditUp"></div>
+            <div class="field"><label>链接</label><input id="trainEditUrl"></div>
+            <div class="field"><label>时长（秒）</label><input id="trainEditDuration" type="number" min="0" step="1"></div>
+          </div>
+          <div class="field" style="margin-top:10px"><label>学到的摘要（会进人格）</label>
+            <textarea id="trainEditSummary" rows="8" spellcheck="false"></textarea></div>
+          <div class="field" style="margin-top:10px"><label>留下的评论</label>
+            <textarea id="trainEditComment" rows="3" spellcheck="false"></textarea></div>
+          <div class="meta" id="trainEditMeta" style="margin-top:8px"></div>
+          <div class="row" style="margin-top:10px">
+            <label class="hint"><input id="trainEditEnabled" type="checkbox"> 启用这条记忆</label>
+            <button class="btn" type="button" onclick="saveTrainingEditor()">保存这条</button>
+            <button class="btn ghost" type="button" onclick="closeTrainingEditor()">取消</button>
+            <button class="btn ghost" type="button" onclick="deleteTrainingEditor()">删除</button>
+            <span class="hint" id="trainEditState"></span>
+          </div>
+        </div>
+      </div>
+    </section>
+
     <section class="view" data-view="interaction" id="view-interaction">
       <div class="view-head">
         <div>
@@ -778,7 +855,7 @@
           <div class="kv"><span>来源</span><b id="tokSources">—</b></div>
           <div class="kv"><span>最近一步</span><b id="tokApiLast">—</b></div>
           <div class="hint" id="tokApiHint" style="line-height:1.7;color:var(--muted);margin-top:8px">
-            按 <code>logs/autoplay.jsonl</code> 的真实 usage 累计；重试失败的调用也计入。
+            按自动玩 / KOOK / B站训练账本的真实 usage 累计；重试失败的调用也计入。
           </div>
           <div class="hint" id="tokKinds" style="font-size:10.5px;color:var(--muted);margin-top:6px">—</div>
           <ul class="mini-list" id="tokSteps" style="max-height:240px;margin-top:8px">
@@ -939,9 +1016,185 @@ async function loadPersona(){
       `<option value="${esc(f.name)}">${esc(f.label)} · ${esc(f.path)}</option>`).join("");
     if(cur && (PERSONA.files || []).some(f => f.name === cur)) sel.value = cur;
     loadPersonaFile();
+    renderTraining(PERSONA.training);
   }catch(e){
     toast("读取人设失败：" + e.message, true);
   }
+}
+
+let TRAINING = [];
+let TRAIN_PAGE = 1;
+let TRAIN_PER = 10;
+let TRAIN_EDIT_ID = null;
+
+function trainingStatus(e){
+  const comment = e.comment_status === "posted" ? "已发评论"
+    : e.comment_status === "failed" ? "评论失败"
+    : e.comment_status === "skipped" ? "评论跳过" : "未评论";
+  const like = e.like_status === "liked" ? "已点赞"
+    : e.like_status === "failed" ? "点赞失败"
+    : e.like_status === "skipped" ? "未点赞" : "";
+  return {comment, like};
+}
+
+function renderTraining(training){
+  TRAINING = (training && training.entries) || [];
+  const count = $("#trainCount");
+  const nav = $("#navTraining");
+  const enabled = TRAINING.filter(e => e.enabled !== false).length;
+  if(count) count.textContent = `${TRAINING.length} 条 · ${enabled} 条启用`;
+  if(nav) nav.textContent = String(TRAINING.length);
+  if(TRAIN_EDIT_ID && !TRAINING.some(e => e.id === TRAIN_EDIT_ID)) closeTrainingEditor();
+  renderTrainingPage();
+}
+
+function renderTrainingPage(){
+  const list = $("#trainList");
+  if(!list) return;
+  const rows = TRAINING.slice().reverse();
+  const pages = Math.max(1, Math.ceil(rows.length / TRAIN_PER));
+  TRAIN_PAGE = Math.min(Math.max(1, TRAIN_PAGE), pages);
+  const start = (TRAIN_PAGE - 1) * TRAIN_PER;
+  const shown = rows.slice(start, start + TRAIN_PER);
+  if(!rows.length){
+    list.innerHTML = '<div class="hint" style="padding:8px 0">还没有训练记忆。去设置页「运行 → B站摸鱼训练」启动一次。</div>';
+    $("#trainPager").innerHTML = "";
+    return;
+  }
+  list.innerHTML = shown.map((e) => {
+    const status = trainingStatus(e);
+    const title = esc(e.title || e.bvid || "视频");
+    const link = e.url ? `<a href="${esc(e.url)}" target="_blank" rel="noopener">${title}</a>` : title;
+    const rawSummary = String(e.summary || "");
+    const summary = esc(rawSummary.slice(0, 220)) + (rawSummary.length > 220 ? "…" : "");
+    return `<div class="train-row" data-train-id="${esc(e.id)}">
+      <div class="train-row-head">
+        <b>${link}</b>
+        <span class="hint">${esc(e.up || "")}${e.created_at ? " · " + esc(String(e.created_at).slice(0,16)) : ""}${e.bvid ? " · " + esc(e.bvid) : ""}</span>
+        <span class="chip">${esc(status.comment)}</span>${status.like ? `<span class="chip">${esc(status.like)}</span>` : ""}
+        <div class="train-actions">
+          <label class="hint"><input type="checkbox" ${e.enabled !== false ? "checked" : ""} onchange="setTrainingEnabled('${esc(e.id)}', this.checked)"> 启用</label>
+          <button class="btn ghost" type="button" onclick="editTraining('${esc(e.id)}')">查看 / 编辑</button>
+          <button class="btn ghost" type="button" onclick="deleteTraining('${esc(e.id)}')">删除</button>
+        </div>
+      </div>
+      <div class="train-summary">${summary}</div>
+      ${e.comment ? `<div class="hint">评论：${esc(e.comment)}${e.comment_error ? "（" + esc(e.comment_error) + "）" : ""}</div>` : ""}
+    </div>`;
+  }).join("");
+  $("#trainPager").innerHTML = `
+    <button type="button" ${TRAIN_PAGE <= 1 ? "disabled" : ""} onclick="trainPage(-1)">上一页</button>
+    <span>第 ${TRAIN_PAGE} / ${pages} 页 · 共 ${rows.length} 条</span>
+    <button type="button" ${TRAIN_PAGE >= pages ? "disabled" : ""} onclick="trainPage(1)">下一页</button>`;
+}
+
+function trainPage(delta){
+  TRAIN_PAGE += Number(delta || 0);
+  renderTrainingPage();
+}
+
+function trainPerPage(value){
+  TRAIN_PER = Math.max(1, Number(value || 10));
+  TRAIN_PAGE = 1;
+  renderTrainingPage();
+}
+
+function editTraining(id){
+  const e = TRAINING.find(x => x.id === id);
+  if(!e) return;
+  TRAIN_EDIT_ID = id;
+  const card = $("#trainEditorCard");
+  $("#trainEditorId").textContent = e.bvid || e.id;
+  $("#trainEditTitle").value = e.title || "";
+  $("#trainEditUp").value = e.up || "";
+  $("#trainEditUrl").value = e.url || "";
+  $("#trainEditDuration").value = Number(e.duration_s || 0);
+  $("#trainEditSummary").value = e.summary || "";
+  $("#trainEditComment").value = e.comment || "";
+  $("#trainEditEnabled").checked = e.enabled !== false;
+  const status = trainingStatus(e);
+  $("#trainEditMeta").textContent =
+    `${e.bvid || e.id} · 学习于 ${e.created_at ? String(e.created_at).slice(0,16) : "未知"}`
+    + ` · ${status.comment}${status.like ? " · " + status.like : ""}`
+    + `${e.comment_error ? " · " + e.comment_error : ""}`;
+  $("#trainEditState").textContent = "";
+  card.style.display = "block";
+  card.scrollIntoView({behavior:"smooth", block:"start"});
+}
+
+function closeTrainingEditor(){
+  TRAIN_EDIT_ID = null;
+  const card = $("#trainEditorCard");
+  if(card) card.style.display = "none";
+}
+
+function setTrainState(text){
+  const main = $("#trainState");
+  const edit = $("#trainEditState");
+  if(main) main.textContent = text;
+  if(edit) edit.textContent = text;
+}
+
+async function saveTrainingEditor(){
+  if(!TRAIN_EDIT_ID){ toast("先选一条记忆"); return; }
+  const entry = TRAINING.find(x => x.id === TRAIN_EDIT_ID);
+  if(!entry){ toast("这条记忆已经不在了", true); return; }
+  const title = $("#trainEditTitle").value.trim();
+  if(!title){ toast("标题不能为空", true); return; }
+  const summary = $("#trainEditSummary").value.trim();
+  if(!summary){ toast("摘要不能为空；这条记忆靠它进人格", true); return; }
+  const updated = {
+    ...entry,
+    title,
+    up: $("#trainEditUp").value.trim(),
+    url: $("#trainEditUrl").value.trim(),
+    duration_s: Math.max(0, Number($("#trainEditDuration").value || 0) || 0),
+    summary: $("#trainEditSummary").value.trim(),
+    comment: $("#trainEditComment").value.trim(),
+    enabled: $("#trainEditEnabled").checked,
+  };
+  const entries = TRAINING.map(x => x.id === updated.id ? updated : x);
+  const ok = await saveTrainingEntries(entries);
+  if(ok) closeTrainingEditor();
+}
+
+async function saveTrainingEntries(entries){
+  setTrainState("保存中…");
+  try{
+    const r = await fetch("/api/persona", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({training: {entries}}),
+    });
+    const d = await r.json();
+    if(!r.ok || !d.ok) throw new Error(d.error || ("HTTP " + r.status));
+    PERSONA = PERSONA || {};
+    PERSONA.training = d.training;
+    renderTraining(d.training);
+    setTrainState(d.message || "已保存");
+    toast(d.message || "训练记忆已保存");
+    return true;
+  }catch(e){
+    setTrainState("");
+    toast("保存失败：" + e.message, true);
+    return false;
+  }
+}
+
+function setTrainingEnabled(id, enabled){
+  const entries = TRAINING.map(x => x.id === id ? {...x, enabled: !!enabled} : x);
+  saveTrainingEntries(entries);
+}
+
+function deleteTrainingEditor(){
+  if(TRAIN_EDIT_ID) deleteTraining(TRAIN_EDIT_ID);
+}
+
+function deleteTraining(id){
+  if(!id) return;
+  if(!confirm("删除这条训练记忆？删除后人格里不再引用。")) return;
+  if(TRAIN_EDIT_ID === id) closeTrainingEditor();
+  saveTrainingEntries(TRAINING.filter(x => x.id !== id));
 }
 
 function loadPersonaFile(){
@@ -1816,12 +2069,13 @@ function renderTokens(){
   const paths = (t.paths || [t.path]).filter(Boolean);
   if(paths.length){
     $("#tokApiHint").innerHTML =
-      `按 ${paths.map(p => `<code>${esc(p)}</code>`).join(" + ")} 的真实 usage 累计；自动玩和 KOOK 聊天都计入，重试失败的调用也计入。`;
+      `按 ${paths.map(p => `<code>${esc(p)}</code>`).join(" + ")} 的真实 usage 累计；自动玩、KOOK 聊天和 B站训练都计入，重试失败的调用也计入。`;
   }
   $("#tokSteps").innerHTML = steps.length ? steps.slice().reverse().map(s => {
     const time = new Date((s.at || 0) * 1000).toLocaleTimeString("zh-CN", {hour12:false});
     const cost = s.ms > 0 ? ` · ${(s.ms / 1000).toFixed(1)}s` : "";
-    return `<li><div>${esc(s.note || s.kind || "LLM")}</div>
+    return `<li><div>${esc(s.note || s.kind || "LLM")}
+      <span class="hint">${esc(s.source_label || "")}</span></div>
       <div class="t">${time}${cost} · 入 ${fmtTok(s.input)} / 出 ${fmtTok(s.output)} ·
       <b>${fmtTok(s.total)} tok</b> · 累计 ${fmtTok(s.cumulative)}</div></li>`;
   }).join("") : `<li>还没有 LLM 调用。</li>`;
@@ -2192,7 +2446,7 @@ async function biliControl(action, bvid){
 }
 
 const VIEW_ALIASES = {settings:"basic", basic:"basic", games:"games", persona:"persona",
-  room:"room", interaction:"interaction", agent:"agent", telemetry:"telemetry"};
+  training:"training", room:"room", interaction:"interaction", agent:"agent", telemetry:"telemetry"};
 function setView(name, updateHash){
   const target = VIEW_ALIASES[name] || "basic";
   document.querySelectorAll(".view").forEach(v => v.classList.toggle("active", v.dataset.view === target));
