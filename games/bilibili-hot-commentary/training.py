@@ -302,7 +302,7 @@ class TrainingRunner:
     # ---------------------------------------------------------------- 一条视频
     def _watch(self, video) -> bool:
         self._status(running=True, phase="loading", idle_text="摸鱼ing",
-                     bvid=video.bvid, title=video.title,
+                     bvid=video.bvid, title=video.title, error="",
                      last=f"摸鱼刷到《{video.title}》，先看看评论…")
         try:
             detail = self.client.view(video.bvid)
@@ -435,7 +435,7 @@ class TrainingRunner:
                     videos = self._candidates()
                     if not videos:
                         self._status(running=True, phase="idle", idle_text="摸鱼ing",
-                                     last="暂时没刷到合适的视频，等一会儿…")
+                                     error="", last="暂时没刷到合适的视频，等一会儿…")
                         if not self._sleep(90, phase="idle",
                                            last="摸鱼翻列表，暂时没有想看的…"):
                             break
