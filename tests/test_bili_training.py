@@ -91,6 +91,7 @@ def test_training_config_defaults_on():
     assert cfg.bili_training_persona == "companion"
     assert cfg.bili_training_max_minutes == 30
     assert cfg.bili_training_min_views == 0
+    assert cfg.bili_training_comment_chars == 100
 
 
 def test_training_duration_and_view_limits(tmp_path, monkeypatch):
@@ -110,6 +111,13 @@ def test_training_helpers():
     assert mod._split_keywords("人工智能, 游戏史\n人工智能\n") == ["人工智能", "游戏史"]
     assert mod._clean_generated("```text\n好的，这是记忆。\n```", 100) == "这是记忆。"
     assert mod._clock(65) == "01:05"
+
+    assert mod._brief_comment("先把问题拆小，再慢慢解决。后面继续展开。") == \
+        "先把问题拆小，再慢慢解决。"
+    long = "这一句真的很长，" * 20
+    short = mod._brief_comment(long, 50)
+    assert 0 < len(short) <= 51 and short.endswith("…")
+    assert len(mod._brief_comment("没有标点" * 30, 40)) <= 40
 
 
 def test_training_process_start_builds_train_command(tmp_path, monkeypatch):
@@ -236,7 +244,8 @@ def test_watch_writes_memory_after_full_duration(tmp_path, monkeypatch):
     monkeypatch.setattr(mod.proc, "write_status",
                         lambda **kw: writes.append(kw))
     monkeypatch.setattr(mod, "TRAINING_ROOT", tmp_path / "cache")
-    cfg = LiveConfig(bili_training_like=True, bili_training_comment=True)
+    cfg = LiveConfig(bili_training_like=True, bili_training_comment=True,
+                     bili_training_comment_chars=100)
     runner = mod.TrainingRunner(cfg, persona="companion")
     runner.memory = TrainingMemoryStore(tmp_path / "training.json")
     runner.stores = mod.Stores(tmp_path / "cache")
@@ -251,6 +260,7 @@ def test_watch_writes_memory_after_full_duration(tmp_path, monkeypatch):
                         lambda d: ("这是一段足够长的第一人称记忆，" * 3, []))
     monkeypatch.setattr(runner, "_watch_wait", lambda d, **kw: True)
     monkeypatch.setattr(runner, "_live_flags", lambda: (True, True))
+    monkeypatch.setattr(runner, "_comment_limit", lambda: 100)
     monkeypatch.setattr(runner.liker, "like",
                         lambda aid, bvid: {"ok": True})
     monkeypatch.setattr(runner.commenter, "comment",
@@ -262,6 +272,8 @@ def test_watch_writes_memory_after_full_duration(tmp_path, monkeypatch):
     assert rows[0]["bvid"] == "BV1test"
     assert rows[0]["comment_status"] == "posted"
     assert rows[0]["like_status"] == "liked"
+    assert rows[0]["comment"]
+    assert len(rows[0]["comment"]) <= 100
     assert json.loads(json.dumps(rows[0], ensure_ascii=False))["title"] == "测试视频"
     assert runner.stores.seen.is_seen("BV1test", 7)
     assert any(x.get("phase") == "watching" or x.get("phase") == "saved"

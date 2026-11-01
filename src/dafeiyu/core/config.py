@@ -153,7 +153,7 @@ class LiveConfig:
     bili_training_min_views: int = 0
     bili_training_apply_kook: bool = True
     bili_training_apply_live: bool = True
-    bili_training_comment_chars: int = 300
+    bili_training_comment_chars: int = 100
 
     # KOOK 聊天：Bot WebSocket 长连接（纯出站，不用公网 IP）。
     kook_enabled: bool = False
