@@ -330,7 +330,7 @@ B 站摸鱼训练是独立进程：`games/bilibili-hot-commentary/training.py` �
 原子替换并对 Windows 占用重试；单条视频异常只记失败并继续下一条，后台训练不因一次
 状态写失败退出。控制台的「训练记忆」是独立分页页面，逐条编辑；训练 LLM usage 写
 `logs/bili_training/usage.jsonl`，和自动玩/KOOK 账本一起进 Agent Token 账单。记忆写成完整
-段落，评论区只取开头一句短评（`bili_training_comment_chars`，默认 100 字）。
+段落，评论区只取开头一小段中评（`bili_training_comment_chars`，默认 160 字）。
 
 KOOK 聊天的长期记忆在 `src/dafeiyu/live/chat_memory.py`：
 

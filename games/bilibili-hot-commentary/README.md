@@ -30,7 +30,7 @@
 同一个包还提供 `training.py`：设置页「运行 → B站摸鱼训练」或 `python main.py train`
 启动一个独立进程。它按热门/关键词选“值得看”的长视频，只拉公开标题/简介/热评/弹幕，
 让 `bili_training_persona` 指定的人格写成一段第一人称长期记忆；按配置点赞、把开头
-那句短评发到评论区（默认最多 100 字，`bili_training_comment_chars`），然后按视频时长
+那一小段中评发到评论区（默认最多 160 字，`bili_training_comment_chars`），然后按视频时长
 等待下一条（桌宠气泡「摸鱼ing」）。不打开 Chrome、不播放
 声音、不推 OBS、不说 TTS。训练循环对单条视频异常和状态文件写失败做了隔离，会继续刷下一条。
 记忆写 `persona/training.json`，控制台独立「训练记忆」页可分页查看、逐条编辑/启用/删除；

@@ -10,7 +10,7 @@
   控制台新增独立「训练记忆」页，分页查看视频、评论和摘要，并逐条编辑/停用/删除。
   单条视频失败或状态文件被占用时只跳过当前条目，训练进程继续后台刷；
   B站训练的 LLM usage 也写入 `logs/bili_training/usage.jsonl`，合并进「Agent 流程」Token 账单。
-  训练评论改为只发记忆开头的一句短评（`bili_training_comment_chars`，默认 100 字），
+  训练评论改为只发记忆开头的一小段中评（`bili_training_comment_chars`，默认 160 字），
   长期记忆仍保留完整段落。
 - **KOOK 私信图片修复**：私聊图片的 WebSocket 事件有时只带“有图”却拿不到可用
   URL；服务现在按 `msg_id` 从 `/direct-message/list` 补全再交给视觉模型。系统提示词
