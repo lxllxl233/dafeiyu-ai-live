@@ -118,6 +118,9 @@ PET_STATE_FILE = os.path.join(ROOT, "logs", "streamer_pet.json")
 PET_BASE_W, PET_BASE_H = 560, 500      # 1.0× 时的画布（气泡区 + 精灵区）
 PET_FISH_H = 300                       # 1.0× 时的精灵高度
 PET_FACING = {"front": "正面", "side": "侧面", "back": "背面"}
+PET_FACE_BLEND = 0.12                  # 朝向切换的交叉淡入时长（秒），避免硬切
+PET_IDLE_FPS = 30                      # 待机帧率；旧版 20fps 在 1080p 上能看出台阶
+PET_DRAG_FPS = 60                      # 拖拽/说话/回弹时拉满，窗口跟手、形变不跳帧
 
 # ---------------------------------------------------------------- 设计参数
 # 数值直接抄 overlay/index.html 的 CSS，改这里等于改「同款」的还原度。
@@ -862,6 +865,167 @@ def load_pet_sprite(facing: str, height: int) -> Image.Image:
     return im
 
 
+def pet_sprite(facing: str, face_right: bool, height: int) -> Image.Image:
+    """取一张可直接画的精灵：侧面按拖动方向镜像。不要原地改返回值（缓存共享）。"""
+    sprite = load_pet_sprite(facing, height)
+    if facing == "side" and face_right:
+        sprite = ImageOps.mirror(sprite)
+    return sprite
+
+
+def _fade_sprite(sprite: Image.Image, alpha: float) -> Image.Image:
+    """整张精灵乘一个透明度；Pillow 的 point 用 256 项查找表，不会逐像素跑 Python。"""
+    out = sprite.copy()
+    out.putalpha(out.getchannel("A").point(lambda v: int(v * alpha)))
+    return out
+
+
+def blend_pet_sprites(old: Image.Image, new: Image.Image, k: float) -> Image.Image:
+    """两张朝向精灵交叉淡化；按底边中心对齐（三视图宽度/镜像都不一样）。"""
+    k = min(1.0, max(0.0, float(k)))
+    w = max(old.width, new.width)
+    h = max(old.height, new.height)
+    canvas = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    for sprite, weight in ((old, 1.0 - k), (new, k)):
+        if weight <= 0.004:
+            continue
+        part = sprite if weight >= 0.996 else _fade_sprite(sprite, weight)
+        canvas.alpha_composite(part, ((w - sprite.width) // 2, h - sprite.height))
+    return canvas
+
+
+class PetMotion:
+    """桌宠拖拽手感：鼠标位移只写目标，渲染帧里用弹簧追，画面不再一顿一顿。
+
+    旧实现把每次 ``WM_MOUSEMOVE`` 的位移直接写进 ``pet_lean``/``pet_energy``：
+    高回报率鼠标下每来一个消息就换一个角度，鱼身抖；松手是无过渡的衰减；
+    朝向（正/侧/背）一过阈值就整张图硬切。现在拆成「意图」和「显示」：
+
+    - 位移只更新倾斜/形变/朝向的目标值；
+    - 每帧用弹簧把显示值追过去，松手目标清零，回正时自带一点回弹；
+    - 朝向要稳定 ``DWELL`` 秒才换图，换图时留下 ``face_prev`` 给渲染层交叉淡入。
+
+    纯 Python、不碰 Win32，时间由调用方传入，方便单测。
+    """
+
+    TILT_MAX = 14.0          # 横向拖拽最大倾斜角（度）
+    TILT_Y_MAX = 8.0         # 纵向拖拽时的轻微倾斜
+    LEAN_LIMIT = 20.0        # 弹簧越过目标的最大余量
+    BLEND = PET_FACE_BLEND   # 朝向交叉淡入时长
+    DWELL = 0.07             # 朝向往一个方向持续多久才真的换图
+    STIFFNESS = 1100.0       # 弹簧刚度（ω≈33rad/s）
+    DAMPING = 40.0           # 阻尼比≈0.60，松手回正会轻轻过冲一下
+
+    def __init__(self) -> None:
+        self.lean = 0.0
+        self.lean_vel = 0.0
+        self.lean_target = 0.0
+        self.energy = 0.0
+        self.energy_target = 0.0
+        self.facing = "front"
+        self.face_right = False
+        self.face_prev: tuple[str, bool] | None = None
+        self.face_mix_at = -1.0
+        self._last_tick: float | None = None
+        self._cand: tuple[str, bool] | None = None
+        self._cand_at = 0.0
+
+    # ---- 鼠标意图
+    def on_move(self, dx: int, dy: int, now: float, scale: float = 1.0) -> None:
+        """收到一段窗口位移：换算成目标倾斜/速度感/朝向。"""
+        speed = abs(dx) + abs(dy)
+        if speed < 1:
+            return
+        # 大窗口同样的像素位移视觉上更慢，按倍率归一化，手感才一致。
+        k = 1.0 / max(0.75, float(scale or 1.0))
+        self.energy_target = min(1.0, speed * 0.125 * k)
+        if abs(dx) >= abs(dy) * 0.9:
+            self._want_facing("side", dx > 0, now)
+            tilt = -dx * 2.0 * k
+            self.lean_target = max(-self.TILT_MAX, min(self.TILT_MAX, tilt))
+        else:
+            self._want_facing("back" if dy < 0 else "front", self.face_right, now)
+            tilt = -dx * 0.5 * k
+            self.lean_target = max(-self.TILT_Y_MAX, min(self.TILT_Y_MAX, tilt))
+
+    def on_release(self, now: float) -> None:
+        """松手：目标清零，弹簧自己回正并弹一下；朝向不在这里改。"""
+        self.lean_target = 0.0
+        self.energy_target = 0.0
+        self._cand = None
+
+    def relax(self) -> None:
+        """还按着但鼠标停住了：形变慢慢收回去，朝向保持不变。"""
+        self.lean_target = 0.0
+        self.energy_target = 0.0
+
+    def face_to(self, facing: str, face_right: bool, now: float) -> None:
+        """立刻换朝向（松手回正走这里），换图带交叉淡入。"""
+        self._cand = None
+        self._commit(facing, face_right, now)
+
+    def _want_facing(self, facing: str, face_right: bool, now: float) -> None:
+        right = bool(face_right) if facing == "side" else self.face_right
+        if facing == self.facing and (facing != "side" or right == self.face_right):
+            self._cand = None
+            return
+        cand = (facing, right)
+        if cand != self._cand:
+            self._cand = cand
+            self._cand_at = now
+
+    def _commit(self, facing: str, face_right: bool, now: float) -> None:
+        if facing == self.facing and (facing != "side" or bool(face_right) == self.face_right):
+            return
+        self.face_prev = (self.facing, self.face_right)
+        self.facing = facing
+        if facing == "side":
+            self.face_right = bool(face_right)
+        self.face_mix_at = now
+
+    # ---- 每帧收束
+    def tick(self, now: float) -> None:
+        if self._last_tick is None:
+            self._last_tick = now
+            return
+        dt = min(0.08, max(0.0, now - self._last_tick))
+        if dt <= 0.0:
+            return
+        self._last_tick = now
+
+        if self._cand is not None and now - self._cand_at >= self.DWELL:
+            self._commit(self._cand[0], self._cand[1], now)
+            self._cand = None
+
+        # 小步长积分：窗口卡一下（dt 大）也不会把弹簧积到发散。
+        steps = max(1, int(math.ceil(dt / 0.01)))
+        h = dt / steps
+        for _ in range(steps):
+            acc = (self.lean_target - self.lean) * self.STIFFNESS - self.lean_vel * self.DAMPING
+            self.lean_vel += acc * h
+            self.lean += self.lean_vel * h
+        if abs(self.lean) > self.LEAN_LIMIT:
+            self.lean = math.copysign(self.LEAN_LIMIT, self.lean)
+            self.lean_vel = 0.0
+        if abs(self.lean - self.lean_target) < 0.02 and abs(self.lean_vel) < 0.1:
+            self.lean = self.lean_target
+            self.lean_vel = 0.0
+
+        self.energy += (self.energy_target - self.energy) * (1.0 - math.exp(-dt / 0.06))
+        if abs(self.energy - self.energy_target) < 0.004:
+            self.energy = self.energy_target
+
+    def active(self, now: float) -> bool:
+        """还有没有形变/朝向过渡要看：有就按高帧率画。"""
+        return bool(
+            abs(self.lean) > 0.08
+            or self.energy > 0.015
+            or self.lean_target != 0.0
+            or self.energy_target != 0.0
+            or (self.face_prev is not None and now - self.face_mix_at < self.BLEND)
+        )
+
+
 # ---------------------------------------------------------------- 直播间互动气泡
 # 桌宠侧面那串小气泡：点赞=爱心、礼物=大米饭、弹幕=内容、进场=欢迎+名字。
 # 这条通道和头顶的「主播气泡」分开：头顶是她在说话，侧面是观众在互动。
@@ -1024,12 +1188,25 @@ def render_pet(text: str, mode: str, scale: float, now: float, pet) -> Image.Ima
     energy = float(getattr(pet, "pet_energy", 0.0) or 0.0)
     lean = float(getattr(pet, "pet_lean", 0.0) or 0.0)
     fish_h = int(PET_FISH_H * scale)
-    sprite = load_pet_sprite(facing, fish_h)
-    if facing == "side" and face_right:
-        sprite = ImageOps.mirror(sprite)
+    sprite = pet_sprite(facing, face_right, fish_h)
+
+    # 朝向刚切换：和上一张精灵交叉淡入。三视图宽度不同，按底边中心对齐，
+    # 拖拽中换向/松手回正时不会再整张图「啪」一下。
+    prev_face = getattr(pet, "pet_face_prev", None)
+    try:
+        prev_face = (str(prev_face[0]), bool(prev_face[1])) if prev_face else None
+    except (TypeError, ValueError, IndexError):
+        prev_face = None
+    if prev_face and prev_face != (facing, face_right):
+        mix_at = float(getattr(pet, "pet_face_mix_at", -1.0) or -1.0)
+        mix = (now - mix_at) / PET_FACE_BLEND if mix_at >= 0 else 1.0
+        if 0.0 <= mix < 1.0:
+            smooth = mix * mix * (3.0 - 2.0 * mix)      # smoothstep：两头慢、中间快
+            sprite = blend_pet_sprites(
+                pet_sprite(prev_face[0], prev_face[1], fish_h), sprite, smooth)
 
     # 呼吸 + 说话弹跳（脚底固定，向上长）
-    breathe = 1.0 + 0.012 * math.sin(now * 2.2)
+    breathe = 1.0 + 0.013 * math.sin(now * 2.05)
     talk = 0.0
     if getattr(pet, "talk_start_at", 0.0) and now < getattr(pet, "talk_until", 0.0):
         span = max(0.001, pet.talk_until - pet.talk_start_at)
@@ -1057,9 +1234,12 @@ def render_pet(text: str, mode: str, scale: float, now: float, pet) -> Image.Ima
     if abs(lean) > 0.2:
         sprite = sprite.rotate(lean, resample=Image.BICUBIC, expand=True)
 
-    sway = 2.0 * scale * math.sin(now * 1.3)
-    x = (W - sprite.width) // 2 + int(sway + orbit_x)
-    y = H - sprite.height - int(10 * scale) + int(bounce + orbit_y)
+    # 待机漂浮：两个不同频率的正弦叠起来，像慢慢呼吸/随水漂，而不是左右硬挪。
+    # 用 round 而不是 int：sin 过零时 int 会截断成「多停一帧」，30fps 下能看出顿挫。
+    sway = (2.4 * math.sin(now * 1.25) + 0.8 * math.sin(now * 0.57 + 1.7)) * scale
+    bob = (0.9 * math.sin(now * 1.25 + 1.1) + 0.4 * math.sin(now * 0.43)) * scale
+    x = (W - sprite.width) // 2 + int(round(sway + orbit_x))
+    y = H - sprite.height - int(10 * scale) + int(round(bounce + orbit_y + bob))
 
     # 金色轨迹 + 小星星，让「礼物绕圈」在桌面上真的看得见。
     if celebrating:
@@ -1209,6 +1389,9 @@ SW_HIDE = 0
 SW_SHOWNA = 8
 WM_TIMER = 0x0113
 WM_APP = 0x8000
+QS_ALLINPUT = 0x04FF
+MWMO_INPUTAVAILABLE = 0x0004
+PM_REMOVE = 0x0001
 TRAY_CALLBACK = WM_APP + 17
 NIN_SELECT = 0x0400
 NIN_KEYSELECT = 0x0401
@@ -1329,6 +1512,9 @@ def _init_winapi():
     u.SendMessageW.restype = ctypes.c_ssize_t
     u.PostMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
     u.PeekMessageW.argtypes = [ctypes.POINTER(wintypes.MSG), wintypes.HWND, wintypes.UINT, wintypes.UINT, wintypes.UINT]
+    u.MsgWaitForMultipleObjectsEx.argtypes = [wintypes.DWORD, ctypes.c_void_p,
+                                              wintypes.DWORD, wintypes.DWORD, wintypes.DWORD]
+    u.MsgWaitForMultipleObjectsEx.restype = wintypes.DWORD
     u.TranslateMessage.argtypes = [ctypes.POINTER(wintypes.MSG)]
     u.DispatchMessageW.argtypes = [ctypes.POINTER(wintypes.MSG)]
     u.DispatchMessageW.restype = ctypes.c_ssize_t
@@ -1358,6 +1544,26 @@ def _enable_dpi_awareness():
         pass
     try:
         user32.SetProcessDPIAware()
+    except Exception:
+        pass
+
+
+def begin_high_res_timer() -> bool:
+    """把系统定时器拉到 1ms，让 MsgWait 的帧超时不被凑成 ~15.6ms 的倍数。
+
+    60fps 的 16.7ms 在粗粒度下会变成 ~31ms（直接掉到 30fps），所以桌宠运行时
+    必须抬住这个精度；退出时成对 timeEndPeriod，否则会一直影响别的进程。
+    timeBeginPeriod 成功返回 TIMERR_NOERROR(0)，不是布尔 True。
+    """
+    try:
+        return ctypes.windll.winmm.timeBeginPeriod(1) == 0
+    except Exception:
+        return False
+
+
+def end_high_res_timer() -> None:
+    try:
+        ctypes.windll.winmm.timeEndPeriod(1)
     except Exception:
         pass
 
@@ -2636,6 +2842,21 @@ class StreamerWindow:
         except Exception:
             pass
 
+    @staticmethod
+    def _wait_messages(seconds: float) -> None:
+        """等下一帧到点，或任何窗口消息到达就立刻醒。
+
+        用 MsgWaitForMultipleObjectsEx 而不是 time.sleep：拖动时鼠标一动就返回、
+        先把 SetWindowPos 执行掉，再决定要不要重画。画面节奏不被消息泵卡住，
+        窗口又不会因为等下一帧而落后光标。
+        """
+        ms = max(1, int(math.ceil(max(0.0, float(seconds)) * 1000.0)))
+        try:
+            user32.MsgWaitForMultipleObjectsEx(0, None, ms, QS_ALLINPUT,
+                                               MWMO_INPUTAVAILABLE)
+        except Exception:
+            time.sleep(max(0.0, float(seconds)))
+
     def run(self):
         print(self._run_hint())
         print("（默认能被录屏拍到；要隐藏去设置页勾「录屏里隐藏」或加 --exclude-capture）")
@@ -2643,35 +2864,60 @@ class StreamerWindow:
         last_guard = 0.0
         last_overlay = 0.0
         last_mode = self.presence.state
-        while self.running:
-            msg = wintypes.MSG()
-            while user32.PeekMessageW(ctypes.byref(msg), None, 0, 0, 1):
-                user32.TranslateMessage(ctypes.byref(msg))
-                user32.DispatchMessageW(ctypes.byref(msg))
-            now = time.perf_counter()
-            # 三态的到期结算（说话窗口结束 / 思考超时）必须在主循环里跑：
-            # 只在 frame() 里 tick 的话，静止时根本不会重画，状态永远停在旧值。
-            mode = self.tick_presence()
-            if mode != last_mode:
-                last_mode = mode
-                self.dirty = True
-            self._overlay_tick()
-            if now - last_overlay > 1.5:
-                last_overlay = now
-                self._sync_overlay_template()   # 设置页改了模板，主线程里应用
-            if now - last_guard > 2.0:
-                last_guard = now
-                self._ensure_on_screen()
-            animating = self._is_animating(now)
-            if self.dirty or animating:
-                if animating or now - last > 0.05:
-                    self._paint(self.frame())
-                    self.dirty = False
-                    last = now
-                time.sleep(self._frame_interval(now))   # 面板 30fps；桌宠空闲会降帧
-            else:
-                time.sleep(0.05)
-        self._save_pos()
+        next_frame = 0.0
+        timer_on = begin_high_res_timer()
+        try:
+            while self.running:
+                msg = wintypes.MSG()
+                while user32.PeekMessageW(ctypes.byref(msg), None, 0, 0, PM_REMOVE):
+                    user32.TranslateMessage(ctypes.byref(msg))
+                    user32.DispatchMessageW(ctypes.byref(msg))
+                if not self.running:
+                    break
+                now = time.perf_counter()
+                # 三态的到期结算（说话窗口结束 / 思考超时）必须在主循环里跑：
+                # 只在 frame() 里 tick 的话，静止时根本不会重画，状态永远停在旧值。
+                mode = self.tick_presence()
+                if mode != last_mode:
+                    last_mode = mode
+                    self.dirty = True
+                self._overlay_tick()
+                if now - last_overlay > 1.5:
+                    last_overlay = now
+                    self._sync_overlay_template()   # 设置页改了模板，主线程里应用
+                if now - last_guard > 2.0:
+                    last_guard = now
+                    self._ensure_on_screen()
+                # 重新取时：overlay/屏幕兜底可能刚花了十几毫秒，不能拿旧时间
+                # 去和下一帧时刻比，否则会白等一整个帧间隔。
+                now = time.perf_counter()
+                animating = self._is_animating(now)
+                if self.dirty or animating:
+                    if animating or now - last >= 0.05:
+                        if now < next_frame:
+                            # 还没到下一帧：等消息或等到点。鼠标消息会立刻叫醒，
+                            # 拖动跟手；到点再画下一帧，帧率稳定。
+                            self._wait_messages(next_frame - now)
+                            continue
+                        started = time.perf_counter()
+                        self._paint(self.frame())
+                        self.dirty = False
+                        last = started
+                        now = time.perf_counter()
+                        # 从「这一帧开始画」算下一帧，而不是画完再睡一整段：
+                        # 否则实际帧率会变成 1/(画图+睡眠)，拖拽时明显掉帧。
+                        next_frame = started + self._frame_interval(now)
+                        remain = next_frame - now
+                        if remain > 0.001:
+                            self._wait_messages(remain)
+                    else:
+                        self._wait_messages(0.05)
+                else:
+                    self._wait_messages(0.05)
+        finally:
+            if timer_on:
+                end_high_res_timer()
+            self._save_pos()
 
 
 # ---------------------------------------------------------------- 桌宠形态
@@ -3071,14 +3317,17 @@ class PetWindow(StreamerWindow):
     """
 
     def __init__(self, *args, **kwargs):
+        # 手感状态：鼠标只写目标，渲染帧里由弹簧/缓动收束（见 PetMotion）。
+        self.motion = PetMotion()
         self.pet_facing = "front"
         self.pet_face_right = False
+        self.pet_face_prev: tuple[str, bool] | None = None
+        self.pet_face_mix_at = -1.0
         self.pet_lean = 0.0
         self.pet_energy = 0.0
         self.bubble_until = 0.0
         self.celebrate_start = 0.0
         self.celebrate_until = 0.0
-        self._drag_prev: tuple[int, int] | None = None
         self._drag_until = 0.0
         self._release_at = 0.0
         # 原生 HTCAPTION 拖动会让系统模态移动循环卡住本线程的主循环，
@@ -3087,6 +3336,7 @@ class PetWindow(StreamerWindow):
         self._drag_anchor = (0, 0)
         self._drag_origin = (0, 0)
         self._drag_last_cursor = (0, 0)
+        self._sync_motion()
         super().__init__(*args, **kwargs)
         # 初始按「鼠标在鱼身上」算：先保证可交互，第一帧轮询再把空白区域设成穿透
         self._hot = True
@@ -3253,9 +3503,23 @@ class PetWindow(StreamerWindow):
         return True   # 呼吸/摇摆是常驻的
 
     def _frame_interval(self, now: float) -> float:
-        if now < self._drag_until or now < self.talk_until or now < self.celebrate_until:
-            return 0.025
-        return 0.05
+        # 形变还在收束（弹簧/速度线/朝向淡入）时按 60fps 画，否则待机 30fps。
+        # 主循环按「下一帧时刻」睡，不会把画图耗时再叠到间隔上。
+        if (self._dragging or self.motion.active(now)
+                or now < self._drag_until or now < self.talk_until
+                or now < self.celebrate_until):
+            return 1.0 / PET_DRAG_FPS
+        return 1.0 / PET_IDLE_FPS
+
+    def _sync_motion(self) -> None:
+        """把 PetMotion 的当前值落到 render_pet 读取的字段上。"""
+        m = self.motion
+        self.pet_lean = m.lean
+        self.pet_energy = m.energy
+        self.pet_facing = m.facing
+        self.pet_face_right = m.face_right
+        self.pet_face_prev = m.face_prev
+        self.pet_face_mix_at = m.face_mix_at
 
     # ---- 拖动 → 朝向 / 形变
     def _proc(self, hwnd, msg, wparam, lparam):
@@ -3272,7 +3536,6 @@ class PetWindow(StreamerWindow):
             self._drag_anchor = (pt.x, pt.y)
             self._drag_origin = (rect.left, rect.top)
             self._drag_last_cursor = (pt.x, pt.y)
-            self._drag_prev = (rect.left, rect.top)
             user32.SetCapture(hwnd)
             return 0
         if msg == WM_MOUSEMOVE and self._dragging:
@@ -3280,11 +3543,7 @@ class PetWindow(StreamerWindow):
             self._manual_drag()
             return 0
         if msg == WM_LBUTTONUP and self._dragging:
-            self._dragging = False
-            self._drag_prev = None
-            self._release_at = time.perf_counter()
-            user32.ReleaseCapture()
-            self._save_pos()
+            self._end_drag(time.perf_counter())
             return 0
         return super()._proc(hwnd, msg, wparam, lparam)
 
@@ -3301,59 +3560,43 @@ class PetWindow(StreamerWindow):
         self._drag_last_cursor = (pt.x, pt.y)
         if abs(sx) + abs(sy) >= 1:
             now = time.perf_counter()
-            self.pet_energy = min(1.0, (abs(sx) + abs(sy)) / 10.0)
-            if abs(sx) >= abs(sy) * 0.85:
-                self.pet_facing = "side"
-                self.pet_face_right = sx > 0
-                self.pet_lean = max(-14.0, min(14.0, -sx * 2.0))
-            else:
-                self.pet_facing = "back" if sy < 0 else "front"
-                self.pet_lean = max(-8.0, min(8.0, -sx * 0.5))
+            # 只记目标；倾斜/形变在 frame() 里按弹簧追过去，鼠标回报再快也不抖。
+            self.motion.on_move(sx, sy, now, self.scale)
             self._drag_until = now + 0.18
             self.dirty = True
 
+    def _end_drag(self, now: float) -> None:
+        """松手（或捕获丢失）：恢复鼠标、落盘位置，形变交给弹簧回正。"""
+        if not self._dragging:
+            return
+        self._dragging = False
+        self._release_at = now
+        self.motion.on_release(now)
+        try:
+            user32.ReleaseCapture()
+        except Exception:
+            pass
+        self._save_pos()
+
+    @staticmethod
+    def _lbutton_down() -> bool:
+        try:
+            return bool(user32.GetAsyncKeyState(0x01) & 0x8000)
+        except Exception:
+            return True
+
     def _track_drag(self, now: float) -> None:
         if self._dragging:
+            # 捕获被别的窗口抢走时收不到 WM_LBUTTONUP，用真实按键状态兜底，
+            # 否则鱼身会一直保持拖拽姿态、位置也不落盘。
+            if not self._lbutton_down():
+                self._end_drag(now)
+            elif now > self._drag_until:
+                self.motion.relax()      # 按着不动：形变慢慢收回，朝向不变
             return
-        try:
-            pt = wintypes.POINT()
-            user32.GetCursorPos(ctypes.byref(pt))
-            rect = wintypes.RECT()
-            user32.GetWindowRect(self._hwnd, ctypes.byref(rect))
-        except Exception:
-            return
-        down = bool(user32.GetAsyncKeyState(0x01) & 0x8000)
-        margin = int(40 * self.scale)
-        inside = (rect.left - margin <= pt.x <= rect.right + margin
-                  and rect.top - margin <= pt.y <= rect.bottom + margin)
-        prev = self._drag_prev
-        moved = False
-        if down and inside and prev is not None:
-            dx = rect.left - prev[0]
-            dy = rect.top - prev[1]
-            if abs(dx) + abs(dy) >= 1:
-                moved = True
-                self.pet_energy = min(1.0, (abs(dx) + abs(dy)) / 6.0)
-                if abs(dx) >= abs(dy) * 0.85:
-                    self.pet_facing = "side"
-                    self.pet_face_right = dx > 0
-                    self.pet_lean = max(-14.0, min(14.0, -dx * 2.2))
-                else:
-                    self.pet_facing = "back" if dy < 0 else "front"
-                    self.pet_lean = max(-8.0, min(8.0, -dx * 0.5))
-                self._drag_until = now + 0.18
-        if down and inside:
-            self._drag_prev = (rect.left, rect.top)
-        else:
-            if prev is not None:
-                self._release_at = now
-            self._drag_prev = None
-        if not moved:
-            self.pet_lean *= 0.86
-            self.pet_energy *= 0.88
         if now > self._drag_until and now > self._release_at + 0.45:
-            self.pet_facing = "front"
-            self.pet_face_right = False
+            # 松开 0.45s 后转回正面；走 face_to 才有交叉淡入，而不是硬切。
+            self.motion.face_to("front", False, now)
 
     def _hot_zone_point(self, px: int, py: int, rect, scale: float) -> bool:
         """穿透时只有「鱼身+右下把手」能临时点：别整窗吃鼠标。"""
@@ -3407,6 +3650,8 @@ class PetWindow(StreamerWindow):
     def frame(self) -> Image.Image:
         now = time.perf_counter()
         self._track_drag(now)
+        self.motion.tick(now)
+        self._sync_motion()
         mode = self.tick_presence()
         if self.presence.dirty:
             self.presence.dirty = False
