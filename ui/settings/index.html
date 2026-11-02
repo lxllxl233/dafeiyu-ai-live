@@ -602,12 +602,12 @@
           <label class="sw"><input type="checkbox" data-k="kook_stickers"><span></span></label>
         </div>
         <div class="row">
-          <div><span class="t">偶尔主动发消息</span><small>安静一阵后，偶尔主动找最近聊过的频道/私聊说一句；不会连发。保存后最多 1 分钟生效。</small></div>
+          <div><span class="t">主动发消息</span><small>安静一阵后主动找最近聊过的频道/私聊说一句；由模型决定这次发不发，每天最多 6 条，不会连发。保存后最多 1 分钟生效。</small></div>
           <label class="sw"><input type="checkbox" data-k="kook_proactive"><span></span></label>
         </div>
         <div class="row">
-          <div><span class="t">主动消息间隔</span><small>至少安静这么久才可能主动开口；实际会再随机等几分钟。保存后最多 1 分钟生效。</small></div>
-          <div class="ctl"><input class="w-num" type="number" min="10" max="720" step="10" data-k="kook_proactive_minutes"><span class="badge">分钟</span></div>
+          <div><span class="t">最短安静时间</span><small>至少安静这么久才会考虑主动开口（默认 20 分钟）；到点后由模型判断要不要说。保存后最多 1 分钟生效。</small></div>
+          <div class="ctl"><input class="w-num" type="number" min="10" max="720" step="1" data-k="kook_proactive_minutes"><span class="badge">分钟</span></div>
         </div>
       </section>
 

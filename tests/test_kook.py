@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import json
+import time
 import wave
 
 from dafeiyu.core.config import LiveConfig
@@ -228,7 +229,7 @@ def test_service_sends_voice_as_mp3(tmp_path):
                for row in rows)
 
 
-def test_service_sends_voice_and_sticker(tmp_path):
+def test_service_limits_media_to_sticker_when_asked(tmp_path):
     class Client:
         def __init__(self):
             self.sent = []
@@ -270,13 +271,12 @@ def test_service_sends_voice_and_sticker(tmp_path):
     out = service.handle(Inbound(message_id="m1", target_id="c1",
                                  channel_type="GROUP", author_id="u1",
                                  msg_type=1, text="来个表情"))
-    assert out["voice"] is True and out["sticker"] is True
-    assert service.client.audio and service.client.images
-    assert any(name.endswith(".wav") for name, _, _ in service.client.uploads)
-    assert any(name.endswith(".png") for name, _, _ in service.client.uploads)
+    # 对方只要表情包：即使模型两个都填了，也只留表情包。
+    assert out["voice"] is False and out["sticker"] is True
+    assert not service.client.audio and service.client.images
 
 
-def test_plain_text_reply_still_sends_voice_and_sticker(tmp_path):
+def test_plain_text_reply_does_not_force_media(tmp_path):
     class Client:
         def __init__(self):
             self.texts, self.audio, self.images, self.uploads = [], [], [], []
@@ -315,9 +315,9 @@ def test_plain_text_reply_still_sends_voice_and_sticker(tmp_path):
     out = service.handle(Inbound(message_id="m1", target_id="c1",
                                  channel_type="GROUP", author_id="u1",
                                  msg_type=1, text="今天好累啊"))
-    assert out["voice"] is True
-    assert out["sticker"] is True
-    assert client.audio and client.images
+    # 纯文本就按纯文本发，不再由服务强行补语音/表情包。
+    assert out["voice"] is False and out["sticker"] is False
+    assert not client.audio and not client.images
 
 
 def test_build_messages_puts_json_reminder_before_user(tmp_path):
@@ -328,7 +328,7 @@ def test_build_messages_puts_json_reminder_before_user(tmp_path):
     assert messages[-1]["role"] == "user"
     assert messages[-2]["role"] == "system"
     assert "格式提醒" in messages[-2]["content"]
-    assert '"voice": true' in messages[-2]["content"]
+    assert '"voice": false' in messages[-2]["content"]
 
 
 def test_repeat_topics_detects_overused_cat():
@@ -510,6 +510,29 @@ def test_service_sends_multiple_messages(tmp_path):
     assert client.sent[1][2]["quote"] == "" and client.sent[2][2]["quote"] == ""
 
 
+def test_parse_reply_allows_four_messages_but_caps_at_four():
+    from dafeiyu.live.chat import parse_reply
+
+    raw = json.dumps({"messages": ["一", "二", "三", "四", "五"], "voice": False})
+    reply = parse_reply(raw, allow_voice=True)
+    assert reply["texts"] == ["一", "二", "三", "四"]
+
+
+def test_media_limit_keeps_at_most_one_attachment(tmp_path):
+    cfg = LiveConfig(kook_memory=False, kook_allow_voice=True, kook_stickers=True)
+    service = KookService(cfg, None, None, work_dir=tmp_path)
+    reply = {"text": "嗯", "voice": True, "voice_text": "嗯",
+             "sticker": "one-bowl"}
+    service._limit_media(reply, "今天好累啊")
+    assert reply["voice"] is True
+    assert "sticker" not in reply
+    # 对方明确同时要时，才允许语音 + 表情包都发。
+    reply = {"text": "嗯", "voice": True, "voice_text": "嗯",
+             "sticker": "one-bowl"}
+    service._limit_media(reply, "用语音和表情包回我")
+    assert reply["voice"] is True and reply["sticker"] == "one-bowl"
+
+
 def test_proactive_sends_after_idle(tmp_path):
     class Client:
         def __init__(self):
@@ -567,6 +590,37 @@ def test_proactive_respects_toggle_and_interval(tmp_path):
     cfg.kook_proactive = True
     service._last_active_at = 10000.0
     assert service._maybe_proactive(now=10000.0 + 60, chance=0.0) is False
+
+
+def test_proactive_daily_cap_and_decline_rearms(tmp_path):
+    class Client:
+        def send_text(self, *args, **kwargs):
+            raise AssertionError("不应该发送")
+
+    cfg = LiveConfig(kook_memory=False, kook_proactive=True,
+                     kook_proactive_minutes=10)
+    service = KookService(cfg, None, Client(), work_dir=tmp_path,
+                          log_path=tmp_path / "events.jsonl")
+    service._last_target = "c1"
+    now = time.time()
+    service._last_active_at = now - 10000
+    service._proactive_armed = True
+    service._proactive_day = time.strftime("%Y-%m-%d")
+    service._proactive_sent_today = service._PROACTIVE_DAILY_CAP
+    assert service._maybe_proactive(now=now, chance=0.0) is False
+
+    class DecliningLLM:
+        def complete(self, messages, model=None):
+            return {"ok": True, "text": '{"messages": []}'}
+
+    service.llm = DecliningLLM()
+    service._proactive_sent_today = 0
+    service._last_active_at = now - 10000
+    service._proactive_armed = True
+    assert service._maybe_proactive(now=now, chance=0.0) is False
+    assert service._proactive_armed is True
+    assert service._proactive_sent_today == 0
+    assert service._proactive_retry_at > now
 
 
 def test_service_replies_and_dedupes(tmp_path):

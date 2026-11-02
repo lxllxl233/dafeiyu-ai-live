@@ -252,6 +252,8 @@ def test_settings_page_and_api_routes(cfg_file, monkeypatch):
         with _get(port, "/settings") as resp:
             page = resp.read().decode("utf-8")
         assert "设置" in page and "/api/settings" in page
+        assert "最短安静时间" in page
+        assert 'data-k="kook_proactive_minutes"' in page
 
         with _get(port, "/api/settings") as resp:
             payload = json.loads(resp.read())

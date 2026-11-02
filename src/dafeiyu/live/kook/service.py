@@ -165,6 +165,9 @@ def inbound_from_message(item: dict, target_id: str,
 class KookService:
     """一条消息 → 一次回复；可注入假 client/llm 做离线测试。"""
 
+    # 主动消息再多也要有个上限，避免一天到晚刷屏。
+    _PROACTIVE_DAILY_CAP = 6
+
     def __init__(self, cfg: LiveConfig, memory: Memory | None, client,
                  llm: chat_mod.ChatLLM | None = None,
                  card: PersonaCard | None = None,
@@ -198,10 +201,13 @@ class KookService:
         self._last_active_at = time.time()
         self._last_proactive_at = 0.0
         self._proactive_armed = False
+        self._proactive_day = ""
+        self._proactive_sent_today = 0
+        self._proactive_retry_at = 0.0
         # WebSocket 和图片轮询可能拿到同一条消息，处理前统一去重。
         self._seen_ids: set[str] = set()
         self._seen_lock = threading.Lock()
-        self._last_sticker = ""
+        self._media_history: list[tuple[bool, bool]] = []
 
     # ---------------------------------------------------------------- 生命周期
     def start(self) -> "KookService":
@@ -334,7 +340,7 @@ class KookService:
         try:
             fresh = LiveConfig.load()
             self.cfg.kook_proactive = bool(fresh.kook_proactive)
-            self.cfg.kook_proactive_minutes = int(fresh.kook_proactive_minutes or 60)
+            self.cfg.kook_proactive_minutes = int(fresh.kook_proactive_minutes or 20)
         except Exception:
             pass
 
@@ -347,10 +353,18 @@ class KookService:
         if not target or not self._proactive_armed:
             return False
         now = time.time() if now is None else float(now)
+        if now < float(self._proactive_retry_at or 0.0):
+            return False
+        today = time.strftime("%Y-%m-%d", time.localtime(now))
+        if self._proactive_day != today:
+            self._proactive_day = today
+            self._proactive_sent_today = 0
+        if self._proactive_sent_today >= self._PROACTIVE_DAILY_CAP:
+            return False
         try:
-            minutes = int(getattr(self.cfg, "kook_proactive_minutes", 60) or 60)
+            minutes = int(getattr(self.cfg, "kook_proactive_minutes", 20) or 20)
         except (TypeError, ValueError):
-            minutes = 60
+            minutes = 20
         interval = max(10, minutes) * 60
         idle = now - float(self._last_active_at or 0.0)
         if idle < interval:
@@ -358,13 +372,21 @@ class KookService:
         if self._last_proactive_at and now - self._last_proactive_at < interval:
             return False
         roll = random.random() if chance is None else float(chance)
-        if roll > 0.2:
+        if roll > 0.5:
             return False
         idle_minutes = max(1, int(idle / 60))
         self._last_proactive_at = now
         self._last_active_at = now
         self._proactive_armed = False
-        return self._send_proactive(idle_minutes)
+        sent = self._send_proactive(idle_minutes)
+        if sent:
+            self._proactive_sent_today += 1
+        else:
+            # 人格选择这次不开口，或发送失败；下次间隔到了再问一次。
+            # 给一个 2 小时退避，避免反复调用模型问“要不要说话”。
+            self._proactive_armed = True
+            self._proactive_retry_at = now + 2 * 3600
+        return sent
 
     def _send_proactive(self, idle_minutes: int) -> bool:
         target = str(self._last_target or "")
@@ -410,14 +432,16 @@ class KookService:
                 return False
             reply = chat_mod.parse_reply(
                 result.get("text", ""), allow_voice=bool(self.cfg.kook_allow_voice))
-            reply = self._ensure_media(reply, msg, proactive=True)
+            reply = self._limit_media(reply, "")
             texts = [str(part).strip() for part in (reply.get("texts") or [])
                      if str(part).strip()]
             if not texts:
                 single = str(reply.get("text") or "").strip()
                 texts = [single] if single else []
             if not texts:
-                self._log({"kind": "proactive_empty"})
+                # 人格可以主动选择这次不开口；不要把它当成错误重试。
+                self._log({"kind": "proactive_declined",
+                           "idle_minutes": idle_minutes})
                 return False
             text = "\n".join(texts)
             repeated = [topic for topic in topics if topic in text]
@@ -439,6 +463,7 @@ class KookService:
         sticker_id = str(reply.get("sticker") or "").strip()
         if sticker_id and self.cfg.kook_stickers:
             sticker_ok = self._send_sticker(msg, sticker_id)
+        self._note_media(voice_ok, sticker_ok)
 
         if sent and self.memory:
             for part in texts:
@@ -519,6 +544,7 @@ class KookService:
         self._last_channel_type = msg.channel_type
         self._last_active_at = time.time()
         self._proactive_armed = True
+        self._proactive_retry_at = 0.0
 
         caption = msg.text
         try:
@@ -541,7 +567,6 @@ class KookService:
 
         reply = chat_mod.parse_reply(
             result.get("text", ""), allow_voice=bool(self.cfg.kook_allow_voice))
-        reply = self._ensure_media(reply, msg, cue=caption)
         texts = [str(part).strip() for part in (reply.get("texts") or [])
                  if str(part).strip()]
         if not texts:
@@ -558,6 +583,7 @@ class KookService:
             picked = self._pick_sticker(text)
             if picked:
                 reply["sticker"] = picked
+        reply = self._limit_media(reply, caption)
         sent = self._send_texts(msg, texts)
         if not sent:
             self._log({"kind": "send_error", "reason": "全部切片都失败"})
@@ -570,6 +596,7 @@ class KookService:
         voice_ok = False
         if reply.get("voice") and self.cfg.kook_allow_voice:
             voice_ok = self._send_voice(msg, str(reply.get("voice_text") or text))
+        self._note_media(voice_ok, sticker_ok)
 
         user_text = caption or ("[图片]" if msg.image_url else "")
         self._record(msg, user_text, texts)
@@ -671,6 +698,10 @@ class KookService:
         for turn in context.get("turns", []):
             role = "user" if turn["role"] == "user" else "assistant"
             messages.append({"role": role, "content": turn["text"]})
+        # 让角色知道自己最近发媒体的频率，避免形成“每条都带语音/表情”的习惯。
+        media_hint = self._media_hint()
+        if media_hint:
+            messages.append({"role": "system", "content": media_hint})
         # 历史里的助手消息是纯文本，模型会照着继续写；在最后一条用户消息
         # 之前再提醒一次 JSON 协议，voice/sticker 才不会被“聊嗨了”吞掉。
         messages.append({
@@ -709,37 +740,49 @@ class KookService:
             return result
         return fallback if fallback.get("ok") else result
 
-    def _ensure_media(self, reply: dict, msg: Inbound,
-                      *, proactive: bool = False, cue: str = "") -> dict:
-        """模型退回纯文本时兜底：短句照旧发一条语音，别让语音能力形同虚设。"""
-        text = str(reply.get("text") or "").strip()
-        if not text:
-            return reply
-        plain = not reply.get("json", True)
-        if (plain and self.cfg.kook_allow_voice and not reply.get("voice")
-                and len(text) <= 80
-                and not re.search(r"https?://|```", text)):
-            reply["voice"] = True
-            reply["voice_text"] = chat_mod.speech_text(text, 120)
-            self._log({"kind": "protocol_plain", "action": "force_voice",
-                       "chars": len(text), "proactive": bool(proactive)})
-        if (plain and self.cfg.kook_stickers and not reply.get("sticker")
-                and not proactive
-                and any(word in text for word in ("笑", "累", "晚安", "气", "委屈",
-                                                   "开心", "难过", "想你"))):
-            picked = self._pick_sticker(text)
-            if picked:
-                reply["sticker"] = picked
-                self._last_sticker = picked
-                self._log({"kind": "protocol_plain", "action": "force_sticker",
-                           "sticker": picked})
-        # 就算模型这次没主动填 sticker，情绪词命中时也补一张；同一张不连发。
-        if (self.cfg.kook_stickers and not reply.get("sticker") and not proactive):
-            picked = self._sticker_for(text + " " + str(cue or ""))
-            if picked and picked != self._last_sticker:
-                reply["sticker"] = picked
-                self._last_sticker = picked
+    def _limit_media(self, reply: dict, cue: str) -> dict:
+        """一次回复最多带一种附加媒体；对方明确同时要时才允许两个都发。"""
+        wants_voice = self._wants_voice(cue)
+        wants_sticker = self._wants_sticker(cue)
+        voice = bool(reply.get("voice")) and bool(self.cfg.kook_allow_voice)
+        sticker = str(reply.get("sticker") or "").strip()
+        if sticker and not self.cfg.kook_stickers:
+            sticker = ""
+        if voice and sticker and not (wants_voice and wants_sticker):
+            if wants_sticker and not wants_voice:
+                voice = False
+            else:
+                sticker = ""
+        reply["voice"] = voice
+        if not voice:
+            reply["voice_text"] = ""
+        if sticker:
+            reply["sticker"] = sticker
+        else:
+            reply.pop("sticker", None)
         return reply
+
+    def _note_media(self, voice: bool, sticker: bool) -> None:
+        self._media_history.append((bool(voice), bool(sticker)))
+        del self._media_history[:-8]
+
+    def _media_hint(self) -> str:
+        """把最近几条回复的媒体使用情况告诉自己，避免形成每条都带的习惯。"""
+        rows = self._media_history[-6:]
+        if len(rows) < 3:
+            return ""
+        voice = sum(1 for used_voice, _ in rows if used_voice)
+        sticker = sum(1 for _, used_sticker in rows if used_sticker)
+        if voice <= 1 and sticker <= 1:
+            return ""
+        if voice >= 2 or sticker >= 2:
+            return (
+                f"你最近 {len(rows)} 条回复里带过 {voice} 次语音、{sticker} 次表情包，"
+                "已经有点多了。这次除非对方明确要求，否则不要再带语音或表情包，"
+                "用纯文字接话。")
+        return (
+            f"你最近 {len(rows)} 条回复里带过 {voice} 次语音、{sticker} 次表情包。"
+            "这次先判断有没有必要：普通接话就纯文字，别形成每条都带媒体的习惯。")
 
     def _send_texts(self, msg: Inbound, texts: list[str]) -> bool:
         """逐条发送模型给的短消息；每条单独一个气泡，超长才切片。"""
@@ -778,30 +821,6 @@ class KookService:
         body = str(text or "")
         return any(word in body for word in (
             "表情包", "表情", "发张图", "发个图", "贴图", "斗图"))
-
-    @staticmethod
-    def _sticker_for(text: str) -> str:
-        """按情绪词挑一张贴纸；没有明显情绪就返回空，避免每条都甩图。"""
-        from ...persona import stickers
-
-        body = str(text or "")
-        if not body:
-            return ""
-        rows = {row.get("id") for row in stickers.items() if row.get("exists")}
-        rules = (
-            ("laugh", ("笑", "哈哈", "好笑", "乐", "梗")),
-            ("flying-kick", ("气", "烦", "滚", "讨厌", "踹")),
-            ("million-cry", ("哭", "破防", "惨", "难过", "委屈")),
-            ("premium-model", ("厉害", "强", "大佬", "佩服", "牛")),
-            ("rice-fish", ("累", "困", "瘫", "饿", "饭", "吃")),
-            ("tokens", ("token", "钱", "贵", "算账")),
-            ("refuse", ("拒绝", "不行", "保密", "不说")),
-            ("cant-leave", ("黏", "别走", "陪我")),
-        )
-        for sticker_id, words in rules:
-            if sticker_id in rows and any(word in body for word in words):
-                return sticker_id
-        return ""
 
     @staticmethod
     def _pick_sticker(text: str) -> str:
@@ -985,9 +1004,9 @@ def check(cfg: LiveConfig) -> int:
     print(f"人设：{cfg.kook_persona or 'companion'}", flush=True)
     print(f"长期记忆：{'开' if cfg.kook_memory else '关'}", flush=True)
     try:
-        proactive_minutes = max(10, int(cfg.kook_proactive_minutes or 60))
+        proactive_minutes = max(10, int(cfg.kook_proactive_minutes or 20))
     except (TypeError, ValueError):
-        proactive_minutes = 60
+        proactive_minutes = 20
     print(f"主动消息：{'开' if cfg.kook_proactive else '关'}"
           f"（{proactive_minutes} 分钟）", flush=True)
     if cfg.kook_memory:
@@ -1039,9 +1058,9 @@ def _run_service(cfg: LiveConfig) -> int:
     service = KookService(cfg, memory, client)
     event_log = service.log_path
     try:
-        proactive_minutes = max(10, int(cfg.kook_proactive_minutes or 60))
+        proactive_minutes = max(10, int(cfg.kook_proactive_minutes or 20))
     except (TypeError, ValueError):
-        proactive_minutes = 60
+        proactive_minutes = 20
     service._log({"kind": "started", "persona": cfg.kook_persona,
                   "memory": bool(cfg.kook_memory),
                   "proactive": bool(cfg.kook_proactive),

@@ -52,5 +52,5 @@ def test_prompt_lists_sticker_ids():
     text = build_system_prompt(PersonaCard.load("companion"), [],
                                sticker_options=stickers.options())
     assert "sticker" in text and "one-bowl" in text and "我能去你家吃饭吗" in text
-    assert '"messages"' in text and "1–3 条短消息" in text
+    assert '"messages"' in text and "最多 4 条" in text
     assert "不要声称看不到图" in text

@@ -458,7 +458,7 @@ def save(body: dict) -> dict:
     for field, (label, low, high) in {
         "kook_context_turns": ("聊天上下文条数", 4, 40),
         "kook_summary_trigger": ("记忆压缩阈值", 8, 80),
-        "kook_proactive_minutes": ("主动消息间隔", 10, 720),
+        "kook_proactive_minutes": ("最短安静时间", 10, 720),
         "bili_training_comment_chars": ("训练评论字数", 40, 300),
         "bili_training_max_minutes": ("训练视频最大时长", 2, 180),
         "bili_training_min_views": ("训练视频最低播放量", 0, 1_000_000_000),

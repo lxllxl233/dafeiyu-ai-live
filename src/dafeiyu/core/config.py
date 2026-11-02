@@ -176,7 +176,7 @@ class LiveConfig:
     kook_stickers: bool = True
     # 安静一阵后，偶尔主动找最近聊过的人/频道说一句（不会连发）
     kook_proactive: bool = True
-    kook_proactive_minutes: int = 60
+    kook_proactive_minutes: int = 20
     # 看图用的模型：DeepSeek 只有 flash 系支持图片输入
     llm_vision_model: str = "deepseek-flash"
     extra: dict = field(default_factory=dict)

@@ -190,7 +190,7 @@ def _part_text(value) -> str:
 def parse_reply(raw: str, allow_voice: bool = True) -> dict:
     """返回 ``{"text", "texts", "voice", "voice_text", "sticker"?}``。
 
-    ``messages`` 是 1–3 条短消息的数组，服务会逐条发出去；旧的 ``reply``
+    ``messages`` 是 1–4 条短消息的数组，服务会逐条发出去；旧的 ``reply``
     单字符串仍然兼容。格式不对时按纯文本处理。
     """
     body = (raw or "").strip()
@@ -204,7 +204,7 @@ def parse_reply(raw: str, allow_voice: bool = True) -> dict:
                 part = _part_text(item)
                 if part and part not in texts:
                     texts.append(part)
-                if len(texts) >= 3:
+                if len(texts) >= 4:
                     break
         if not texts:
             for key in ("reply", "text", "content", "message", "answer"):
@@ -314,18 +314,20 @@ def build_system_prompt(card: PersonaCard, facts: list[dict],
         lines.extend(f"- {str(f.get('text') or '')}" for f in facts[:8])
     lines.append("")
     lines.append(
-        "一次回复不一定只有一句：像真人连发一样，可以是 1–3 条短消息。"
-        "大多数时候 1 条；想补充、追问、表达情绪或分两拍说时，拆成 2–3 条，"
-        "不要为了凑数硬拆。")
+        "一次回复可以不止一句：像真人连发一样，通常 1–2 条；想补充、追问、"
+        "表达情绪或分两拍说时，可以拆成 3–4 条，最多 4 条。"
+        "每条一两句话，整段回复尽量控制在 300 字以内；"
+        "不要为了凑数硬拆，也不要每次写成小作文。")
     if allow_voice:
         lines.append(
             "只输出一个 JSON 对象，不要代码块、不要额外解释：\n"
-            '{"messages": ["第一条", "第二条"], "voice": true, "voice_text": "朗读版", '
+            '{"messages": ["第一条", "第二条"], "voice": false, "voice_text": "", '
             '"sticker": ""}\n'
             "messages 里每条都会单独发成一条消息；只有一条时也写成数组。\n"
-            "voice 决定这条回复是否额外配语音卡：日常寒暄、情绪、调侃、晚安、"
-            "一两句话能说完的，用 true；代码、链接、清单、表格、长解释、需要对方"
-            "复制的内容，用 false。\n"
+            "voice 是可选的，默认 false：只有这条回复本身适合用声音表达"
+            "（撒娇、晚安、很短的一句情绪话），或对方明确要语音时，才设为 true。"
+            "普通聊天、解释、连续多句、长回复、代码/链接一律 false。"
+            "不要形成每条都发语音的习惯。\n"
             "voice_text 是给 TTS 的稿子：去掉 Markdown、链接、代码、emoji，"
             "把 messages 合成一口气能读完的版本（60 字以内）；voice 为 false 时留空。"
         )
@@ -342,9 +344,9 @@ def build_system_prompt(card: PersonaCard, facts: list[dict],
             "表情包在 sticker 里填一个可用 id。")
     if sticker_options:
         lines.append(
-            "sticker 是可选的大肥鱼表情包：可以主动配一张来表达情绪，不用等对方要；"
-            "情绪明显（被逗笑、委屈、累、晚安）时更该配一张。"
-            "但不要每条都发，同一张别连续用；用了表情包 messages 里仍要有一句短话。\n"
+            "sticker 也是可选的，默认留空：只有情绪很明确、一张图能替代一句话时才填，"
+            "不要每条都配，也不要连续两条用同一张；用了表情包 messages 里仍要有一句短话。"
+            "语音和表情包最多选一个，除非对方明确同时要；大多数回复两个都不发。\n"
             "可选表情包（id：文案）："
         )
         lines.extend(f"- {row.get('id')}：{row.get('text')}"
@@ -371,11 +373,10 @@ def build_format_reminder(*, allow_voice: bool = True) -> str:
     开头写“只输出 JSON”还不够，必须在最后一轮再说一次，voice/sticker 才会
     稳定进入回复。
     """
-    voice = ('"voice": true, "voice_text": "朗读版"'
-             if allow_voice else '"voice": false, "voice_text": ""')
-    fields = f'"messages": ["..."], {voice}, "sticker": ""'
+    fields = '"messages": ["..."], "voice": false, "voice_text": "", "sticker": ""'
     return (
         "格式提醒：只输出一个 JSON 对象 {" + fields + "}，"
+        "voice/sticker 是可选项，默认不发，需要时再把对应字段填上；"
         "不要纯文本、不要代码块、不要额外解释。"
     )
 
@@ -390,9 +391,12 @@ def build_proactive_prompt(idle_minutes: int = 60, *,
     """
     minutes = max(1, int(idle_minutes or 0))
     lines = [
-        f"（对方大概 {minutes} 分钟没说话了。你可以主动发一条消息："
+        f"（对方大概 {minutes} 分钟没说话了。你可以主动发 1–2 条消息："
         "像突然想起一件事、分享一个小发现，或者轻轻关心一下；"
-        "只发 1 条，不要问“在吗”，不要连续追问，也不要解释你为什么主动。）",
+        "不要问“在吗”，不要连续追问，也不要解释你为什么主动。）",
+        "如果你现在确实没什么想说的、或觉得这个时间点不适合打扰，"
+        "就把 messages 留空，不要为了发而发；如果开口，最多 2 条，"
+        "语音/表情包同样按需选择，不要默认带上。",
         "摘要和记忆里反复出现的生活细节（宠物、旧梗、同一件事）不要再拿来"
         "当开场白；优先聊你最近没提过的东西。",
     ]

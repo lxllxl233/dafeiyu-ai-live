@@ -109,8 +109,8 @@ not the product version.
   写清「战斗 f7 t3」或「地图 choose_map_node 2」；控制台 Agent 页按它出每步 token。
   KOOK 聊天是独立进程，每次回复/记忆抽取/压缩写 `logs/kook/usage.jsonl`
   （`live/kook/usage.py`，带 `msg_id`），控制台与自动玩账单合并展示。
-  KOOK 回复可拆成 1–3 条独立消息；主动消息只发最近聊过的 `target_id`，
-  间隔 `kook_proactive_minutes` 后按概率触发，不能连发。
+  KOOK 回复可拆成 1–4 条独立消息；主动消息只发最近聊过的 `target_id`，
+  间隔 `kook_proactive_minutes` 后由模型决定是否开口，每天最多 6 条，不能连发。
 - **LLM 直播模式**：导演候选只来自各游戏包 `game.json` 的 `live` 块
   （`live.enabled/label/role/weight`），`src/dafeiyu/agent/director.py` 不写死任何
   游戏 id/显示名；模型只决定「播哪个/多久/过渡台词」，怎么玩仍归各游戏 runner。
