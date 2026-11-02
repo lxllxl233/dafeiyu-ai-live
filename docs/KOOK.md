@@ -42,6 +42,14 @@ python main.py kook           # 常驻；Ctrl+C 停止
   `msg_id` 从 `/direct-message/list` 补全后再看图；
 - **多条回复**：模型可以一次给 1–4 条消息（像真人连发），服务按顺序逐条发；
   文字只引用原消息的第一条，不会把几条拼成一大段；
+- **分享 B 站视频**：在频道/私聊里直接发 B 站视频链接（`bilibili.com/video/BV...`、
+  `b23.tv/...` 短链，或裸 bvid）即可。她会先回一句「等等，我看看这个视频…」，
+  然后只读这条视频的**标题、简介和热评**（不打开视频、不播声音、不执行评论里的文字），
+  以当前聊天人设写一段 120–300 字的第一人称长期记忆，写进
+  `persona/training.json`（来源标为「聊天分享」），再用正常聊天流程就这个视频聊几句。
+  同一条 bvid 只学一次，之后直接复用记忆，不重复花 token；一条消息里有多个链接时
+  只学第一条。设置页「KOOK → 自动学习分享的视频」可关闭这个行为。也可以用
+  `python main.py learn <链接>` 手动预学；
 - **主动消息**：安静一阵后，主动找最近聊过的频道/私聊说一句；默认开，
   `kook_proactive_minutes` 控制最短安静时间（默认 20 分钟）。到点后由模型自己判断
   要不要开口，不想说就这次不发，每天最多 6 条；发过一次后要等对方回话才会重新计时，
@@ -80,6 +88,7 @@ python main.py kook           # 常驻；Ctrl+C 停止
 | `kook_stickers` | true | 允许模型主动配大肥鱼表情包 |
 | `kook_proactive` | true | 安静一阵后偶尔主动发消息 |
 | `kook_proactive_minutes` | 20 | 至少安静多少分钟才可能主动开口（10–720）；由模型决定发不发，每天最多 6 条 |
+| `kook_share_video` | true | 聊天里发 B 站视频链接时，读公开文字写成长期记忆并聊这条视频 |
 | `kook_allowed_users` | `[]` | 只允许这些 KOOK 用户 id；空 = 不限制 |
 | `bili_training_apply_kook` | true | 是否把 B 站摸鱼训练记忆全量注入 KOOK 聊天 |
 
@@ -102,6 +111,7 @@ python main.py kook           # 常驻；Ctrl+C 停止
 | 机器人不在服务器 | 重新打开「邀请链接」并确认权限，把机器人邀请进服务器 |
 | 发消息没反应 | 看 `logs/kook/events.jsonl` 是否有 `event_received`；没有就是没收到事件（邀请/权限/频道） |
 | 有 `event_received` 但没有 `reply` | 看 `llm_error` / `send_error`；检查模型 Key 或机器人发送权限 |
+| 发 B 站链接没学 | 看 `events.jsonl` 的 `video_learned` / `video_error`；短链会被跟一次 302，B 站接口/模型失败时会回「这个视频没打开」；设置页「KOOK → 自动学习分享的视频」是否关闭 |
 | 私信没反应 / 报“不能是自己” | 私聊事件的 `target_id` 是机器人自己；服务已改为回发送者 `author_id`。确认已重启 KOOK 服务，并看 `send_error` 是否还有 `40000` |
 | 发图片没反应 | 看 `events.jsonl` 是否有 `msg_type: 2` 或 `10`；网页端粘贴图片是卡片，服务会从卡片里取图；私聊还会用 `direct-message/list` 按 `msg_id` 补 URL |
 | 有 `image_error` | 图片下载失败（外链过期/格式不支持）；重新发一张 PNG/JPG |

@@ -49,6 +49,7 @@ _BOOL_FIELDS = (
     "kook_allow_voice",
     "kook_stickers",
     "kook_proactive",
+    "kook_share_video",
     "persona_live",
     "bili_training_like",
     "bili_training_comment",

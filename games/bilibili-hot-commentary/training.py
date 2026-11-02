@@ -73,7 +73,8 @@ def _clean_digest(text: str, limit: int) -> str:
 
 def _digest_block(row: dict) -> str:
     title = str(row.get("title") or row.get("bvid") or "视频")
-    source = "收藏夹" if row.get("source") == "favorites" else "摸鱼"
+    source = {"favorites": "收藏夹", "shared": "聊天分享"}.get(
+        row.get("source"), "摸鱼")
     head = f"- [{source}]《{title}》"
     if row.get("up"):
         head += f" UP：{row['up']}"
@@ -970,7 +971,8 @@ class CompressionRunner:
             "entries": [
                 {"title": str(row.get("title") or ""),
                  "up": str(row.get("up") or ""),
-                 "source": "收藏夹" if row.get("source") == "favorites" else "摸鱼",
+                 "source": {"favorites": "收藏夹", "shared": "聊天分享"}.get(
+                     row.get("source"), "摸鱼"),
                  "summary": str(row.get("summary") or "")[:900]}
                 for row in chunk
             ],

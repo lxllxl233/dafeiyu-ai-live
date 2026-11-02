@@ -548,6 +548,15 @@ def test_training_prompt_marks_favorites(tmp_path):
     assert "默认收藏夹" not in text
 
 
+def test_training_prompt_marks_shared(tmp_path):
+    store = TrainingMemoryStore(tmp_path / "training.json")
+    store.add(_entry(source="shared", bvid="BVshared", title="别人发我的视频"))
+    text = prompt_text(tmp_path / "training.json")
+    assert "（聊天分享）" in text
+    assert "别人把视频分享给你" in text
+    assert "别人发我的视频" in text
+
+
 def test_digest_store_and_prompt_prefers_compress(tmp_path):
     store = TrainingMemoryStore(tmp_path / "training.json")
     row = store.add(_entry(bvid="BV1", title="原始标题"))

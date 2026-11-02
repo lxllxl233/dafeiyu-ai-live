@@ -4,6 +4,7 @@
 
     python main.py studio            起 overlay + 直播姬控制台（:8730）
     python main.py kook             KOOK 聊天常驻服务（WebSocket 长连接）
+    python main.py learn <url>      学一条分享的 B 站视频（只读公开文字）
     python main.py demo              离线跑一遍「游戏 → 性格 → 语音 → UI」
     python main.py say --thought "..." --meme "..."
     python main.py status            各层体检（JSON）
@@ -462,6 +463,31 @@ def cmd_live(args) -> int:
     return 0
 
 
+def cmd_learn(args) -> int:
+    """学一条别人分享的 B 站视频：读标题/简介/热评，写成长期记忆，不打开视频。"""
+    from dafeiyu.live.bili_video import learn_shared_video
+
+    cfg = LiveConfig.load()
+    result = learn_shared_video(
+        cfg, str(getattr(args, "url", "") or ""),
+        persona=str(getattr(args, "persona", "") or cfg.kook_persona or "companion"))
+    if not result.get("ok"):
+        print(f"ERR {result.get('error') or '学习失败'}")
+        return 2
+    video = result.get("video") or {}
+    print(f"《{video.get('title') or video.get('bvid') or '视频'}》 {video.get('url') or ''}")
+    if result.get("cached"):
+        print("这条以前学过，直接复用已有记忆：")
+    elif result.get("learned"):
+        print("已写入 persona/training.json（source=shared）：")
+    else:
+        print("只读到公开文字，未写入长期记忆：")
+    print(str(result.get("memory") or "（没有生成记忆）"))
+    if result.get("warning"):
+        print(f"WARN {result['warning']}")
+    return 0
+
+
 def cmd_train(args) -> int:
     """跑游戏包声明的训练器（目前是 B 站摸鱼训练）。
 
@@ -764,6 +790,11 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("kook", help="KOOK 聊天常驻服务（Bot + WebSocket）")
     p.add_argument("--check", action="store_true", help="只自检 Token/网关，不进入消息循环")
     p.set_defaults(func=cmd_kook)
+
+    p = sub.add_parser("learn", help="学一条分享的 B 站视频（只读公开文字写记忆）")
+    p.add_argument("url", help="B 站视频链接 / b23.tv 短链 / bvid")
+    p.add_argument("--persona", default="", help="写记忆用的人格，默认 kook_persona")
+    p.set_defaults(func=cmd_learn)
 
     p = sub.add_parser("demo", help="离线演示整条链路（不需要游戏）")
     p.add_argument("--voice", default="animal", choices=["mambo", "animal", "off"])

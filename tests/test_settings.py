@@ -93,6 +93,7 @@ def test_save_new_chat_and_desktop_fields(cfg_file):
                          "kook_pet_say": True, "kook_allow_voice": False,
                          "kook_stickers": False, "kook_proactive": False,
                          "kook_proactive_minutes": 30,
+                         "kook_share_video": False,
                          "persona_live": False,
                          "pet_status_bar": True})
     cfg = res["config"]
@@ -103,6 +104,7 @@ def test_save_new_chat_and_desktop_fields(cfg_file):
     assert cfg["kook_stickers"] is False
     assert cfg["kook_proactive"] is False
     assert cfg["kook_proactive_minutes"] == 30
+    assert cfg["kook_share_video"] is False
     assert cfg["persona_live"] is False
     assert cfg["pet_status_bar"] is True
 
@@ -254,6 +256,7 @@ def test_settings_page_and_api_routes(cfg_file, monkeypatch):
         assert "设置" in page and "/api/settings" in page
         assert "最短安静时间" in page
         assert 'data-k="kook_proactive_minutes"' in page
+        assert 'data-k="kook_share_video"' in page
 
         with _get(port, "/api/settings") as resp:
             payload = json.loads(resp.read())

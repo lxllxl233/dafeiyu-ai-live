@@ -177,6 +177,9 @@ class LiveConfig:
     # 安静一阵后，偶尔主动找最近聊过的人/频道说一句（不会连发）
     kook_proactive: bool = True
     kook_proactive_minutes: int = 20
+    # 聊天里有人发 B 站视频链接时，读标题/简介/热评写成长期记忆再聊；
+    # 关闭后链接只当普通文本，不额外花 token。
+    kook_share_video: bool = True
     # 看图用的模型：DeepSeek 只有 flash 系支持图片输入
     llm_vision_model: str = "deepseek-flash"
     extra: dict = field(default_factory=dict)

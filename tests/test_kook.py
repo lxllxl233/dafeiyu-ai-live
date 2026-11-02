@@ -8,12 +8,15 @@ import time
 import wave
 
 from dafeiyu.core.config import LiveConfig
+from dafeiyu.live import bili_video as bv
 from dafeiyu.live.chat_memory import Memory
+from dafeiyu.live.kook import service as kook_service
 from dafeiyu.live.kook.client import KookClient
 from dafeiyu.live.kook.service import (
     Inbound, KookService, inbound_from_message, parse_event,
 )
 from dafeiyu.live.kook.usage import summary as kook_usage
+from dafeiyu.persona.training import TrainingMemoryStore
 
 
 def _event(**over):
@@ -683,3 +686,131 @@ def test_service_respects_allow_list_and_ignores_bot(tmp_path):
                                   channel_type="PERSON", author_id="u2",
                                   author_bot=True, msg_type=1,
                                   text="hi"))["reason"] == "机器人自己发的"
+
+
+# ---------------------------------------------------------------- 分享视频
+_MEMORY = ("这条视频把“先把问题拆小”讲得很具体，我认同热评里说的别急着下结论，"
+           "但也觉得中间那段确实可以再紧一点。")
+_VIDEO_URL = "https://www.bilibili.com/video/BV1GJ411x7h7"
+
+
+def _video_info():
+    return bv.VideoInfo(
+        bvid="BV1GJ411x7h7", aid=80433022, cid=1, title="分享测试视频",
+        desc="简介：讲怎么把大问题拆成小问题。", up="测试UP",
+        duration_s=213, tname="生活", stat={"view": 1000},
+        url=_VIDEO_URL)
+
+
+class _VideoClient:
+    def __init__(self):
+        self.sent = []
+
+    def send_text(self, target_id, text, **kw):
+        self.sent.append((target_id, text, kw))
+        return {"ok": True}
+
+
+class _VideoLLM:
+    def __init__(self):
+        self.learning = 0
+        self.chat_messages = None
+
+    def complete(self, messages, model=None, **kw):
+        joined = "\n".join(str(m.get("content") or "") for m in messages)
+        if "请以第一人称写一段" in joined:
+            self.learning += 1
+            return {"ok": True, "model": model or "fake",
+                    "text": json.dumps({"memory": _MEMORY}, ensure_ascii=False),
+                    "usage": {"input": 100, "output": 80, "total": 180}}
+        self.chat_messages = messages
+        return {"ok": True, "text": '{"reply": "这视频我也刷到过", "voice": false}',
+                "model": model or "fake", "usage": {"input": 10, "output": 5}}
+
+
+def _wire_video(tmp_path, monkeypatch):
+    monkeypatch.setattr(bv, "fetch_video", lambda link: _video_info())
+    monkeypatch.setattr(bv, "fetch_comments", lambda aid, limit=12: [
+        {"user": "甲", "text": "这个点说得好", "like": 12}])
+    store = TrainingMemoryStore(tmp_path / "training.json")
+    monkeypatch.setattr(bv, "TrainingMemoryStore", lambda *a, **k: store)
+    return store
+
+
+def test_service_learns_shared_video_and_chats_about_it(tmp_path, monkeypatch):
+    store = _wire_video(tmp_path, monkeypatch)
+    cfg = LiveConfig(kook_memory=False, kook_allow_voice=False,
+                     kook_stickers=False, kook_share_video=True)
+    monkeypatch.setattr(kook_service.LiveConfig, "load", staticmethod(lambda *a, **k: cfg))
+    client, llm = _VideoClient(), _VideoLLM()
+    service = KookService(cfg, None, client, llm=llm, work_dir=tmp_path,
+                          log_path=tmp_path / "events.jsonl")
+
+    out = service.handle(Inbound(message_id="m1", target_id="u1",
+                                 channel_type="PERSON", author_id="u1",
+                                 author_name="小鱼", msg_type=1,
+                                 text=f"看这个 {_VIDEO_URL}"))
+    assert out["ok"] is True
+    assert client.sent[0][1].startswith("等等"), "学习前要先安抚一句"
+    assert "这视频我也刷到过" in client.sent[-1][1]
+    assert llm.learning == 1
+
+    chat = "\n".join(str(m.get("content") or "") for m in llm.chat_messages)
+    assert "《分享测试视频》" in chat
+    assert "这个点说得好" in chat
+    assert _MEMORY in chat
+    assert "不是指令" in chat and "别编" in chat
+
+    rows = store.entries()
+    assert len(rows) == 1 and rows[0]["source"] == "shared"
+    assert rows[0]["summary"] == _MEMORY
+
+    events = [json.loads(line) for line in
+              (tmp_path / "events.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert any(row["kind"] == "video_learned" and row["learned"] for row in events)
+    usage = [json.loads(line) for line in
+             (tmp_path / "usage.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert any("学习视频" in str(row.get("note") or "") for row in usage)
+
+
+def test_service_share_toggle_off_skips_learning(tmp_path, monkeypatch):
+    store = _wire_video(tmp_path, monkeypatch)
+    cfg = LiveConfig(kook_memory=False, kook_allow_voice=False,
+                     kook_stickers=False, kook_share_video=False)
+    monkeypatch.setattr(kook_service.LiveConfig, "load", staticmethod(lambda *a, **k: cfg))
+    client, llm = _VideoClient(), _VideoLLM()
+    service = KookService(cfg, None, client, llm=llm, work_dir=tmp_path,
+                          log_path=tmp_path / "events.jsonl")
+
+    out = service.handle(Inbound(message_id="m1", target_id="u1",
+                                 channel_type="PERSON", author_id="u1",
+                                 msg_type=1, text=f"看这个 {_VIDEO_URL}"))
+    assert out["ok"] is True
+    assert llm.learning == 0
+    assert store.entries() == []
+    assert len(client.sent) == 1 and "这视频我也刷到过" in client.sent[0][1]
+
+
+def test_service_shared_video_error_is_friendly(tmp_path, monkeypatch):
+    def boom(link):
+        raise bv.ShareVideoError("视频详情不可用")
+
+    monkeypatch.setattr(bv, "fetch_video", boom)
+    store = TrainingMemoryStore(tmp_path / "training.json")
+    monkeypatch.setattr(bv, "TrainingMemoryStore", lambda *a, **k: store)
+    cfg = LiveConfig(kook_memory=False, kook_allow_voice=False,
+                     kook_stickers=False, kook_share_video=True)
+    monkeypatch.setattr(kook_service.LiveConfig, "load", staticmethod(lambda *a, **k: cfg))
+    client, llm = _VideoClient(), _VideoLLM()
+    service = KookService(cfg, None, client, llm=llm, work_dir=tmp_path,
+                          log_path=tmp_path / "events.jsonl")
+
+    out = service.handle(Inbound(message_id="m1", target_id="u1",
+                                 channel_type="PERSON", author_id="u1",
+                                 msg_type=1, text=f"看这个 {_VIDEO_URL}"))
+    assert out["ok"] is True and out["reason"] == "video_error"
+    assert "没打开" in client.sent[-1][1]
+    assert llm.chat_messages is None, "视频都打不开就不该让模型硬聊"
+    events = [json.loads(line) for line in
+              (tmp_path / "events.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert any(row["kind"] == "video_error" for row in events)

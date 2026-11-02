@@ -25,6 +25,7 @@ from ...core.config import LiveConfig
 from ...persona.card import PersonaCard
 from ...persona.layers import PersonaStack
 from .. import chat as chat_mod
+from ..bili_video import extract_video_links, learn_shared_video, shared_video_context
 from ..chat_memory import Memory
 from .client import KookClient, KookError
 from .usage import append_usage
@@ -547,8 +548,31 @@ class KookService:
         self._proactive_retry_at = 0.0
 
         caption = msg.text
+        video_context = ""
+        if caption and extract_video_links(caption) and self._video_share_enabled():
+            learned = self._learn_shared_video(msg, caption)
+            if not learned.get("ok"):
+                text = "这个视频我这边没打开，换个链接或稍后再试？"
+                sent = self._send_text(msg, text)
+                self._log({"kind": "video_error",
+                           "error": str(learned.get("error") or "")[:300]})
+                self._record(msg, caption, text)
+                return {"ok": bool(sent), "action": "text", "reason": "video_error"}
+            if not learned.get("skip"):
+                video_context = shared_video_context(
+                    learned, sharer=msg.author_name)
+                video = learned.get("video") or {}
+                self._log({
+                    "kind": "video_learned",
+                    "bvid": str(video.get("bvid") or "")[:20],
+                    "cached": bool(learned.get("cached")),
+                    "learned": bool(learned.get("learned")),
+                    "chars": len(str(learned.get("memory") or "")),
+                    "warning": str(learned.get("warning") or "")[:200],
+                })
         try:
-            messages = self._build_messages(caption, msg.image_url)
+            messages = self._build_messages(
+                caption, msg.image_url, video_context=video_context)
         except KookError as exc:
             self._log({"kind": "image_error", "error": str(exc)})
             text = "这张图我这边没加载出来，再发一次？"
@@ -653,10 +677,43 @@ class KookService:
             return "不在白名单"
         return ""
 
+    # ---------------------------------------------------------------- 分享视频
+    def _video_share_enabled(self) -> bool:
+        """设置页改开关后下一条消息生效；读不到新配置就用启动时的值。"""
+        try:
+            return bool(LiveConfig.load().kook_share_video)
+        except Exception:
+            return bool(getattr(self.cfg, "kook_share_video", True))
+
+    def _learn_shared_video(self, msg: Inbound, caption: str) -> dict:
+        """聊天里认出 B 站视频链接：先发一句「等等」，再读公开文字写记忆。"""
+        if not extract_video_links(caption):
+            return {"ok": True, "skip": True}
+        ack = {"sent": False}
+
+        def on_slow() -> None:
+            if ack["sent"]:
+                return
+            ack["sent"] = True
+            self._send_text(msg, "等等，我看看这个视频…")
+
+        def on_usage(result: dict, note: str) -> None:
+            self._log_usage(result, note=note, msg=msg)
+
+        try:
+            return learn_shared_video(
+                self.cfg, caption,
+                persona=self.cfg.kook_persona or "companion",
+                llm=self.llm, on_slow=on_slow, on_usage=on_usage)
+        except Exception as exc:  # noqa: BLE001 - 一条坏链接不能带崩聊天
+            return {"ok": False, "kind": "exception",
+                    "error": f"{type(exc).__name__}: {exc}"}
+
     # ---------------------------------------------------------------- 提示词
     def _build_messages(self, caption: str, image_url: str = "", *,
                         proactive: bool = False,
-                        idle_minutes: int = 0) -> list[dict]:
+                        idle_minutes: int = 0,
+                        video_context: str = "") -> list[dict]:
         from ...persona import stickers
 
         facts = []
@@ -702,6 +759,10 @@ class KookService:
         media_hint = self._media_hint()
         if media_hint:
             messages.append({"role": "system", "content": media_hint})
+        if video_context:
+            # 刚学的视频：公开文字 + 新写下的记忆。放在格式提醒之前，
+            # 保证最后一条仍是 JSON 协议提醒。
+            messages.append({"role": "system", "content": video_context})
         # 历史里的助手消息是纯文本，模型会照着继续写；在最后一条用户消息
         # 之前再提醒一次 JSON 协议，voice/sticker 才不会被“聊嗨了”吞掉。
         messages.append({

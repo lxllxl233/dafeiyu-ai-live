@@ -38,6 +38,7 @@ python main.py live             # LLM live-mode director: picks a live module an
 python main.py live --status    # director status + candidate modules
 python main.py live --stop      # stop director (and the running module)
 python main.py kook             # KOOK bot WebSocket chat (optional)
+python main.py learn <url>      # learn a shared Bilibili video (public text only)
 python main.py agent run --demo # offline LangGraph turn
 python main.py agent run        # real ctx + LLM, dry-run
 python main.py agent run --execute

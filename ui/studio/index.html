@@ -1176,6 +1176,7 @@ function renderTrainingPage(){
         <span class="hint">${esc(e.up || "")}${e.created_at ? " · " + esc(String(e.created_at).slice(0,16)) : ""}${e.bvid ? " · " + esc(e.bvid) : ""}</span>
         ${compressTag}
         ${e.source === "favorites" ? '<span class="chip">收藏夹</span>' : ""}
+        ${e.source === "shared" ? '<span class="chip">聊天分享</span>' : ""}
         <span class="chip">${esc(status.comment)}</span>${status.like ? `<span class="chip">${esc(status.like)}</span>` : ""}
         <div class="train-actions">
           <label class="hint"><input type="checkbox" ${e.enabled !== false ? "checked" : ""} onchange="setTrainingEnabled('${esc(e.id)}', this.checked)"> 启用</label>

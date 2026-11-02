@@ -68,7 +68,7 @@ def _clean(entry: dict, *, keep_id: str = "") -> dict:
     except (TypeError, ValueError):
         duration = 0
     source = _text(entry.get("source"), 40) or "training"
-    if source not in ("training", "favorites"):
+    if source not in ("training", "favorites", "shared"):
         source = "training"
     out = {
         "id": _safe_id(keep_id or entry.get("id")),
@@ -353,7 +353,7 @@ def prompt_text(path: str | os.PathLike[str] | None = None) -> str:
         new_rows = [row for row in entries if row["id"] not in covered]
         lines = [
             "【B站摸鱼训练记忆（压缩）】",
-            f"下面是把 {digest['source_count']} 条 B 站摸鱼/收藏记忆压缩后的长期画像。"
+            f"下面是把 {digest['source_count']} 条 B 站摸鱼/收藏/分享记忆压缩后的长期画像。"
             "它不是逐字台词，聊天/直播时可以自然引用里面的主题、立场、审美和梗；"
             "这些判断、偏好和反感就是你自己长期形成的，不是外部资料——"
             "遇到相关话题要主动表达看法，而不是只复述或当背景资料。"
@@ -369,6 +369,8 @@ def prompt_text(path: str | os.PathLike[str] | None = None) -> str:
                 head = f"- {when}《{row.get('title') or row.get('bvid') or '视频'}》"
                 if row.get("source") == "favorites":
                     head += "（收藏夹）"
+                elif row.get("source") == "shared":
+                    head += "（聊天分享）"
                 if row.get("up"):
                     head += f" UP：{row['up']}"
                 body = str(row.get("summary") or "").strip()
@@ -389,7 +391,8 @@ def prompt_text(path: str | os.PathLike[str] | None = None) -> str:
         return ""
     lines = [
         "【B站摸鱼训练记忆】",
-        "下面是你平时摸鱼刷 B 站时，看完视频后自己写下的长期记忆。"
+        "下面是你平时摸鱼刷 B 站、以及别人把视频分享给你时，你看完公开文字后"
+        "自己写下的长期记忆。"
         "它们不是逐字台词，聊天/直播时可以自然引用里面的观点、梗和体验；"
         "这些判断、偏好和反感就是你自己长期形成的，不是外部资料——"
         "遇到相关话题要主动表达看法。"
@@ -402,6 +405,8 @@ def prompt_text(path: str | os.PathLike[str] | None = None) -> str:
         head = f"- {when}《{row.get('title') or row.get('bvid') or '视频'}》"
         if row.get("source") == "favorites":
             head += "（收藏夹）"
+        elif row.get("source") == "shared":
+            head += "（聊天分享）"
         if row.get("up"):
             head += f" UP：{row['up']}"
         body = str(row.get("summary") or "").strip()

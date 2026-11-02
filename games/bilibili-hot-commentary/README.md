@@ -55,7 +55,8 @@ python main.py train --favorites 308848993 --limit 0   # 扫完整个收藏夹
 ```
 
 快扫和普通训练共用 `persona/training.json`，收藏夹条目带 `source=favorites`，
-在提示词里标成「（收藏夹）」。运行状态同样写 `logs/bili_training/status.json`，
+聊天里分享的视频带 `source=shared`；提示词里分别标成「（收藏夹）」「（聊天分享）」。
+运行状态同样写 `logs/bili_training/status.json`，
 设置页会显示 `done/total` 和已写记忆条数；训练进程和桌宠/设置页相互独立。
 
 ### 压缩记忆
