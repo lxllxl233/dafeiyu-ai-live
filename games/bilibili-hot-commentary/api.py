@@ -21,6 +21,8 @@ from .search import parse_search_html
 POPULAR = "https://api.bilibili.com/x/web-interface/popular"
 SEARCH = "https://search.bilibili.com/all"
 VIEW = "https://api.bilibili.com/x/web-interface/view"
+FAV_FOLDER = "https://api.bilibili.com/x/v3/fav/folder/info"
+FAV_LIST = "https://api.bilibili.com/x/v3/fav/resource/list"
 HISTORY = "https://api.bilibili.com/x/web-interface/history/cursor"
 REPLY_MAIN = "https://api.bilibili.com/x/v2/reply/main"
 DANMAKU_SEG = "https://api.bilibili.com/x/v2/dm/web/seg.so"
@@ -174,6 +176,53 @@ class BiliClient:
         if detail is None:
             raise BiliError(f"视频详情不可用：{bvid}", code=-404)
         return detail
+
+    # ---------------------------------------------------------------- 收藏夹
+    def fav_folder(self, media_id: int) -> dict:
+        """收藏夹基本信息：标题、条目数、UP 主；私有收藏夹需要登录 Cookie。"""
+        media_id = int(media_id or 0)
+        if media_id <= 0:
+            raise BiliError("缺少收藏夹 media_id（favlist 链接里的 fid）")
+        data = self._get_json(FAV_FOLDER, {"media_id": media_id,
+                                           "platform": "web"})
+        return {
+            "id": _int(data.get("id") or data.get("fid") or media_id),
+            "title": str(data.get("title") or "").strip()[:120],
+            "count": max(0, _int(data.get("media_count"))),
+        }
+
+    def fav_list(self, media_id: int, *, page: int = 1,
+                 page_size: int = 20) -> dict:
+        """收藏夹一页视频；返回 ``videos`` / ``has_more`` / ``info``。
+
+        只读公开列表，不点赞、不发评论。失效视频、音频等没有 bvid 的条目
+        会被静默过滤，调用方只需关心真正的视频。
+        """
+        media_id = int(media_id or 0)
+        if media_id <= 0:
+            raise BiliError("缺少收藏夹 media_id（favlist 链接里的 fid）")
+        page = max(1, int(page))
+        data = self._get_json(FAV_LIST, {
+            "media_id": media_id, "pn": page,
+            "ps": max(1, min(20, int(page_size))), "platform": "web",
+        })
+        info = data.get("info") if isinstance(data.get("info"), dict) else {}
+        rows = data.get("medias") if isinstance(data.get("medias"), list) else []
+        videos: list[VideoRef] = []
+        for row in rows:
+            video = VideoRef.from_fav(row)
+            if video is not None:
+                videos.append(video)
+        return {
+            "videos": videos,
+            "has_more": bool(data.get("has_more")),
+            "page": page,
+            "info": {
+                "id": _int(info.get("id") or media_id),
+                "title": str(info.get("title") or "").strip()[:120],
+                "count": max(0, _int(info.get("media_count"))),
+            },
+        }
 
     def history_progress(self, bvid: str) -> dict | None:
         """读自己账号最近一条历史里的进度数字，用于发现「已经拖到结尾」。

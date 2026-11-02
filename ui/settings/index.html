@@ -652,8 +652,22 @@
           <label class="sw" title="看完后在评论区留一段话"><input type="checkbox" data-k="bili_training_comment"><span></span></label>
           <span class="badge">是否评论</span>
           <button class="btn" id="trainToggle" data-act="train-toggle">启动训练</button>
+          <button class="btn" id="trainFav" data-act="train-favorites">快速扫收藏夹</button>
           <button class="btn ghost" data-act="train-keywords">打开搜索关键词</button>
         </div>
+        <div class="row">
+          <div><span class="t">收藏夹 ID</span><small>收藏夹链接 <code>favlist?fid=</code> 后面的数字；私有收藏夹需要 B 站登录 Cookie。</small></div>
+          <div class="ctl"><input class="w-num" type="number" min="0" step="1" data-k="bili_favorites_id" placeholder="308848993"></div>
+        </div>
+        <div class="row">
+          <div><span class="t">单次扫描条数</span><small>快速扫描不等待视频时长，也不点赞/评论；0 = 整个收藏夹。扫过的视频会跳过，再点一次从断点继续。</small></div>
+          <div class="ctl"><input class="w-num" type="number" min="0" max="5000" step="10" data-k="bili_favorites_batch"><span class="badge">条</span></div>
+        </div>
+        <div class="actions">
+          <button class="btn ghost" id="trainCompress" data-act="train-compress">压缩记忆</button>
+          <button class="btn ghost" data-act="train-compress-clear">清除压缩</button>
+        </div>
+        <div class="hint-line" id="trainDigest">—</div>
         <div class="row">
           <div><span class="t">训练人格</span><small>只决定“用什么口吻写记忆”；记忆本身是全局的，KOOK/直播共用。</small></div>
           <div class="ctl"><select class="w-input" id="trainPersona" data-k="bili_training_persona"></select></div>
@@ -1067,24 +1081,66 @@
   function renderTraining(t) {
     t = t || {};
     const running = !!t.running;
+    const favorites = t.mode === "favorites";
     const btn = $("#trainToggle");
     if (btn) {
-      btn.textContent = running ? "停止训练（摸鱼中）" : "启动训练";
+      btn.textContent = running
+        ? (favorites ? "停止扫描（扫收藏夹）" : "停止训练（摸鱼中）")
+        : "启动训练";
       btn.classList.toggle("danger", running);
+    }
+    const favBtn = $("#trainFav");
+    if (favBtn) {
+      favBtn.textContent = running && favorites ? "扫描中…" : "快速扫收藏夹";
+      favBtn.disabled = running;
+      favBtn.title = running ? "先停止当前训练/扫描"
+        : "不等待视频时长，只读公开文字写长期记忆";
     }
     const line = $("#trainStatus");
     if (!line) return;
-    if (running) {
+    if (running && favorites) {
+      const total = Number(t.total || 0), done = Number(t.done || 0);
+      const progress = total > 0 ? ` ${done}/${total}` : "";
+      const left = total > 0 ? ` · 剩 ${Math.max(0, Number(t.remaining ?? (total - done)))}` : "";
+      line.textContent = `扫收藏夹${progress}${left} · 新记忆 ${Number(t.scanned || 0)} 条 · ${t.last || "读评论…"}`;
+    } else if (running) {
       const phase = t.phase === "watching" ? "摸鱼看视频" :
         t.phase === "loading" ? "看评论/弹幕" :
         t.phase === "saving" || t.phase === "saved" ? "写记忆" : "摸鱼ing";
       const pos = Number(t.position_s || 0), dur = Number(t.duration_s || 0);
       const clock = dur > 0 ? ` ${fmtClock(pos)}/${fmtClock(dur)}` : "";
       line.textContent = `${phase}${clock} · ${t.last || "摸鱼ing"}`;
+    } else if (favorites && ["done", "paused", "stopped"].includes(t.phase)) {
+      line.textContent = t.last || "收藏夹这轮扫完了。";
     } else if (t.error) {
       line.textContent = `上次训练中断：${t.error}`;
     } else {
-      line.textContent = "训练会按视频时长等间隔“云看”，不打开视频；状态气泡会变成「摸鱼ing」。";
+      line.textContent = "训练会按视频时长等间隔“云看”，不打开视频；快速扫收藏夹不等待时长，只读公开文字写长期记忆。";
+    }
+  }
+
+  function renderCompress(c) {
+    c = c || {};
+    const running = !!c.running;
+    const btn = $("#trainCompress");
+    if (btn) {
+      btn.textContent = running ? "压缩中…" : "压缩记忆";
+      btn.disabled = running;
+      btn.classList.toggle("danger", running);
+    }
+    const line = $("#trainDigest");
+    if (!line) return;
+    const d = c.digest || {};
+    if (running) {
+      const total = Number(c.chunks || 0), done = Number(c.done_chunks || 0);
+      const part = total > 0 ? ` ${done}/${total} 段` : "";
+      line.textContent = `压缩 B 站记忆${part} · ${c.last || "读取记忆…"}`;
+    } else if (d.exists && d.text) {
+      line.textContent = `压缩记忆：${d.source_count || 0} 条 → ${d.chars || 0} 字 · ${d.updated_at || ""}`;
+    } else if (c.error) {
+      line.textContent = `上次压缩失败：${c.error}`;
+    } else {
+      line.textContent = "还没压缩；条目多了以后可以压成一段长期画像，原始记忆仍保留。";
     }
   }
 
@@ -1122,11 +1178,66 @@
     toast(res.message || "训练已启动");
   }
 
+  async function trainFavorites() {
+    const st = await getTrainingStatus();
+    if (st.running) {
+      toast("已经在跑了，先点「停止」再扫收藏夹", true);
+      return;
+    }
+    const mediaId = Number($('[data-k="bili_favorites_id"]')?.value || 0);
+    if (!mediaId) {
+      toast("先填收藏夹 ID（favlist 链接里的 fid）", true);
+      return;
+    }
+    if (dirtyCount()) {
+      const saved = await save();
+      if (!saved) return;
+    }
+    const rawLimit = Number($('[data-k="bili_favorites_batch"]')?.value);
+    const res = await api("/api/bili/training/start", {
+      mode: "favorites",
+      media_id: mediaId,
+      persona: $("#trainPersona")?.value || "",
+      limit: Number.isFinite(rawLimit) ? Math.max(0, rawLimit) : 0,
+    });
+    renderTraining(res.status || await getTrainingStatus());
+    toast(res.message || "开始扫收藏夹");
+  }
+
+  async function getCompressStatus() {
+    try {
+      const r = await fetch("/api/bili/training/compress/status", {cache: "no-store"});
+      return await r.json();
+    } catch (_) {
+      return {running: false};
+    }
+  }
+
+  async function compressTraining() {
+    if (dirtyCount()) {
+      const saved = await save();
+      if (!saved) return;
+    }
+    const res = await api("/api/bili/training/compress/start", {
+      persona: $("#trainPersona")?.value || "",
+    });
+    renderCompress(res.status || await getCompressStatus());
+    toast(res.message || "开始压缩 B 站记忆");
+  }
+
+  async function clearCompress() {
+    if (!confirm("清除压缩记忆？原始训练/收藏记忆不会删，人格会回到逐条注入。")) return;
+    const res = await api("/api/bili/training/compress/clear", {});
+    renderCompress(res.digest ? {digest: res.digest} : await getCompressStatus());
+    toast("压缩记忆已清除");
+  }
+
   function renderAll(data) {
     state.data = data;
     state.cfg = data.config;
     applyConfig(data.config);   // 里面会调 refreshDirty()，底栏文案以它为准
     renderTraining(data.config.bili_training);
+    renderCompress(data.config.bili_training_compress);
     $("#dockDot").classList.add("ok");
   }
 
@@ -1229,6 +1340,30 @@
       finally { state.busy = false; refreshDirty(); }
       return;
     }
+    if (name === "train-favorites") {
+      state.busy = true;
+      refreshDirty();
+      try { await trainFavorites(); }
+      catch (err) { toast("扫收藏夹失败：" + err.message, true); }
+      finally { state.busy = false; refreshDirty(); }
+      return;
+    }
+    if (name === "train-compress") {
+      state.busy = true;
+      refreshDirty();
+      try { await compressTraining(); }
+      catch (err) { toast("压缩失败：" + err.message, true); }
+      finally { state.busy = false; refreshDirty(); }
+      return;
+    }
+    if (name === "train-compress-clear") {
+      state.busy = true;
+      refreshDirty();
+      try { await clearCompress(); }
+      catch (err) { toast("清除压缩失败：" + err.message, true); }
+      finally { state.busy = false; refreshDirty(); }
+      return;
+    }
     if (name === "train-keywords") {
       const row = $("#trainKeywordsRow");
       row.hidden = !row.hidden;
@@ -1306,7 +1441,11 @@
       // 没有未保存修改、也没在输入框里时才覆盖表单，避免把光标/选区打回去
       const typing = ["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement?.tagName);
       if (dirtyCount() === 0 && !typing) renderAll(data);
-      else { state.data = data; renderTraining(data.config.bili_training); }
+      else {
+        state.data = data;
+        renderTraining(data.config.bili_training);
+        renderCompress(data.config.bili_training_compress);
+      }
     } catch (_) {
       $("#dot").classList.remove("ok");
       $("#srvText").textContent = "后台未响应";

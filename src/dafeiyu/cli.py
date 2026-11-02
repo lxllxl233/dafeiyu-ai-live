@@ -467,6 +467,8 @@ def cmd_train(args) -> int:
 
     核心不写死游戏 id：扫描 ``games/`` 里带 ``training.py`` 的包，按
     ``--game`` 或清单顺序选一个。训练进程由设置页/``main.py train`` 启动。
+    ``--favorites`` 走快速扫收藏夹：只读公开文字、不等视频时长、不点赞/评论。
+    ``--compress`` 把现有 B 站记忆压成一段长期画像，原始条目保留。
     """
     from dafeiyu.core.config import LiveConfig
     from dafeiyu.games.registry import GameRegistry
@@ -484,18 +486,43 @@ def cmd_train(args) -> int:
             print(f"ERR {wanted} 没有训练器")
             return 2
     pack = packs[0]
+    cfg = LiveConfig.load()
+    compress = bool(getattr(args, "compress", False))
+    favorites = getattr(args, "favorites", None)
+    if compress and favorites is not None:
+        print("ERR --compress 和 --favorites 不能一起用")
+        return 2
+    favorites_id = 0
+    limit = None
+    if favorites is not None:
+        favorites_id = int(favorites) if int(favorites) > 0 else int(
+            getattr(cfg, "bili_favorites_id", 0) or 0)
+        if favorites_id <= 0:
+            print("ERR 先填收藏夹 ID（设置页「收藏夹 ID」或 --favorites <fid>）")
+            return 2
+        limit = getattr(args, "limit", None)
     try:
         module = registry.load_game_module(pack.info.id, "training")
+        if compress:
+            return int(module.compress(
+                cfg, persona=str(getattr(args, "persona", "") or "")) or 0)
+        extra = ({"favorites_id": favorites_id, "limit": limit}
+                 if favorites is not None else {})
         return int(module.run(
-            LiveConfig.load(),
+            cfg,
             persona=str(getattr(args, "persona", "") or ""),
             keywords=str(getattr(args, "keywords", "") or ""),
+            **extra,
         ) or 0)
     except KeyboardInterrupt:
         from dafeiyu.live import bili_training as proc
 
-        proc.request_stop()
-        print("已停止训练")
+        if compress:
+            proc.request_compress_stop()
+            print("已停止压缩")
+        else:
+            proc.request_stop()
+            print("已停止训练")
         return 0
 
 
@@ -805,6 +832,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--game", default=None, help="指定游戏包；默认取第一个 training.py")
     p.add_argument("--persona", default="", help="写记忆用的人格 id；空 = 配置值")
     p.add_argument("--keywords", default="", help="搜索关键词（逗号/换行分隔）")
+    p.add_argument("--favorites", nargs="?", const=-1, type=int, default=None,
+                   help="快速扫收藏夹：可带 media_id（favlist 的 fid）；不带则用配置值")
+    p.add_argument("--limit", type=int, default=None,
+                   help="收藏夹本次最多新增多少条记忆；0 = 不限，默认用配置值")
+    p.add_argument("--compress", action="store_true",
+                   help="把现有 B 站记忆压缩成一段长期画像（不扫描）")
     p.set_defaults(func=cmd_train)
 
     p = sub.add_parser("obs", help="OBS WebSocket 控制")

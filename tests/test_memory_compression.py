@@ -50,3 +50,31 @@ def test_summary_requires_text(tmp_path):
         assert memory.summary_upto() == 0
     finally:
         memory.close()
+
+
+def test_near_duplicate_facts_merge(tmp_path):
+    memory = Memory(tmp_path / "memory.db")
+    try:
+        first = memory.remember("对方来自单亲家庭，小时候没人管")
+        second = memory.remember("对方是单亲家庭长大，小时候没人管")
+        assert first == second
+        assert len(memory.facts()) == 1
+    finally:
+        memory.close()
+
+
+def test_diverse_facts_dedupes_cat_cluster(tmp_path):
+    memory = Memory(tmp_path / "memory.db")
+    try:
+        memory.remember("对方养了两只猫，分别叫小新和小麦，小麦是橘白的大面包", 3.0)
+        memory.remember("对方养了一只猫，会半夜起来喂猫", 2.0)
+        memory.remember("对方正在等一个口头承诺的 offer，尚未收到正式通知", 1.0)
+        memory.remember("对方是白领，坐办公室工作", 1.0)
+        picked = memory.diverse_facts(3, avoid_texts=["刚又看到猫在窗台"])
+        texts = [row["text"] for row in picked]
+        assert len(picked) == 3
+        assert any("offer" in text for text in texts)
+        # 猫这一簇最多出现一条，不能三条全是猫。
+        assert sum("猫" in text for text in texts) <= 1
+    finally:
+        memory.close()

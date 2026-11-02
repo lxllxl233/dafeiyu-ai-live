@@ -201,6 +201,7 @@ class KookService:
         # WebSocket 和图片轮询可能拿到同一条消息，处理前统一去重。
         self._seen_ids: set[str] = set()
         self._seen_lock = threading.Lock()
+        self._last_sticker = ""
 
     # ---------------------------------------------------------------- 生命周期
     def start(self) -> "KookService":
@@ -376,33 +377,58 @@ class KookService:
                       channel_type=channel_type,
                       author_id=target if str(channel_type).upper() == "PERSON" else "")
         started = time.time()
-        try:
-            messages = self._build_messages(
-                "", proactive=True, idle_minutes=idle_minutes)
-        except Exception as exc:  # noqa: BLE001
-            self._log({"kind": "proactive_error",
-                       "error": f"{type(exc).__name__}: {exc}"})
+        recent_own = self._recent_own_texts()
+        topics = self._repeat_topics(recent_own)
+        texts: list[str] = []
+        reply: dict = {}
+        text = ""
+        for attempt in range(2):
+            try:
+                messages = self._build_messages(
+                    "", proactive=True, idle_minutes=idle_minutes)
+            except Exception as exc:  # noqa: BLE001
+                self._log({"kind": "proactive_error",
+                           "error": f"{type(exc).__name__}: {exc}"})
+                return False
+            if attempt and topics:
+                messages.append({
+                    "role": "user",
+                    "content": (
+                        "刚才那条又在讲「" + "、".join(topics) + "」。"
+                        "换一个完全不同的主题；绝对不要再提这些词，也不要换个说法"
+                        "讲同一件事。如果想不到新的，就问对方一个具体的问题。\n\n"
+                        + chat_mod.build_format_reminder(
+                            allow_voice=bool(self.cfg.kook_allow_voice))),
+                })
+            model = chat_mod.pick_model(self.cfg, messages)
+            result = self._complete(messages, model)
+            if result.get("usage"):
+                self._log_usage(result, note="KOOK 主动消息", msg=msg)
+            if not result.get("ok"):
+                self._log({"kind": "proactive_llm_error",
+                           "error": result.get("error", "")})
+                return False
+            reply = chat_mod.parse_reply(
+                result.get("text", ""), allow_voice=bool(self.cfg.kook_allow_voice))
+            reply = self._ensure_media(reply, msg, proactive=True)
+            texts = [str(part).strip() for part in (reply.get("texts") or [])
+                     if str(part).strip()]
+            if not texts:
+                single = str(reply.get("text") or "").strip()
+                texts = [single] if single else []
+            if not texts:
+                self._log({"kind": "proactive_empty"})
+                return False
+            text = "\n".join(texts)
+            repeated = [topic for topic in topics if topic in text]
+            if not repeated:
+                break
+            self._log({"kind": "proactive_repeat", "topics": repeated,
+                       "attempt": attempt + 1})
+            if attempt == 0:
+                continue
+            self._log({"kind": "proactive_skipped_repeat", "topics": topics})
             return False
-        model = chat_mod.pick_model(self.cfg, messages)
-        result = self.llm.complete(messages, model=model)
-        if result.get("usage"):
-            self._log_usage(result, note="KOOK 主动消息", msg=msg)
-        if not result.get("ok"):
-            self._log({"kind": "proactive_llm_error",
-                       "error": result.get("error", "")})
-            return False
-
-        reply = chat_mod.parse_reply(
-            result.get("text", ""), allow_voice=bool(self.cfg.kook_allow_voice))
-        texts = [str(part).strip() for part in (reply.get("texts") or [])
-                 if str(part).strip()]
-        if not texts:
-            single = str(reply.get("text") or "").strip()
-            texts = [single] if single else []
-        if not texts:
-            self._log({"kind": "proactive_empty"})
-            return False
-        text = "\n".join(texts)
         sent = self._send_texts(msg, texts)
 
         voice_ok = False
@@ -426,6 +452,43 @@ class KookService:
                    "target_id": target,
                    "ms": int((time.time() - started) * 1000)})
         return bool(sent)
+
+    def _recent_own_texts(self, limit: int = 8) -> list[str]:
+        if not self.memory:
+            return []
+        try:
+            context = self.memory.context(int(self.cfg.kook_context_turns or 12))
+        except Exception:  # noqa: BLE001 - 读记忆失败不影响主动消息
+            return []
+        rows = [str(turn.get("text") or "") for turn in context.get("turns", [])
+                if str(turn.get("role") or "") == "assistant"]
+        return [text for text in rows if text.strip()][-limit:]
+
+    @staticmethod
+    def _repeat_topics(recent: list[str], limit: int = 3) -> list[str]:
+        """从最近几条自己说的话里找反复出现的主题字。
+
+        不引入分词依赖：取「在至少 3 条里都出现过的汉字」当主题，
+        去掉“我/你/的/了”这类高频字。猫连续出现 4 次时会被抓出来，
+        主动消息就不会又拿猫开场。
+        """
+        common = set(
+            "的一是不了在人有我他她它这那为之大来以个中上们到说国和地也子时道"
+            "出而要于就下得可你年生自会后能对着事其里所去行过家十用发天如然作"
+            "方成者多日都三二无同么经法当起与好看学进种将还分此心前又定见只主"
+            "没公从想什怎样现点觉真做给对开很太先再才已经因所但刚今明昨早晚午"
+            "秒份号岁次些每各另别外再最更挺蛮特别比较稍微差点儿几乎差不多小大老新"
+            "我们你们他们她们它们咱们自己这个那个哪个哪些什么怎么怎样这样那样"
+            "一下一个一些一直一起一边一定一样一般一切一点有点有些有些时候"
+        )
+        counts: dict[str, int] = {}
+        for text in recent[-6:]:
+            for char in set(str(text or "")):
+                if char in common or not ("\u4e00" <= char <= "\u9fff"):
+                    continue
+                counts[char] = counts.get(char, 0) + 1
+        ranked = sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+        return [char for char, count in ranked if count >= 3][:limit]
 
     # ---------------------------------------------------------------- 主流程
     def handle(self, msg: Inbound) -> dict:
@@ -467,7 +530,7 @@ class KookService:
             return {"ok": bool(sent), "action": "text", "reason": "image_error"}
         model = chat_mod.pick_model(self.cfg, messages)
         started = time.time()
-        result = self.llm.complete(messages, model=model)
+        result = self._complete(messages, model)
         if result.get("usage"):
             self._log_usage(result, note="KOOK 聊天", msg=msg)
         if not result.get("ok"):
@@ -478,6 +541,7 @@ class KookService:
 
         reply = chat_mod.parse_reply(
             result.get("text", ""), allow_voice=bool(self.cfg.kook_allow_voice))
+        reply = self._ensure_media(reply, msg, cue=caption)
         texts = [str(part).strip() for part in (reply.get("texts") or [])
                  if str(part).strip()]
         if not texts:
@@ -498,14 +562,14 @@ class KookService:
         if not sent:
             self._log({"kind": "send_error", "reason": "全部切片都失败"})
 
-        voice_ok = False
-        if reply.get("voice") and self.cfg.kook_allow_voice:
-            voice_ok = self._send_voice(msg, str(reply.get("voice_text") or text))
-
         sticker_ok = False
         sticker_id = str(reply.get("sticker") or "").strip()
         if sticker_id and self.cfg.kook_stickers:
             sticker_ok = self._send_sticker(msg, sticker_id)
+
+        voice_ok = False
+        if reply.get("voice") and self.cfg.kook_allow_voice:
+            voice_ok = self._send_voice(msg, str(reply.get("voice_text") or text))
 
         user_text = caption or ("[图片]" if msg.image_url else "")
         self._record(msg, user_text, texts)
@@ -570,10 +634,18 @@ class KookService:
 
         facts = []
         context = {"summaries": [], "turns": []}
+        recent_own: list[str] = []
         query = caption or ("图片" if image_url else ("主动聊天" if proactive else "聊天"))
         if self.cfg.kook_memory and self.memory:
-            facts = self.memory.search(query, 6)
             context = self.memory.context(int(self.cfg.kook_context_turns or 12))
+            recent_own = [str(turn.get("text") or "") for turn in context.get("turns", [])
+                          if str(turn.get("role") or "") == "assistant"]
+            if proactive:
+                # 主动消息不要再用“最常被引用”的事实：按主题分簇，并避开
+                # 最近已经说过的话，否则每次开口都是同一只猫。
+                facts = self.memory.diverse_facts(6, avoid_texts=recent_own[-8:])
+            else:
+                facts = self.memory.search(query, 6)
         try:
             # 训练记忆的总开关允许在设置页随时改；这里读一次最新配置，
             # 不用重启 KOOK 进程（其它字段仍按服务启动时的配置）。
@@ -599,6 +671,13 @@ class KookService:
         for turn in context.get("turns", []):
             role = "user" if turn["role"] == "user" else "assistant"
             messages.append({"role": role, "content": turn["text"]})
+        # 历史里的助手消息是纯文本，模型会照着继续写；在最后一条用户消息
+        # 之前再提醒一次 JSON 协议，voice/sticker 才不会被“聊嗨了”吞掉。
+        messages.append({
+            "role": "system",
+            "content": chat_mod.build_format_reminder(
+                allow_voice=bool(self.cfg.kook_allow_voice)),
+        })
         if image_url:
             data, mime = self.client.download(image_url)
             messages.append(chat_mod.image_message(
@@ -606,13 +685,62 @@ class KookService:
                 data, mime))
         elif proactive:
             messages.append({"role": "user",
-                             "content": chat_mod.build_proactive_prompt(idle_minutes)})
+                             "content": chat_mod.build_proactive_prompt(
+                                 idle_minutes, recent=recent_own)})
         else:
             messages.append({"role": "user",
                              "content": chat_mod.build_user_prompt(caption, False)})
         return messages
 
     # ---------------------------------------------------------------- 发送
+    def _complete(self, messages: list[dict], model: str) -> dict:
+        """优先用 JSON 模式；模型/网关不支持时退回普通补全。"""
+        try:
+            result = self.llm.complete(messages, model=model, json_mode=True)
+        except TypeError:
+            return self.llm.complete(messages, model=model)
+        if result.get("ok"):
+            return result
+        # 有些兼容网关开了 response_format 会返回空 content；重试一次普通模式，
+        # 别让一条正常消息因为 JSON 模式不可用而丢掉。
+        try:
+            fallback = self.llm.complete(messages, model=model)
+        except TypeError:
+            return result
+        return fallback if fallback.get("ok") else result
+
+    def _ensure_media(self, reply: dict, msg: Inbound,
+                      *, proactive: bool = False, cue: str = "") -> dict:
+        """模型退回纯文本时兜底：短句照旧发一条语音，别让语音能力形同虚设。"""
+        text = str(reply.get("text") or "").strip()
+        if not text:
+            return reply
+        plain = not reply.get("json", True)
+        if (plain and self.cfg.kook_allow_voice and not reply.get("voice")
+                and len(text) <= 80
+                and not re.search(r"https?://|```", text)):
+            reply["voice"] = True
+            reply["voice_text"] = chat_mod.speech_text(text, 120)
+            self._log({"kind": "protocol_plain", "action": "force_voice",
+                       "chars": len(text), "proactive": bool(proactive)})
+        if (plain and self.cfg.kook_stickers and not reply.get("sticker")
+                and not proactive
+                and any(word in text for word in ("笑", "累", "晚安", "气", "委屈",
+                                                   "开心", "难过", "想你"))):
+            picked = self._pick_sticker(text)
+            if picked:
+                reply["sticker"] = picked
+                self._last_sticker = picked
+                self._log({"kind": "protocol_plain", "action": "force_sticker",
+                           "sticker": picked})
+        # 就算模型这次没主动填 sticker，情绪词命中时也补一张；同一张不连发。
+        if (self.cfg.kook_stickers and not reply.get("sticker") and not proactive):
+            picked = self._sticker_for(text + " " + str(cue or ""))
+            if picked and picked != self._last_sticker:
+                reply["sticker"] = picked
+                self._last_sticker = picked
+        return reply
+
     def _send_texts(self, msg: Inbound, texts: list[str]) -> bool:
         """逐条发送模型给的短消息；每条单独一个气泡，超长才切片。"""
         parts = [str(text).strip() for text in texts if str(text).strip()]
@@ -650,6 +778,30 @@ class KookService:
         body = str(text or "")
         return any(word in body for word in (
             "表情包", "表情", "发张图", "发个图", "贴图", "斗图"))
+
+    @staticmethod
+    def _sticker_for(text: str) -> str:
+        """按情绪词挑一张贴纸；没有明显情绪就返回空，避免每条都甩图。"""
+        from ...persona import stickers
+
+        body = str(text or "")
+        if not body:
+            return ""
+        rows = {row.get("id") for row in stickers.items() if row.get("exists")}
+        rules = (
+            ("laugh", ("笑", "哈哈", "好笑", "乐", "梗")),
+            ("flying-kick", ("气", "烦", "滚", "讨厌", "踹")),
+            ("million-cry", ("哭", "破防", "惨", "难过", "委屈")),
+            ("premium-model", ("厉害", "强", "大佬", "佩服", "牛")),
+            ("rice-fish", ("累", "困", "瘫", "饿", "饭", "吃")),
+            ("tokens", ("token", "钱", "贵", "算账")),
+            ("refuse", ("拒绝", "不行", "保密", "不说")),
+            ("cant-leave", ("黏", "别走", "陪我")),
+        )
+        for sticker_id, words in rules:
+            if sticker_id in rows and any(word in body for word in words):
+                return sticker_id
+        return ""
 
     @staticmethod
     def _pick_sticker(text: str) -> str:
@@ -765,7 +917,8 @@ class KookService:
         dialogue = self.memory.dialogue(16)
         if not dialogue.strip():
             return
-        result = self.llm.complete(chat_mod.extract_facts_prompt(dialogue))
+        result = self.llm.complete(chat_mod.extract_facts_prompt(
+            dialogue, existing=[row.get("text") or "" for row in self.memory.facts(30)]))
         if result.get("usage"):
             self._log_usage(result, note="KOOK 记忆抽取")
         if not result.get("ok"):

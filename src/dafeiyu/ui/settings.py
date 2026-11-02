@@ -235,6 +235,22 @@ def _training_state() -> dict:
         return {"ok": False, "running": False, "error": f"{type(exc).__name__}: {exc}"}
 
 
+def _compress_state() -> dict:
+    try:
+        from ..live import bili_training
+        from ..persona.training import TrainingDigestStore
+
+        data = bili_training.compress_status()
+        digest = TrainingDigestStore().to_dict()
+        digest.pop("covered_ids", None)   # 设置页只展示统计，不传整份 id 列表
+        data["digest"] = digest
+        data["ok"] = True
+        return data
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "running": False,
+                "error": f"{type(exc).__name__}: {exc}"}
+
+
 def persona_options() -> list[dict]:
     """可选人格目录：只列带 card.json 的，供训练/聊天下拉用。"""
     try:
@@ -307,6 +323,7 @@ def payload() -> dict:
     data["persona_layers"] = persona_state(cfg)
     data["personas"] = persona_options()
     data["bili_training"] = _training_state()
+    data["bili_training_compress"] = _compress_state()
     data["stickers"] = sticker_state()
     data["memory"] = {**memory_state(), "enabled": bool(cfg.kook_memory)} if cfg.kook_memory else {
         "available": False, "enabled": False}
@@ -445,6 +462,8 @@ def save(body: dict) -> dict:
         "bili_training_comment_chars": ("训练评论字数", 40, 300),
         "bili_training_max_minutes": ("训练视频最大时长", 2, 180),
         "bili_training_min_views": ("训练视频最低播放量", 0, 1_000_000_000),
+        "bili_favorites_id": ("收藏夹 ID", 0, 10 ** 15),
+        "bili_favorites_batch": ("收藏夹单次扫描条数", 0, 5000),
     }.items():
         if field in body:
             patch[field] = int(_number(body[field], label, low, high))

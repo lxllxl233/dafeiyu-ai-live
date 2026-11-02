@@ -291,6 +291,17 @@
   .train-tools{margin-left:auto;display:flex;align-items:center;gap:10px}
   .train-tools select{background:var(--bg);color:var(--text);border:1px solid var(--line);
     border-radius:7px;padding:5px 7px;font-size:11.5px}
+  .train-tabs{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:10px 0 8px}
+  .train-tab{background:rgba(255,255,255,.03);border:1px solid var(--line);color:var(--muted);
+    border-radius:999px;padding:5px 11px;font-size:11.5px;cursor:pointer}
+  .train-tab b{color:var(--gold);margin-left:4px}
+  .train-tab.on{color:var(--gold);border-color:rgba(244,201,104,.55);
+    background:rgba(244,201,104,.10)}
+  .train-digest{border:1px solid rgba(244,201,104,.28);border-radius:10px;
+    background:rgba(244,201,104,.045);padding:12px 14px;margin:0 0 12px}
+  .train-digest-head{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:7px}
+  .train-digest pre{white-space:pre-wrap;word-break:break-word;margin:0;max-height:360px;
+    overflow:auto;color:#dfe6f3;font:inherit;line-height:1.7}
   .train-row{border-top:1px solid #222a36;padding:11px 0}
   .train-row:first-child{border-top:0}
   .train-row-head{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
@@ -695,7 +706,7 @@
         <div>
           <span class="eyebrow">TRAINING / WATCH &amp; REMEMBER</span>
           <h2>训练记忆</h2>
-          <p>她摸鱼刷视频后写下的段落，会全量注入 KOOK / 直播的人格提示词。这里分页查看、逐条编辑；停用后仍保留记录，但不再进人格。</p>
+          <p>她摸鱼刷视频后写下的段落，未压缩时逐条注入 KOOK / 直播的人格提示词；压缩后优先注入长期画像。这里分页查看、逐条编辑；停用后仍保留记录，但不再进人格。</p>
         </div>
         <div class="head-actions">
           <button class="btn ghost" type="button" onclick="loadPersona()">刷新记忆</button>
@@ -715,7 +726,23 @@
               </label>
             </div>
           </div>
-          <p class="meta" style="margin-bottom:10px">新学的排在前面。点「查看 / 编辑」改摘要和评论；停用不删除原始记录。</p>
+          <div class="train-tabs" id="trainTabs">
+            <button class="train-tab on" type="button" data-train-filter="uncompressed"
+                    onclick="trainFilter('uncompressed')">未压缩 <b id="trainUncompressed">0</b></button>
+            <button class="train-tab" type="button" data-train-filter="compressed"
+                    onclick="trainFilter('compressed')">已压缩 <b id="trainCompressed">0</b></button>
+            <button class="btn ghost" type="button" id="trainDigestToggle"
+                    onclick="toggleTrainDigest()" disabled>查看压缩文本</button>
+          </div>
+          <div class="train-digest" id="trainDigestPanel" hidden>
+            <div class="train-digest-head">
+              <b>压缩后的长期画像</b>
+              <span class="hint" id="trainDigestMeta"></span>
+            </div>
+            <pre id="trainDigestText"></pre>
+          </div>
+          <p class="meta" style="margin-bottom:10px">未压缩的记忆逐条进人格；压缩后只注入长期画像。
+            点「查看 / 编辑」改摘要和评论；停用不删除原始记录。</p>
           <div id="trainList"></div>
           <div id="trainPager" class="train-pager"></div>
           <span class="hint" id="trainState"></span>
@@ -1026,6 +1053,57 @@ let TRAINING = [];
 let TRAIN_PAGE = 1;
 let TRAIN_PER = 10;
 let TRAIN_EDIT_ID = null;
+let TRAIN_FILTER = "uncompressed";
+let TRAIN_FILTER_TOUCHED = false;
+let TRAIN_COMPRESSION = {exists: false, text: ""};
+let TRAIN_DIGEST_OPEN = false;
+
+function trainFilter(name){
+  if(name !== "uncompressed" && name !== "compressed") return;
+  TRAIN_FILTER_TOUCHED = true;
+  TRAIN_FILTER = name;
+  TRAIN_PAGE = 1;
+  if(name === "compressed" && TRAIN_COMPRESSION.text) TRAIN_DIGEST_OPEN = true;
+  else TRAIN_DIGEST_OPEN = false;
+  syncTrainTabs();
+  syncTrainDigest();
+  renderTrainingPage();
+}
+
+function syncTrainTabs(){
+  document.querySelectorAll("[data-train-filter]").forEach(btn => {
+    btn.classList.toggle("on", btn.dataset.trainFilter === TRAIN_FILTER);
+  });
+}
+
+function syncTrainDigest(){
+  const c = TRAIN_COMPRESSION || {};
+  const text = String(c.text || "");
+  const has = !!text;
+  const btn = $("#trainDigestToggle");
+  const panel = $("#trainDigestPanel");
+  const meta = $("#trainDigestMeta");
+  const pre = $("#trainDigestText");
+  if(btn){
+    btn.disabled = !has;
+    btn.textContent = TRAIN_DIGEST_OPEN ? "收起压缩文本" : "查看压缩文本";
+  }
+  if(meta){
+    meta.textContent = has
+      ? `${Number(c.source_count || 0)} 条 · ${Number(c.chars || text.length)} 字`
+        + (c.updated_at ? ` · ${c.updated_at}` : "")
+      : "还没有压缩记忆";
+  }
+  if(pre) pre.textContent = text;
+  if(!has) TRAIN_DIGEST_OPEN = false;
+  if(panel) panel.hidden = !(has && TRAIN_DIGEST_OPEN);
+}
+
+function toggleTrainDigest(){
+  if(!(TRAIN_COMPRESSION && TRAIN_COMPRESSION.text)) return;
+  TRAIN_DIGEST_OPEN = !TRAIN_DIGEST_OPEN;
+  syncTrainDigest();
+}
 
 function trainingStatus(e){
   const comment = e.comment_status === "posted" ? "已发评论"
@@ -1039,11 +1117,24 @@ function trainingStatus(e){
 
 function renderTraining(training){
   TRAINING = (training && training.entries) || [];
+  TRAIN_COMPRESSION = (training && training.compression) || {exists: false, text: ""};
+  const compressed = TRAINING.filter(e => !!e.compressed).length;
+  const uncompressed = TRAINING.length - compressed;
+  // 默认看未压缩；全部压完时自动切到已压缩，并展开压缩文本。
+  if(!TRAIN_FILTER_TOUCHED && TRAINING.length){
+    TRAIN_FILTER = uncompressed ? "uncompressed" : "compressed";
+    if(TRAIN_FILTER === "compressed" && TRAIN_COMPRESSION.text) TRAIN_DIGEST_OPEN = true;
+  }
   const count = $("#trainCount");
   const nav = $("#navTraining");
   const enabled = TRAINING.filter(e => e.enabled !== false).length;
-  if(count) count.textContent = `${TRAINING.length} 条 · ${enabled} 条启用`;
+  if(count) count.textContent = `${TRAINING.length} 条 · ${enabled} 条启用 · ${compressed} 条已压缩`;
   if(nav) nav.textContent = String(TRAINING.length);
+  const un = $("#trainUncompressed"), cp = $("#trainCompressed");
+  if(un) un.textContent = String(uncompressed);
+  if(cp) cp.textContent = String(compressed);
+  syncTrainTabs();
+  syncTrainDigest();
   if(TRAIN_EDIT_ID && !TRAINING.some(e => e.id === TRAIN_EDIT_ID)) closeTrainingEditor();
   renderTrainingPage();
 }
@@ -1051,13 +1142,22 @@ function renderTraining(training){
 function renderTrainingPage(){
   const list = $("#trainList");
   if(!list) return;
-  const rows = TRAINING.slice().reverse();
+  const rows = TRAINING.slice().reverse()
+    .filter(e => TRAIN_FILTER === "compressed" ? !!e.compressed : !e.compressed);
   const pages = Math.max(1, Math.ceil(rows.length / TRAIN_PER));
   TRAIN_PAGE = Math.min(Math.max(1, TRAIN_PAGE), pages);
   const start = (TRAIN_PAGE - 1) * TRAIN_PER;
   const shown = rows.slice(start, start + TRAIN_PER);
+  if(!TRAINING.length){
+    list.innerHTML = '<div class="hint" style="padding:8px 0">还没有训练记忆。去设置页「运行 → B站摸鱼训练」启动一次，或点「快速扫收藏夹」。</div>';
+    $("#trainPager").innerHTML = "";
+    return;
+  }
   if(!rows.length){
-    list.innerHTML = '<div class="hint" style="padding:8px 0">还没有训练记忆。去设置页「运行 → B站摸鱼训练」启动一次。</div>';
+    const hint = TRAIN_FILTER === "uncompressed"
+      ? `没有未压缩记忆；全部 ${TRAINING.length} 条都已压进长期画像。切到「已压缩」查看。`
+      : "还没有已压缩记忆；先点「压缩记忆」生成长期画像。";
+    list.innerHTML = `<div class="hint" style="padding:8px 0">${esc(hint)}</div>`;
     $("#trainPager").innerHTML = "";
     return;
   }
@@ -1067,10 +1167,15 @@ function renderTrainingPage(){
     const link = e.url ? `<a href="${esc(e.url)}" target="_blank" rel="noopener">${title}</a>` : title;
     const rawSummary = String(e.summary || "");
     const summary = esc(rawSummary.slice(0, 220)) + (rawSummary.length > 220 ? "…" : "");
+    const compressTag = e.compressed
+      ? '<span class="chip on">已压缩</span>'
+      : '<span class="chip">未压缩</span>';
     return `<div class="train-row" data-train-id="${esc(e.id)}">
       <div class="train-row-head">
         <b>${link}</b>
         <span class="hint">${esc(e.up || "")}${e.created_at ? " · " + esc(String(e.created_at).slice(0,16)) : ""}${e.bvid ? " · " + esc(e.bvid) : ""}</span>
+        ${compressTag}
+        ${e.source === "favorites" ? '<span class="chip">收藏夹</span>' : ""}
         <span class="chip">${esc(status.comment)}</span>${status.like ? `<span class="chip">${esc(status.like)}</span>` : ""}
         <div class="train-actions">
           <label class="hint"><input type="checkbox" ${e.enabled !== false ? "checked" : ""} onchange="setTrainingEnabled('${esc(e.id)}', this.checked)"> 启用</label>
@@ -1116,7 +1221,8 @@ function editTraining(id){
   $("#trainEditMeta").textContent =
     `${e.bvid || e.id} · 学习于 ${e.created_at ? String(e.created_at).slice(0,16) : "未知"}`
     + ` · ${status.comment}${status.like ? " · " + status.like : ""}`
-    + `${e.comment_error ? " · " + e.comment_error : ""}`;
+    + `${e.comment_error ? " · " + e.comment_error : ""}`
+    + `${e.compressed ? " · 已计入压缩画像；改动需重新压缩才生效" : ""}`;
   $("#trainEditState").textContent = "";
   card.style.display = "block";
   card.scrollIntoView({behavior:"smooth", block:"start"});

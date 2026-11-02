@@ -40,6 +40,40 @@ KOOK 和直播分别由 `bili_training_apply_kook` /
 （`bili_training_max_minutes`，默认 30 分钟）和最低播放量
 （`bili_training_min_views`，0 = 不限）。
 
+### 快速扫收藏夹
+
+同一张卡片的「快速扫收藏夹」走另一条只读路径：按 `favlist` 的 `fid`
+（`bili_favorites_id`）翻页，逐条读标题/简介/热评，写一段第一人称长期记忆，
+**不等待视频时长**，也不点赞、不发评论。已扫过的 bvid 会跳过，所以可以分几次点，
+再点一次会从断点继续；`bili_favorites_batch` 控制单次新增条数（默认 50，0 = 整夹）。
+公开收藏夹不需要 Cookie，私有收藏夹需要 `bilibili_cookie` 里有登录态。
+命令行：
+
+```powershell
+python main.py train --favorites 308848993 --limit 50
+python main.py train --favorites 308848993 --limit 0   # 扫完整个收藏夹
+```
+
+快扫和普通训练共用 `persona/training.json`，收藏夹条目带 `source=favorites`，
+在提示词里标成「（收藏夹）」。运行状态同样写 `logs/bili_training/status.json`，
+设置页会显示 `done/total` 和已写记忆条数；训练进程和桌宠/设置页相互独立。
+
+### 压缩记忆
+
+条目多了以后，设置页同一张卡片的「压缩记忆」会把已启用的 B 站记忆按字符预算分批
+交给模型压缩，再合并成一段 1800–2200 字的第一人称长期画像，写
+`persona/training_digest.json`。原始 `training.json` 一条不删，控制台仍可逐条编辑。
+
+- 注入时优先用画像；压缩**之后**新扫到的记忆没有进画像，会按原文附在画像后面，
+  最多展开 15000 字，其余只注明条数，不会“压完就丢掉新扫的”。扫完一轮后再点一次
+  「压缩记忆」即可把新条目一起压进去。
+- 压缩是独立进程：`python main.py train --compress`；扫描还在跑时也能压缩当前快照。
+- 压缩结果为空/失败不会覆盖旧画像；「清除压缩」会删掉画像，人格回到逐条注入。
+- 控制台「训练记忆」页按「未压缩 / 已压缩」筛选，默认未压缩；每条带压缩状态，
+  全部压完自动切到已压缩，「查看压缩文本」直接展开画像。
+- 压缩的分段摘要和最终画像都算一次 LLM 调用，usage 写
+  `logs/bili_training/usage.jsonl`，kind 为「B站记忆压缩」。
+
 ## 启动
 
 需要 overlay/studio 正在运行（默认 `http://127.0.0.1:8730`），并配置了可用的
@@ -400,7 +434,7 @@ python main.py obs setup
 | `schedule.py` | 虚拟时钟、cue 调度、空档回应 |
 | `speaker.py` | overlay 输出和单槽语音门 |
 | `runner.py` | 模块级生命周期、搜索/选视频、播放循环、状态/日志 |
-| `training.py` | 摸鱼训练：选视频、摘要、点赞/评论、按时长等待、写 `persona/training.json` |
+| `training.py` | 摸鱼训练 + 收藏夹快扫：摘要、点赞/评论/按时长等待、写 `persona/training.json` |
 | `adapter.py` | 只读伪 `GameState`，不启动线程 |
 | `plugin.py` | 插件入口 |
 

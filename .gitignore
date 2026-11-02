@@ -73,9 +73,19 @@ games/vampire-survivors/compat/mod/VsBridge/obj/
 # KOOK 聊天：本机记忆库、事件/账单日志、服务锁
 logs/kook/
 
+# 旧唱歌模块的本地音源/RVC 资产：体积大/有授权问题，不入库（模块已移除）
+assets/hakimiSF/
+assets/哈基米ou音源/
+assets/RVC模型(哈基米)/
+assets/RVC模型(哈基米).zip
+
 # B站摸鱼训练：状态/停止标志/缓存/账单/服务输出；训练记忆是个人浏览记忆，不入库
 logs/bili_training/
 persona/training.json
+persona/training_digest.json
 
 # generated video build artifacts
 build/
+
+# local Windows ACL recovery backups (see diagnose-windows-sandbox-acl)
+.acl-recovery/

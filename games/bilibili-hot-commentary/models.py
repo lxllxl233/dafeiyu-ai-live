@@ -184,6 +184,40 @@ class VideoRef:
         )
 
     @classmethod
+    def from_fav(cls, raw: dict) -> "VideoRef | None":
+        """收藏夹 ``fav/resource/list`` 的一条 media。
+
+        收藏夹接口用 ``id`` 表示 aid、``intro`` 表示简介、``cnt_info.play``
+        表示播放量；已失效视频没有 bvid，直接跳过，交给下一段分页逻辑。
+        """
+        raw = _dict(raw)
+        bvid = str(raw.get("bvid") or raw.get("bv_id") or "").strip()
+        title = clean_text(raw.get("title"), 200)
+        if not bvid or not title or title in ("已失效视频", "失效视频"):
+            return None
+        owner = _dict(raw.get("upper"))
+        cnt = _dict(raw.get("cnt_info"))
+        stat: dict = {}
+        for source, target in (("play", "view"), ("danmaku", "danmaku"),
+                               ("reply", "reply"), ("collect", "favorite"),
+                               ("thumb_up", "like")):
+            if source in cnt:
+                stat[target] = cnt.get(source)
+        ugc = _dict(raw.get("ugc"))
+        return cls(
+            bvid=bvid,
+            aid=_as_int(raw.get("id")),
+            title=title,
+            desc=clean_text(raw.get("intro"), 2000),
+            duration_s=max(0, _as_int(raw.get("duration"))),
+            owner_mid=_as_int(owner.get("mid")),
+            owner_name=clean_text(owner.get("name"), 80),
+            stat=stat,
+            pubdate=_as_int(raw.get("pubtime") or raw.get("ctime")),
+            cid=_as_int(ugc.get("first_cid")),
+        )
+
+    @classmethod
     def from_dict(cls, raw: dict) -> "VideoRef | None":
         raw = _dict(raw)
         bvid = str(raw.get("bvid") or "").strip()

@@ -276,6 +276,70 @@ def test_service_sends_voice_and_sticker(tmp_path):
     assert any(name.endswith(".png") for name, _, _ in service.client.uploads)
 
 
+def test_plain_text_reply_still_sends_voice_and_sticker(tmp_path):
+    class Client:
+        def __init__(self):
+            self.texts, self.audio, self.images, self.uploads = [], [], [], []
+
+        def send_text(self, target_id, text, **kw):
+            self.texts.append(text)
+            return {"ok": True}
+
+        def upload_asset(self, data, filename, content_type="application/octet-stream"):
+            self.uploads.append((filename, content_type, len(data)))
+            return "https://img.kookapp.cn/" + filename
+
+        def send_audio_card(self, target_id, url, **kw):
+            self.audio.append(url)
+            return {"ok": True}
+
+        def send_image(self, target_id, url, **kw):
+            self.images.append(url)
+            return {"ok": True}
+
+    class LLM:
+        def complete(self, messages, model=None):
+            # 模型没按 JSON 协议回，而是像历史消息一样直接说人话。
+            return {"ok": True, "text": "累就先瘫着，别硬撑。"}
+
+    class Voice:
+        def speak(self, text, voice=None):
+            return type("R", (), {"ok": True, "wav": b"RIFFfake",
+                                  "duration": 1.0, "voice": "fake",
+                                  "error": ""})()
+
+    cfg = LiveConfig(kook_memory=False, kook_allow_voice=True, kook_stickers=True)
+    client = Client()
+    service = KookService(cfg, None, client, llm=LLM(), voice=Voice(),
+                          work_dir=tmp_path, log_path=tmp_path / "events.jsonl")
+    out = service.handle(Inbound(message_id="m1", target_id="c1",
+                                 channel_type="GROUP", author_id="u1",
+                                 msg_type=1, text="今天好累啊"))
+    assert out["voice"] is True
+    assert out["sticker"] is True
+    assert client.audio and client.images
+
+
+def test_build_messages_puts_json_reminder_before_user(tmp_path):
+    cfg = LiveConfig(kook_memory=False, kook_allow_voice=True,
+                     kook_stickers=False)
+    service = KookService(cfg, None, None, work_dir=tmp_path)
+    messages = service._build_messages("在干嘛")
+    assert messages[-1]["role"] == "user"
+    assert messages[-2]["role"] == "system"
+    assert "格式提醒" in messages[-2]["content"]
+    assert '"voice": true' in messages[-2]["content"]
+
+
+def test_repeat_topics_detects_overused_cat():
+    cfg = LiveConfig(kook_memory=False, kook_allow_voice=False,
+                     kook_stickers=False)
+    service = KookService(cfg, None, None, work_dir=".")
+    recent = ["刚看猫在窗台", "小麦脑袋卡饭盆，猫盯着", "猫又趴键盘上了"]
+    assert "猫" in service._repeat_topics(recent)
+    assert service._repeat_topics(["今天上班好累", "offer 还没消息"]) == []
+
+
 def test_explicit_request_forces_voice_and_sticker(tmp_path):
     class Client:
         def __init__(self):

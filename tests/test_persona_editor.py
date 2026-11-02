@@ -35,6 +35,33 @@ def test_persona_payload_returns_texts():
     assert "items" in payload["texts"]["memes/general.json"]
 
 
+def test_training_payload_marks_compressed(tmp_path, monkeypatch):
+    from dafeiyu.persona import training as pt
+
+    monkeypatch.setattr(pt, "DEFAULT_PATH", tmp_path / "training.json")
+    monkeypatch.setattr(pt, "DEFAULT_DIGEST_PATH", tmp_path / "training_digest.json")
+    store = pt.TrainingMemoryStore()
+    old = store.add({"bvid": "BVold", "title": "旧记忆", "summary": "旧的摘要"})
+    new = store.add({"bvid": "BVnew", "title": "新记忆", "summary": "新的摘要"})
+    long_text = "这是压缩后的长期画像，保留主题、立场和审美。" * 8
+    pt.TrainingDigestStore().save(
+        long_text, source_count=1, covered_ids=[old["id"]], chunks=1)
+    payload = _runtime()._training_payload()
+    rows = {row["id"]: row for row in payload["entries"]}
+    assert rows[old["id"]]["compressed"] is True
+    assert rows[new["id"]]["compressed"] is False
+    compression = payload["compression"]
+    assert compression["exists"] is True
+    assert compression["source_count"] == 1
+    assert compression["text"] == long_text
+    assert compression["chars"] == len(long_text)
+    # 保存原始条目后，返回给控制台的 payload 仍要带压缩状态。
+    saved = _runtime().save_training(payload["entries"])
+    saved_rows = {row["id"]: row for row in saved["training"]["entries"]}
+    assert saved_rows[old["id"]]["compressed"] is True
+    assert saved_rows[new["id"]]["compressed"] is False
+
+
 def test_validate_card_rejects_broken_shapes():
     assert studio.validate_card({"id": "dafeiyu", "name": "大肥鱼"})["name"] == "大肥鱼"
     with pytest.raises(ValueError):

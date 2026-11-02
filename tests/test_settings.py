@@ -84,6 +84,8 @@ def test_payload_includes_persona_stickers_memory_autostart(cfg_file):
     assert isinstance(cfg["stickers"], list) and cfg["stickers"]
     assert all(row["url"].startswith("/stickers/") for row in cfg["stickers"])
     assert "memory" in cfg and "autostart" in cfg
+    assert "bili_training_compress" in cfg
+    assert "covered_ids" not in cfg["bili_training_compress"].get("digest", {})
 
 
 def test_save_new_chat_and_desktop_fields(cfg_file):
@@ -112,6 +114,16 @@ def test_save_rejects_bad_memory_window(cfg_file):
         settings.save({"kook_summary_trigger": 200})
     with pytest.raises(ValueError):
         settings.save({"kook_proactive_minutes": 2})
+
+
+def test_save_favorites_scan_fields(cfg_file):
+    res = settings.save({"bili_favorites_id": 308848993,
+                         "bili_favorites_batch": 20})
+    cfg = res["config"]
+    assert cfg["bili_favorites_id"] == 308848993
+    assert cfg["bili_favorites_batch"] == 20
+    with pytest.raises(ValueError):
+        settings.save({"bili_favorites_batch": -1})
 
 
 def test_save_writes_config_and_points_at_restart_fields(cfg_file):

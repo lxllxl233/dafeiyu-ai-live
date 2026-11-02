@@ -154,6 +154,10 @@ class LiveConfig:
     bili_training_apply_kook: bool = True
     bili_training_apply_live: bool = True
     bili_training_comment_chars: int = 160
+    # 快速扫收藏夹：media_id 是 favlist 链接里的 fid；单次条数默认 50，
+    # 0 = 整个收藏夹。扫过的视频按 bvid 跳过，所以再点一次会从断点继续。
+    bili_favorites_id: int = 0
+    bili_favorites_batch: int = 50
 
     # KOOK 聊天：Bot WebSocket 长连接（纯出站，不用公网 IP）。
     kook_enabled: bool = False

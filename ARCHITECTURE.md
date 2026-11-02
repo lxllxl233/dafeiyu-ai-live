@@ -316,7 +316,7 @@ observe ──► plan ──► validate ──► execute ──► reflect
 | 层 | 来源 | 何时生效 |
 |---|---|---|
 | 个人（常驻） | `persona/<id>/card.json` + `style.md` | 永远；KOOK 聊天用 `kook_persona`，桌宠/直播用 `persona` |
-| 摸鱼记忆 | `persona/training.json` | `bili_training_apply_kook` / `bili_training_apply_live` 打开；全量注入 |
+| 摸鱼记忆 | `persona/training.json` | `bili_training_apply_kook` / `bili_training_apply_live` 打开；全量注入（60k 字符预算） |
 | 直播 | `persona/live/card.json` + `style.md` | `live=True` 且 `persona_live` 打开；KOOK 不加载 |
 | 游戏 | `games/<id>/persona/layer.md` | 传入 `game_id` 时叠加（游戏 runner / 自动玩） |
 
@@ -325,8 +325,13 @@ observe ──► plan ──► validate ──► execute ──► reflect
 
 B 站摸鱼训练是独立进程：`games/bilibili-hot-commentary/training.py` 选片/读公开文本/写记忆，
 `src/dafeiyu/live/bili_training.py` 管起停和 `logs/bili_training/status.json`，
-`src/dafeiyu/persona/training.py` 管 `persona/training.json`（全量注入，不做最近 N 条）。
-训练不打开浏览器、不播放视频/声音，和自动玩/直播导演互斥。状态文件用唯一临时文件
+`src/dafeiyu/persona/training.py` 管 `persona/training.json`（全量注入，受 60k 字符预算保护）。
+同一 runner 还有一条「快速扫收藏夹」路径：按 `favlist` 的 `fid` 翻页，只读公开文字，
+不等待视频时长、不点赞/评论，写 `source=favorites` 的记忆；已扫 bvid 跳过、可断点续扫，
+单次条数由 `bili_favorites_batch` 控制。条目多了以后，`CompressionRunner` 可把
+已启用记忆分批压缩成 `persona/training_digest.json` 的长期画像；`prompt_text` 优先注入
+画像，压缩后新增的条目仍按原文补在后面。训练/快扫/压缩都不打开浏览器、不播放视频/声音，
+和自动玩/直播导演互斥。状态文件用唯一临时文件
 原子替换并对 Windows 占用重试；单条视频异常只记失败并继续下一条，后台训练不因一次
 状态写失败退出。控制台的「训练记忆」是独立分页页面，逐条编辑；训练 LLM usage 写
 `logs/bili_training/usage.jsonl`，和自动玩/KOOK 账本一起进 Agent Token 账单。记忆写成完整

@@ -2,8 +2,9 @@
 # -*- coding: utf-8 -*-
 """B 站摸鱼训练进程的启动/停止/状态（设置页和桌宠共用）。
 
-训练是独立进程：``python main.py bili-train``。这样设置页关掉、桌宠重启都不
-会影响正在刷的视频；状态文件同时给设置页轮询和桌宠气泡用。
+训练是独立进程：``python main.py train``。这样设置页关掉、桌宠重启都不
+会影响正在刷的视频；状态文件同时给设置页轮询和桌宠气泡用。压缩记忆另起
+``python main.py train --compress``，和扫描互不阻塞。
 """
 from __future__ import annotations
 
@@ -24,6 +25,11 @@ STOP_FILE = ROOT / "stop"
 PID_FILE = ROOT / "train.pid"
 RUN_LOG = ROOT / "run.log"
 USAGE_FILE = ROOT / "usage.jsonl"
+# 压缩记忆是独立进程：和扫描/训练分开，扫描还在跑时也能压缩当前快照。
+COMPRESS_STATUS_FILE = ROOT / "compress_status.json"
+COMPRESS_STOP_FILE = ROOT / "compress.stop"
+COMPRESS_PID_FILE = ROOT / "compress.pid"
+COMPRESS_LOG = ROOT / "compress.log"
 _MAX_USAGE_STEPS = 4000
 
 
@@ -252,8 +258,13 @@ def should_stop() -> bool:
     return STOP_FILE.exists()
 
 
-def start(*, persona: str = "", keywords: str = "") -> dict:
-    """起一个独立训练进程；已经在跑就不重复起。"""
+def start(*, persona: str = "", keywords: str = "",
+          favorites_id: int = 0, limit: int | None = None) -> dict:
+    """起一个独立训练进程；已经在跑就不重复起。
+
+    ``favorites_id`` > 0 时走快速扫收藏夹：不等待视频时长，也不点赞/评论；
+    ``limit`` 是本次最多新增多少条（0 = 整个收藏夹，None = 用配置值）。
+    """
     current = status()
     if current.get("running"):
         return {"ok": False, "error": "训练已经在跑", "status": current}
@@ -262,7 +273,11 @@ def start(*, persona: str = "", keywords: str = "") -> dict:
     cmd = [sys.executable, str(paths.ROOT / "main.py"), "train"]
     if persona:
         cmd.extend(["--persona", persona])
-    if keywords:
+    if favorites_id:
+        cmd.extend(["--favorites", str(int(favorites_id))])
+        if limit is not None:
+            cmd.extend(["--limit", str(max(0, int(limit)))])
+    elif keywords:
         cmd.extend(["--keywords", keywords])
     env = dict(os.environ)
     env["PYTHONIOENCODING"] = "utf-8"
@@ -286,8 +301,11 @@ def start(*, persona: str = "", keywords: str = "") -> dict:
         pass
     write_status(running=True, pid=proc.pid, phase="starting",
                  idle_text="摸鱼ing", started_at=time.time(),
-                 last="准备摸鱼刷 B 站…", error="",
-                 bvid="", title="", url="", up="", duration_s=0,
+                 mode=("favorites" if favorites_id else "training"),
+                 media_id=int(favorites_id or 0), folder="",
+                 total=0, done=0, scanned=0, skipped=0, failed=0, remaining=0,
+                 last=("准备扫收藏夹…" if favorites_id else "准备摸鱼刷 B 站…"),
+                 error="", bvid="", title="", url="", up="", duration_s=0,
                  position_s=0, remain_s=0, like_status="", like_error="",
                  comment_status="", comment_error="")
     return {"ok": True, "pid": proc.pid, "status": status()}
@@ -307,6 +325,105 @@ def stop(*, wait_s: float = 6.0) -> dict:
     return {"ok": True, "stopping": True, "status": current}
 
 
+# ---------------------------------------------------------------- 压缩记忆
+def compress_status() -> dict:
+    """当前压缩进程状态；进程不在时把 running 纠正为 false。"""
+    data = _read_json(COMPRESS_STATUS_FILE)
+    if not data:
+        return {"running": False, "phase": "idle", "entries": 0, "chunks": 0,
+                "done_chunks": 0, "chars": 0, "last": "", "error": ""}
+    pid = int(data.get("pid") or 0)
+    if data.get("running") and pid and not _alive(pid):
+        data["running"] = False
+        data["phase"] = "stopped"
+        data["error"] = data.get("error") or "压缩进程已退出"
+        _atomic_json(COMPRESS_STATUS_FILE, data)
+    return data
+
+
+def write_compress_status(**fields) -> dict:
+    data = _read_json(COMPRESS_STATUS_FILE)
+    data.update({k: v for k, v in fields.items() if v is not None})
+    data["updated_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+    _atomic_json(COMPRESS_STATUS_FILE, data)
+    return data
+
+
+def clear_compress_stop() -> bool:
+    try:
+        COMPRESS_STOP_FILE.unlink()
+        return True
+    except OSError:
+        return False
+
+
+def request_compress_stop() -> bool:
+    try:
+        COMPRESS_STOP_FILE.parent.mkdir(parents=True, exist_ok=True)
+        COMPRESS_STOP_FILE.write_text(str(time.time()), encoding="utf-8")
+        return True
+    except OSError:
+        return False
+
+
+def should_compress_stop() -> bool:
+    return COMPRESS_STOP_FILE.exists()
+
+
+def start_compress(*, persona: str = "") -> dict:
+    """起一个独立的压缩进程；已经在压缩就不重复起。"""
+    current = compress_status()
+    if current.get("running"):
+        return {"ok": False, "error": "压缩已经在跑", "status": current}
+    ROOT.mkdir(parents=True, exist_ok=True)
+    clear_compress_stop()
+    cmd = [sys.executable, str(paths.ROOT / "main.py"), "train", "--compress"]
+    if persona:
+        cmd.extend(["--persona", persona])
+    env = dict(os.environ)
+    env["PYTHONIOENCODING"] = "utf-8"
+    flags = 0
+    if os.name == "nt":
+        flags = int(getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    log = open(COMPRESS_LOG, "a", encoding="utf-8")  # noqa: SIM115
+    try:
+        proc = subprocess.Popen(
+            cmd, cwd=str(paths.ROOT), env=env, stdout=log, stderr=log,
+            stdin=subprocess.DEVNULL, creationflags=flags, close_fds=True,
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.close()
+        return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+    log.close()
+    try:
+        COMPRESS_PID_FILE.write_text(str(proc.pid), encoding="utf-8")
+    except OSError:
+        pass
+    write_compress_status(
+        running=True, pid=proc.pid, phase="starting", started_at=time.time(),
+        entries=0, chunks=0, done_chunks=0, chars=0, error="",
+        last="准备压缩 B 站记忆…",
+    )
+    return {"ok": True, "pid": proc.pid, "status": compress_status()}
+
+
+def stop_compress(*, wait_s: float = 6.0) -> dict:
+    current = compress_status()
+    if not current.get("running"):
+        return {"ok": True, "stopped": True, "status": current}
+    request_compress_stop()
+    deadline = time.time() + max(0.5, float(wait_s))
+    while time.time() < deadline:
+        time.sleep(0.25)
+        current = compress_status()
+        if not current.get("running"):
+            return {"ok": True, "stopped": True, "status": current}
+    return {"ok": True, "stopping": True, "status": current}
+
+
 __all__ = ["ROOT", "STATUS_FILE", "STOP_FILE", "USAGE_FILE", "status", "write_status",
            "request_stop", "clear_stop", "should_stop", "start", "stop",
-           "token_usage"]
+           "token_usage", "COMPRESS_STATUS_FILE", "COMPRESS_STOP_FILE",
+           "compress_status", "write_compress_status", "request_compress_stop",
+           "clear_compress_stop", "should_compress_stop", "start_compress",
+           "stop_compress"]

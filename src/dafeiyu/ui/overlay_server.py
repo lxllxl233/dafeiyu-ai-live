@@ -721,6 +721,21 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(500, json.dumps({"ok": False, "error": str(exc)},
                                            ensure_ascii=False).encode("utf-8"),
                            "application/json; charset=utf-8")
+        elif path == "/api/bili/training/compress/status":
+            try:
+                from dafeiyu.live import bili_training
+                from dafeiyu.persona.training import TrainingDigestStore
+
+                data = bili_training.compress_status()
+                digest = TrainingDigestStore().to_dict()
+                digest.pop("covered_ids", None)
+                data["digest"] = digest
+                self._send(200, json.dumps(data, ensure_ascii=False)
+                           .encode("utf-8"), "application/json; charset=utf-8")
+            except Exception as exc:  # noqa: BLE001
+                self._send(500, json.dumps({"ok": False, "error": str(exc)},
+                                           ensure_ascii=False).encode("utf-8"),
+                           "application/json; charset=utf-8")
         elif path == "/api/persona":
             try:
                 from dafeiyu.ui.studio import get_runtime
@@ -1137,9 +1152,72 @@ class Handler(BaseHTTPRequestHandler):
                         director.stop()
                     except Exception:
                         pass
-                    result = bili_training.start(
-                        persona=str(body.get("persona") or ""),
-                        keywords=str(body.get("keywords") or ""))
+                    mode = str(body.get("mode") or "training").strip().lower()
+                    if mode == "favorites":
+                        try:
+                            media_id = int(body.get("media_id") or 0)
+                        except (TypeError, ValueError):
+                            media_id = 0
+                        if media_id <= 0:
+                            from dafeiyu.core.config import LiveConfig
+
+                            media_id = int(getattr(LiveConfig.load(),
+                                                   "bili_favorites_id", 0) or 0)
+                        if media_id <= 0:
+                            self._send(400, json.dumps(
+                                {"ok": False,
+                                 "error": "先填收藏夹 ID（favlist 链接里的 fid）"},
+                                ensure_ascii=False).encode("utf-8"),
+                                "application/json; charset=utf-8")
+                            return
+                        limit = body.get("limit")
+                        if limit is not None and str(limit).strip() != "":
+                            try:
+                                limit = max(0, int(limit))
+                            except (TypeError, ValueError):
+                                limit = None
+                        else:
+                            limit = None
+                        result = bili_training.start(
+                            persona=str(body.get("persona") or ""),
+                            favorites_id=media_id, limit=limit)
+                    else:
+                        result = bili_training.start(
+                            persona=str(body.get("persona") or ""),
+                            keywords=str(body.get("keywords") or ""))
+                code = 200 if result.get("ok") else 409
+                self._send(code, json.dumps(result, ensure_ascii=False).encode("utf-8"),
+                           "application/json; charset=utf-8")
+            except Exception as exc:  # noqa: BLE001
+                self._send(500, json.dumps({"ok": False, "error": str(exc)},
+                                           ensure_ascii=False).encode("utf-8"),
+                           "application/json; charset=utf-8")
+            return
+        if self.path in ("/api/bili/training/compress/start",
+                         "/api/bili/training/compress/stop",
+                         "/api/bili/training/compress/clear"):
+            try:
+                n = int(self.headers.get("Content-Length", "0") or 0)
+                body = json.loads(self.rfile.read(n) or b"{}") if n else {}
+                body = body if isinstance(body, dict) else {}
+                from dafeiyu.live import bili_training
+
+                if self.path.endswith("/clear"):
+                    from dafeiyu.persona.training import TrainingDigestStore
+
+                    if bili_training.compress_status().get("running"):
+                        result = {"ok": False,
+                                  "error": "压缩进行中，等它结束再清除"}
+                    else:
+                        store = TrainingDigestStore()
+                        removed = store.clear()
+                        result = {"ok": True, "cleared": removed,
+                                  "digest": store.to_dict()}
+                elif self.path.endswith("/stop"):
+                    result = bili_training.stop_compress()
+                else:
+                    result = bili_training.start_compress(
+                        persona=str(body.get("persona") or ""))
                 code = 200 if result.get("ok") else 409
                 self._send(code, json.dumps(result, ensure_ascii=False).encode("utf-8"),
                            "application/json; charset=utf-8")

@@ -782,12 +782,35 @@ class StudioRuntime:
 
     def _training_payload(self) -> dict:
         try:
-            from ..persona.training import TrainingMemoryStore
+            from ..persona.training import TrainingDigestStore, TrainingMemoryStore
 
-            return TrainingMemoryStore().to_dict()
+            data = TrainingMemoryStore().to_dict()
+            try:
+                digest = TrainingDigestStore().to_dict()
+            except Exception:  # noqa: BLE001 - 画像坏了不影响原始记忆列表
+                digest = {}
+            entries = data.get("entries") if isinstance(data.get("entries"), list) else []
+            text = str(digest.get("text") or "")
+            covered = set(digest.get("covered_ids") or [])
+            source_count = int(digest.get("source_count") or 0)
+            if not covered and source_count:
+                # 旧格式画像没存 id 列表：按压缩时的前 N 条标成已压缩。
+                covered = {str(row.get("id") or "") for row in entries[:source_count]}
+            for row in entries:
+                row["compressed"] = str(row.get("id") or "") in covered
+            data["compression"] = {
+                "exists": bool(text),
+                "source_count": source_count,
+                "chars": len(text),
+                "updated_at": str(digest.get("updated_at") or ""),
+                "text": text,
+                "covered": len(covered),
+            }
+            return data
         except Exception as exc:  # noqa: BLE001
             return {"path": "persona/training.json", "entries": [], "count": 0,
-                    "enabled": 0, "error": f"{type(exc).__name__}: {exc}"}
+                    "enabled": 0, "compression": {"exists": False, "text": ""},
+                    "error": f"{type(exc).__name__}: {exc}"}
 
     def save_training(self, value) -> dict:
         """控制台编辑训练记忆：接受数组或 {entries: [...]}，整表校验后原子写。"""
@@ -799,7 +822,7 @@ class StudioRuntime:
         store = TrainingMemoryStore()
         store.save(entries)
         return {"ok": True, "message": f"训练记忆已保存（{len(entries)} 条）",
-                "training": store.to_dict()}
+                "training": self._training_payload()}
 
     def _game_memes_db(self) -> Path | None:
         """梗库 DB 由游戏包声明（核心不硬编码具体游戏路径）。"""

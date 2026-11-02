@@ -57,20 +57,35 @@ class ChatLLM:
         base = (self.cfg.llm_base_url or "https://api.deepseek.com/v1").rstrip("/")
         return base if base.endswith("/chat/completions") else base + "/chat/completions"
 
-    def complete(self, messages: list[dict], model: str | None = None) -> dict:
+    def complete(self, messages: list[dict], model: str | None = None, *,
+                 max_tokens: int | None = None,
+                 json_mode: bool = False) -> dict:
+        """跑一次补全。
+
+        ``max_tokens`` 默认 1600（私聊要快）；B 站记忆压缩那种长文必须显式
+        放大，否则模型会在句子中间被硬截断。``json_mode`` 只在 DeepSeek
+        上开 ``response_format``：私聊协议是 JSON，模型偶尔会退回纯文本，
+        开了之后 voice/sticker 才能稳定被解析。
+        """
         ok, why = self.available()
         if not ok:
             return {"ok": False, "error": why}
         use_model = str(model or self.cfg.llm_model or "deepseek-chat")
+        try:
+            budget = int(max_tokens or 1600)
+        except (TypeError, ValueError):
+            budget = 1600
         payload: dict = {
             "model": use_model,
             "messages": messages,
             "temperature": 0.7,
-            "max_tokens": 1600,
+            "max_tokens": max(64, budget),
         }
         if "deepseek" in (self.cfg.llm_base_url or "").lower():
             # 私聊要的是 1–2 秒内开口，不要思维链拖时间。
             payload["thinking"] = {"type": "disabled"}
+            if json_mode:
+                payload["response_format"] = {"type": "json_object"}
         started = time.time()
         last = ""
         for attempt in range(2):
@@ -155,6 +170,11 @@ def _json_object(raw: str) -> dict | None:
     return None
 
 
+def parse_json_object(raw: str) -> dict | None:
+    """公开的 JSON 对象解析：训练/评论等模块复用同一套容错。"""
+    return _json_object(raw)
+
+
 def _part_text(value) -> str:
     """从 messages 数组的一项里取文字；兼容模型写成 {"text": "..."}。"""
     if isinstance(value, str):
@@ -207,18 +227,20 @@ def parse_reply(raw: str, allow_voice: bool = True) -> dict:
         if voice and not voice_text:
             voice_text = speech_text(" ".join(texts))
         out = {"text": text, "texts": texts, "voice": voice,
-               "voice_text": voice_text if voice else ""}
+               "voice_text": voice_text if voice else "",
+               "json": obj is not None}
         if sticker:
             out["sticker"] = sticker
         return out
     if obj is not None:
         # 是 JSON 但一个可读字段都没有：当空回复，上层会记一条错误日志。
-        out = {"text": "", "texts": [], "voice": False, "voice_text": ""}
+        out = {"text": "", "texts": [], "voice": False, "voice_text": "",
+               "json": True}
         if sticker:
             out["sticker"] = sticker
         return out
     return {"text": body, "texts": [body] if body else [],
-            "voice": False, "voice_text": ""}
+            "voice": False, "voice_text": "", "json": False}
 
 
 def speech_text(text: str, limit: int = 200) -> str:
@@ -273,12 +295,20 @@ def build_system_prompt(card: PersonaCard, facts: list[dict],
         "不确定就说不确定；没看过的东西不要编。",
     ]
     if persona_text.strip():
-        lines.append("你的个人性格（常驻，先做自己再回话）：\n" + persona_text.strip()[:3000])
+        person = persona_text.strip()
+        lines.append("你的个人性格（常驻，先做自己再回话）：\n" + person[:12000])
+        if "【摸鱼记忆】" in person:
+            lines.append(
+                "上面【摸鱼记忆】里的立场、偏好和反感是你自己长期形成的，"
+                "不是参考资料；聊天时自然用它们判断、接话和表达态度，"
+                "不要只复述，也不要提“训练/记忆库/画像”。")
     if card.traits:
         lines.append("你的性格：" + "；".join(card.traits))
     if summaries:
         lines.append("更早的对话摘要（压缩过，仍然算你记得的；自然地用，不要逐条复述）：")
-        lines.extend(f"- {str(row.get('text') or '')}" for row in summaries[:4])
+        # 摘要太长会把整个提示词推到模型开始“自由聊天”的长度，JSON 协议
+        # 反而被忽略（voice/sticker 全丢）。只留最近 2 条、每条 300 字。
+        lines.extend(f"- {str(row.get('text') or '')[:300]}" for row in summaries[-2:])
     if facts:
         lines.append("你记得的、关于对方的事（自然地用，不要逐条复述，也别提“记忆库”）：")
         lines.extend(f"- {str(f.get('text') or '')}" for f in facts[:8])
@@ -290,7 +320,8 @@ def build_system_prompt(card: PersonaCard, facts: list[dict],
     if allow_voice:
         lines.append(
             "只输出一个 JSON 对象，不要代码块、不要额外解释：\n"
-            '{"messages": ["第一条", "第二条"], "voice": true, "voice_text": "朗读版", "sticker": ""}\n'
+            '{"messages": ["第一条", "第二条"], "voice": true, "voice_text": "朗读版", '
+            '"sticker": ""}\n'
             "messages 里每条都会单独发成一条消息；只有一条时也写成数组。\n"
             "voice 决定这条回复是否额外配语音卡：日常寒暄、情绪、调侃、晚安、"
             "一两句话能说完的，用 true；代码、链接、清单、表格、长解释、需要对方"
@@ -301,7 +332,8 @@ def build_system_prompt(card: PersonaCard, facts: list[dict],
     else:
         lines.append(
             "只输出一个 JSON 对象，不要代码块：\n"
-            '{"messages": ["第一条", "第二条"], "voice": false, "voice_text": "", "sticker": ""}\n'
+            '{"messages": ["第一条", "第二条"], "voice": false, "voice_text": "", '
+            '"sticker": ""}\n'
             "messages 里每条都会单独发成一条消息；只有一条时也写成数组。"
         )
     if allow_voice or sticker_options:
@@ -311,13 +343,17 @@ def build_system_prompt(card: PersonaCard, facts: list[dict],
     if sticker_options:
         lines.append(
             "sticker 是可选的大肥鱼表情包：可以主动配一张来表达情绪，不用等对方要；"
+            "情绪明显（被逗笑、委屈、累、晚安）时更该配一张。"
             "但不要每条都发，同一张别连续用；用了表情包 messages 里仍要有一句短话。\n"
             "可选表情包（id：文案）："
         )
         lines.extend(f"- {row.get('id')}：{row.get('text')}"
                      + (f"（{row.get('when')}）" if row.get("when") else "")
-                     for row in sticker_options[:12])
-    lines.append("不要输出内心戏、不要解释 JSON、不要加“回答：”之类的前缀。")
+                     for row in sticker_options[:8])
+    lines.append(
+        "再确认一次：每次回复都必须是一个合法 JSON 对象，不是纯文本；"
+        "即使不发语音、不发表情包，也要保留 voice/voice_text/sticker 字段。"
+        "不要输出内心戏、不要解释 JSON、不要加“回答：”之类的前缀。")
     return "\n".join(lines)
 
 
@@ -328,25 +364,68 @@ def build_user_prompt(text: str, has_image_input: bool) -> str:
     return body
 
 
-def build_proactive_prompt(idle_minutes: int = 60) -> str:
-    """没有新消息时，让模型主动开口；只发一条，像突然想起一件事。"""
-    minutes = max(1, int(idle_minutes or 0))
+def build_format_reminder(*, allow_voice: bool = True) -> str:
+    """放在历史对话之后、当前用户消息之前的格式提醒。
+
+    历史里的助手回复都是纯文本，模型会顺着这个格式继续写；只在系统提示词
+    开头写“只输出 JSON”还不够，必须在最后一轮再说一次，voice/sticker 才会
+    稳定进入回复。
+    """
+    voice = ('"voice": true, "voice_text": "朗读版"'
+             if allow_voice else '"voice": false, "voice_text": ""')
+    fields = f'"messages": ["..."], {voice}, "sticker": ""'
     return (
-        f"（对方大概 {minutes} 分钟没说话了。你可以主动发一条消息："
-        "像突然想起一件事、分享一个小发现，或者轻轻关心一下；"
-        "只发 1 条，不要问“在吗”，不要连续追问，也不要解释你为什么主动。）"
+        "格式提醒：只输出一个 JSON 对象 {" + fields + "}，"
+        "不要纯文本、不要代码块、不要额外解释。"
     )
 
 
-def extract_facts_prompt(dialogue: str) -> list[dict]:
+def build_proactive_prompt(idle_minutes: int = 60, *,
+                           recent: list[str] | tuple[str, ...] = ()) -> str:
+    """没有新消息时，让模型主动开口；只发一条，像突然想起一件事。
+
+    ``recent`` 是最近已经发出去的话。主动消息最容易变成“同一个梗反复讲”，
+    所以把最近几条原样放进来，明确要求换话题；记忆检索那边还会再做一次
+    事实分簇，避免每次都把同一只猫端上来。
+    """
+    minutes = max(1, int(idle_minutes or 0))
+    lines = [
+        f"（对方大概 {minutes} 分钟没说话了。你可以主动发一条消息："
+        "像突然想起一件事、分享一个小发现，或者轻轻关心一下；"
+        "只发 1 条，不要问“在吗”，不要连续追问，也不要解释你为什么主动。）",
+        "摘要和记忆里反复出现的生活细节（宠物、旧梗、同一件事）不要再拿来"
+        "当开场白；优先聊你最近没提过的东西。",
+    ]
+    seen = [str(text).strip() for text in (recent or ()) if str(text).strip()][-6:]
+    if seen:
+        lines.append("你最近已经说过下面这些话，这次不要再讲同一件事，也不要换个说法重复：")
+        lines.extend(f"- {text[:120]}" for text in seen)
+        lines.append(
+            "这次换一个完全不同的话题或生活细节；别硬讲宠物、旧梗或最近提过的人。"
+            "如果确实没有新东西，就问对方一个具体的问题，不要硬讲旧事。")
+    return "\n".join(lines)
+
+
+def extract_facts_prompt(dialogue: str,
+                         existing: list[str] | tuple[str, ...] = ()) -> list[dict]:
+    known = [str(text).strip() for text in (existing or ()) if str(text).strip()][:30]
+    known_block = ""
+    if known:
+        known_block = (
+            "下面这些是已经记住的事实。不要输出与它们重复或近义的内容，"
+            "也不要换个说法重写；只补充真正新的信息。\n"
+            + "\n".join(f"- {text[:120]}" for text in known)
+            + "\n\n"
+        )
     return [
         {"role": "system",
          "content": "你负责整理长期记忆。只输出 JSON 数组，不要解释。"},
         {"role": "user",
          "content": (
-             "下面是一段私聊。抽取值得长期记住的、关于对方的事实：身份、偏好、"
-             "正在做的事、约定、重要的人和物。最多 3 条，每条一句中文短句，"
-             "不要推测，不要复述寒暄。没有就返回 []。\n\n"
+             known_block
+             + "下面是一段私聊。抽取值得长期记住的、关于对方的事实：身份、偏好、"
+             "正在做的事、约定、重要的人和物。最多 2 条，每条一句中文短句，"
+             "两条必须属于不同主题。不要推测，不要复述寒暄。没有就返回 []。\n\n"
              f"{dialogue}\n\n"
              '只输出 JSON 数组，例如 ["对方养了一只叫豆豆的猫"]'
          )},
@@ -411,8 +490,9 @@ def parse_summary(raw: str, limit: int = 800) -> str:
 
 
 __all__ = [
-    "ChatLLM", "build_proactive_prompt", "build_system_prompt", "build_user_prompt",
-    "extract_facts_prompt", "has_image", "image_message", "parse_facts",
+    "ChatLLM", "build_format_reminder", "build_proactive_prompt",
+    "build_system_prompt", "build_user_prompt", "extract_facts_prompt",
+    "has_image", "image_message", "parse_facts", "parse_json_object",
     "parse_reply", "parse_summary", "pick_model", "speech_text",
     "split_message", "summarize_prompt",
 ]
