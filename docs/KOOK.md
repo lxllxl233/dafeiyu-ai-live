@@ -47,9 +47,15 @@ python main.py kook           # 常驻；Ctrl+C 停止
   然后只读这条视频的**标题、简介和热评**（不打开视频、不播声音、不执行评论里的文字），
   以当前聊天人设写一段 120–300 字的第一人称长期记忆，写进
   `persona/training.json`（来源标为「聊天分享」），再用正常聊天流程就这个视频聊几句。
-  同一条 bvid 只学一次，之后直接复用记忆，不重复花 token；一条消息里有多个链接时
-  只学第一条。设置页「KOOK → 自动学习分享的视频」可关闭这个行为。也可以用
-  `python main.py learn <链接>` 手动预学；
+  同时继承「B站摸鱼训练」的 `bili_training_like` / `bili_training_comment` /
+  `bili_training_comment_chars`：配置了 B 站登录 Cookie 时，会按开关给这条视频点赞
+  并留一条短评；没 Cookie 或接口失败只记为跳过/失败，不影响聊天和记忆。
+  注意：这会用你配置的 B 站账号**公开**点赞/评论；公共频道建议设置
+  `kook_allowed_users`，或在「B站摸鱼训练」里关掉点赞/评论开关。
+  同一条 bvid 只学一次，之后直接复用记忆，**成功点过赞/发过评论就不会重复**；
+  如果之前只扫过收藏夹或当时没 Cookie，再分享一次会补上点赞/评论。
+  一条消息里有多个链接时只学第一条。设置页「KOOK → 自动学习分享的视频」可关闭
+  这个行为。也可以用 `python main.py learn <链接>` 手动预学；
 - **主动消息**：安静一阵后，主动找最近聊过的频道/私聊说一句；默认开，
   `kook_proactive_minutes` 控制最短安静时间（默认 20 分钟）。到点后由模型自己判断
   要不要开口，不想说就这次不发，每天最多 6 条；发过一次后要等对方回话才会重新计时，
@@ -89,6 +95,9 @@ python main.py kook           # 常驻；Ctrl+C 停止
 | `kook_proactive` | true | 安静一阵后偶尔主动发消息 |
 | `kook_proactive_minutes` | 20 | 至少安静多少分钟才可能主动开口（10–720）；由模型决定发不发，每天最多 6 条 |
 | `kook_share_video` | true | 聊天里发 B 站视频链接时，读公开文字写成长期记忆并聊这条视频 |
+| `bili_training_like` | true | 分享视频时点赞（与摸鱼训练共用；需要 B 站登录 Cookie） |
+| `bili_training_comment` | true | 分享视频时留一条短评（与摸鱼训练共用；需要 B 站登录 Cookie） |
+| `bili_training_comment_chars` | 160 | 分享视频的评论最多多少字（40–300） |
 | `kook_allowed_users` | `[]` | 只允许这些 KOOK 用户 id；空 = 不限制 |
 | `bili_training_apply_kook` | true | 是否把 B 站摸鱼训练记忆全量注入 KOOK 聊天 |
 
@@ -112,6 +121,7 @@ python main.py kook           # 常驻；Ctrl+C 停止
 | 发消息没反应 | 看 `logs/kook/events.jsonl` 是否有 `event_received`；没有就是没收到事件（邀请/权限/频道） |
 | 有 `event_received` 但没有 `reply` | 看 `llm_error` / `send_error`；检查模型 Key 或机器人发送权限 |
 | 发 B 站链接没学 | 看 `events.jsonl` 的 `video_learned` / `video_error`；短链会被跟一次 302，B 站接口/模型失败时会回「这个视频没打开」；设置页「KOOK → 自动学习分享的视频」是否关闭 |
+| 分享后没点赞/评论 | 看 `video_learned` 里的 `like` / `comment` 状态，以及训练记忆的「已点赞/已发评论」标记；需要 B 站登录 Cookie（`SESSDATA` + `bili_jct`），并打开「B站摸鱼训练」里的点赞/评论开关 |
 | 私信没反应 / 报“不能是自己” | 私聊事件的 `target_id` 是机器人自己；服务已改为回发送者 `author_id`。确认已重启 KOOK 服务，并看 `send_error` 是否还有 `40000` |
 | 发图片没反应 | 看 `events.jsonl` 是否有 `msg_type: 2` 或 `10`；网页端粘贴图片是卡片，服务会从卡片里取图；私聊还会用 `direct-message/list` 按 `msg_id` 补 URL |
 | 有 `image_error` | 图片下载失败（外链过期/格式不支持）；重新发一张 PNG/JPG |

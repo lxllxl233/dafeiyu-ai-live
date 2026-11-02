@@ -8,7 +8,9 @@
   第一人称记忆，写进 `persona/training.json`（来源「聊天分享」），再按正常聊天流程
   聊这条视频。同一条 bvid 只学一次，复用已有记忆；设置页「KOOK → 自动学习分享的
   视频」可关闭；另加 `python main.py learn <链接>` 手动预学。学习调用计入 KOOK
-  Token 账单，控制台「训练记忆」会显示「聊天分享」来源。
+  Token 账单，控制台「训练记忆」会显示「聊天分享」来源。点赞/评论沿用摸鱼训练的
+  `bili_training_like` / `bili_training_comment` / `bili_training_comment_chars`：
+  配置 B 站登录 Cookie 时会点赞并留一条短评，状态写回记忆条目；成功过的点赞/评论不重复。
 - **桌宠待机/拖拽更丝滑**：待机从约 20fps 提到 30fps，拖拽/说话/回弹按 60fps；
   主循环改成按「下一帧时刻」等待（`MsgWaitForMultipleObjectsEx`，鼠标一动就先处理
   窗口移动），不再把画图耗时叠到帧间隔上；运行时把系统定时器临时拉到 1ms，

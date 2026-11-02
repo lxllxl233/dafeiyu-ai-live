@@ -35,9 +35,9 @@ MAX_PROMPT_CHARS = 60000
 MAX_NEW_RAW_CHARS = 15000
 _DIGEST_VERSION = 1
 _FIELDS = (
-    "id", "bvid", "title", "url", "up", "duration_s", "summary", "comment",
-    "comment_status", "comment_error", "comment_id", "like_status", "persona",
-    "source", "folder", "created_at", "enabled",
+    "id", "bvid", "aid", "title", "url", "up", "duration_s", "summary", "comment",
+    "comment_status", "comment_error", "comment_id", "like_status", "like_error",
+    "persona", "source", "folder", "created_at", "enabled",
 )
 
 
@@ -67,12 +67,17 @@ def _clean(entry: dict, *, keep_id: str = "") -> dict:
         duration = max(0, int(float(entry.get("duration_s") or 0)))
     except (TypeError, ValueError):
         duration = 0
+    try:
+        aid = max(0, int(float(entry.get("aid") or 0)))
+    except (TypeError, ValueError):
+        aid = 0
     source = _text(entry.get("source"), 40) or "training"
     if source not in ("training", "favorites", "shared"):
         source = "training"
     out = {
         "id": _safe_id(keep_id or entry.get("id")),
         "bvid": _text(entry.get("bvid"), 40),
+        "aid": aid,
         "title": title,
         "url": _text(entry.get("url"), 500),
         "up": _text(entry.get("up"), 100),
@@ -83,6 +88,7 @@ def _clean(entry: dict, *, keep_id: str = "") -> dict:
         "comment_error": _text(entry.get("comment_error"), 300),
         "comment_id": _text(entry.get("comment_id"), 100),
         "like_status": _text(entry.get("like_status"), 40) or "skipped",
+        "like_error": _text(entry.get("like_error"), 300),
         "persona": _text(entry.get("persona"), 80),
         "source": source,
         "folder": _text(entry.get("folder"), 120),

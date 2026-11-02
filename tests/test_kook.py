@@ -718,7 +718,7 @@ class _VideoLLM:
 
     def complete(self, messages, model=None, **kw):
         joined = "\n".join(str(m.get("content") or "") for m in messages)
-        if "请以第一人称写一段" in joined:
+        if "请只根据这些公开文字，输出一个 JSON 对象" in joined:
             self.learning += 1
             return {"ok": True, "model": model or "fake",
                     "text": json.dumps({"memory": _MEMORY}, ensure_ascii=False),

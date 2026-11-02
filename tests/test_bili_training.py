@@ -557,6 +557,14 @@ def test_training_prompt_marks_shared(tmp_path):
     assert "别人发我的视频" in text
 
 
+def test_training_store_keeps_like_error(tmp_path):
+    store = TrainingMemoryStore(tmp_path / "training.json")
+    store.add(_entry(like_status="failed", like_error="Cookie 过期"))
+    row = store.entries()[0]
+    assert row["like_status"] == "failed"
+    assert row["like_error"] == "Cookie 过期"
+
+
 def test_digest_store_and_prompt_prefers_compress(tmp_path):
     store = TrainingMemoryStore(tmp_path / "training.json")
     row = store.add(_entry(bvid="BV1", title="原始标题"))

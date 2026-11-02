@@ -26,6 +26,16 @@ COMMENTS = [
 ]
 MEMORY = ("这条视频把一件小事讲得很透：先承认自己做不到，再一点点把能做的做好。"
           "我认同热评里说的‘别急着下结论’，但也觉得中间确实可以更紧一点。")
+COMMENT = "先把问题拆小这点真的有用，我上次硬扛半天不如列个清单。"
+COOKIE = "SESSDATA=test-sess; bili_jct=test-csrf"
+
+
+def _cfg(**over):
+    data = dict(llm_api_key="k", bilibili_cookie=COOKIE,
+                bili_training_like=True, bili_training_comment=True,
+                bili_training_comment_chars=120)
+    data.update(over)
+    return LiveConfig(**data)
 
 
 class FakeLLM:
@@ -109,6 +119,152 @@ def test_learn_shared_video_writes_shared_memory(tmp_path, monkeypatch):
     assert len(ctx) <= 2200
 
 
+def test_shared_video_inherits_fishing_like_and_comment(tmp_path, monkeypatch):
+    monkeypatch.setattr(bv, "fetch_video", lambda link: _info())
+    monkeypatch.setattr(bv, "fetch_comments", lambda aid, limit=12: list(COMMENTS))
+    calls = {}
+
+    def fake_like(cookie, aid, bvid, **kw):
+        calls["like"] = (cookie, aid, bvid)
+        return {"ok": True}
+
+    def fake_comment(cookie, aid, bvid, text, **kw):
+        calls["comment"] = (cookie, aid, bvid, text)
+        return {"ok": True, "rpid": "rpid-1"}
+
+    monkeypatch.setattr(bv, "like_video", fake_like)
+    monkeypatch.setattr(bv, "comment_video", fake_comment)
+    store = TrainingMemoryStore(tmp_path / "training.json")
+    llm = FakeLLM(text=json.dumps({"memory": MEMORY, "comment": COMMENT},
+                                  ensure_ascii=False))
+    out = bv.learn_shared_video(_cfg(), "BV1GJ411x7h7", persona="companion",
+                                store=store, llm=llm,
+                                on_usage=lambda result, note: None)
+
+    assert calls["like"] == (COOKIE, 80433022, "BV1GJ411x7h7")
+    assert calls["comment"] == (COOKIE, 80433022, "BV1GJ411x7h7", COMMENT)
+    assert out["like_status"] == "liked"
+    assert out["comment_status"] == "posted"
+    assert out["comment_id"] == "rpid-1"
+    assert out["comment"] == COMMENT
+    entry = store.entries()[0]
+    assert entry["like_status"] == "liked"
+    assert entry["comment_status"] == "posted"
+    assert entry["comment"] == COMMENT
+    ctx = bv.shared_video_context(out)
+    assert "你刚给这条视频点了赞" in ctx
+    assert "你刚在评论区留了" in ctx and COMMENT in ctx
+    assert llm.kwargs[0]["max_tokens"] == 1200
+
+    # 再分享同一条：复用记忆，不重复点赞/评论。
+    calls.clear()
+    monkeypatch.setattr(bv, "like_video", lambda *a, **k: (_ for _ in ()).throw(
+        AssertionError("缓存命中不能重复点赞")))
+    monkeypatch.setattr(bv, "comment_video", lambda *a, **k: (_ for _ in ()).throw(
+        AssertionError("缓存命中不能重复评论")))
+    again = bv.learn_shared_video(_cfg(), "BV1GJ411x7h7", store=store, llm=llm,
+                                  on_usage=lambda result, note: None)
+    assert again["cached"] is True and calls == {}
+    assert again["comment_status"] == "posted"
+    assert "以前在评论区留过" in bv.shared_video_context(again)
+
+
+def test_shared_video_falls_back_to_memory_for_comment(tmp_path, monkeypatch):
+    monkeypatch.setattr(bv, "fetch_video", lambda link: _info())
+    monkeypatch.setattr(bv, "fetch_comments", lambda aid, limit=12: list(COMMENTS))
+    seen = []
+
+    def fake_comment(cookie, aid, bvid, text, **kw):
+        seen.append(text)
+        return {"ok": True, "rpid": "rpid-2"}
+
+    monkeypatch.setattr(bv, "like_video", lambda *a, **k: {"ok": True})
+    monkeypatch.setattr(bv, "comment_video", fake_comment)
+    store = TrainingMemoryStore(tmp_path / "training.json")
+    out = bv.learn_shared_video(_cfg(), "BV1GJ411x7h7", store=store,
+                                llm=FakeLLM(),
+                                on_usage=lambda result, note: None)
+    assert out["comment_status"] == "posted"
+    assert out["comment"] and len(out["comment"]) <= 120
+    assert seen == [out["comment"]]
+
+
+def test_cached_video_can_still_like_and_comment(tmp_path, monkeypatch):
+    store = TrainingMemoryStore(tmp_path / "training.json")
+    store.add({
+        "bvid": "BV1GJ411x7h7", "aid": 0, "title": "以前收藏的视频",
+        "url": "https://www.bilibili.com/video/BV1GJ411x7h7",
+        "summary": MEMORY, "persona": "companion", "source": "favorites",
+        "like_status": "skipped", "comment_status": "skipped",
+    })
+    calls = {}
+
+    def fake_like(cookie, aid, bvid, **kw):
+        calls["like"] = (cookie, aid, bvid)
+        return {"ok": True}
+
+    def fake_comment(cookie, aid, bvid, text, **kw):
+        calls["comment"] = (cookie, aid, bvid, text)
+        return {"ok": True, "rpid": "rpid-cached"}
+
+    monkeypatch.setattr(bv, "like_video", fake_like)
+    monkeypatch.setattr(bv, "comment_video", fake_comment)
+    monkeypatch.setattr(bv, "fetch_video", lambda link: _info())
+    out = bv.learn_shared_video(_cfg(), "BV1GJ411x7h7", store=store,
+                                llm=FakeLLM(),
+                                on_usage=lambda result, note: None)
+    assert out["cached"] is True
+    assert calls["like"] == (COOKIE, 80433022, "BV1GJ411x7h7")
+    assert calls["comment"][:3] == (COOKIE, 80433022, "BV1GJ411x7h7")
+    assert calls["comment"][3]  # 没有旧评论时从记忆截一段
+    row = store.entries()[0]
+    assert row["aid"] == 80433022
+    assert row["like_status"] == "liked"
+    assert row["comment_status"] == "posted"
+    assert row["comment"] == calls["comment"][3]
+
+
+def test_shared_video_no_cookie_skips_writes(tmp_path, monkeypatch):
+    monkeypatch.setattr(bv, "fetch_video", lambda link: _info())
+    monkeypatch.setattr(bv, "fetch_comments", lambda aid, limit=12: list(COMMENTS))
+    monkeypatch.setattr(bv, "like_video", lambda *a, **k: (_ for _ in ()).throw(
+        AssertionError("没有 Cookie 不能点赞")))
+    monkeypatch.setattr(bv, "comment_video", lambda *a, **k: (_ for _ in ()).throw(
+        AssertionError("没有 Cookie 不能评论")))
+    store = TrainingMemoryStore(tmp_path / "training.json")
+    out = bv.learn_shared_video(_cfg(bilibili_cookie=""), "BV1GJ411x7h7",
+                                store=store, llm=FakeLLM(),
+                                on_usage=lambda result, note: None)
+    assert out["learned"] is True
+    assert out["like_status"] == "skipped"
+    assert out["comment_status"] == "skipped"
+    assert out["comment"] == ""
+    assert "Cookie" in out["like_error"]
+    entry = store.entries()[0]
+    assert entry["like_status"] == "skipped"
+    assert entry["comment_status"] == "skipped"
+
+
+def test_shared_video_respects_disabled_fishing_switches(tmp_path, monkeypatch):
+    monkeypatch.setattr(bv, "fetch_video", lambda link: _info())
+    monkeypatch.setattr(bv, "fetch_comments", lambda aid, limit=12: list(COMMENTS))
+    monkeypatch.setattr(bv, "like_video", lambda *a, **k: (_ for _ in ()).throw(
+        AssertionError("点赞开关关闭")))
+    monkeypatch.setattr(bv, "comment_video", lambda *a, **k: (_ for _ in ()).throw(
+        AssertionError("评论开关关闭")))
+    store = TrainingMemoryStore(tmp_path / "training.json")
+    llm = FakeLLM(text=json.dumps({"memory": MEMORY, "comment": COMMENT},
+                                  ensure_ascii=False))
+    out = bv.learn_shared_video(
+        _cfg(bili_training_like=False, bili_training_comment=False),
+        "BV1GJ411x7h7", store=store, llm=llm,
+        on_usage=lambda result, note: None)
+    assert out["like_status"] == "disabled"
+    assert out["comment_status"] == "disabled"
+    assert out["comment"] == ""
+    assert store.entries()[0]["comment"] == ""
+
+
 def test_learn_shared_video_reuses_cached_memory(tmp_path, monkeypatch):
     monkeypatch.setattr(bv, "fetch_video", lambda link: _info())
     monkeypatch.setattr(bv, "fetch_comments", lambda aid, limit=12: list(COMMENTS))
@@ -177,7 +333,8 @@ def test_complete_json_falls_back_for_simple_llm():
     result = bv._complete_json(Plain(), [{"role": "user", "content": "x"}],
                                LiveConfig())
     assert result["ok"] is True
-    assert bv._memory_from_result(result) == MEMORY
+    memory, comment = bv._payload_from_result(result)
+    assert memory == MEMORY and comment == ""
 
 
 def test_format_clock():

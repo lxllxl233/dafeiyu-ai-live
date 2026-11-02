@@ -483,6 +483,16 @@ def cmd_learn(args) -> int:
     else:
         print("只读到公开文字，未写入长期记忆：")
     print(str(result.get("memory") or "（没有生成记忆）"))
+    if result.get("like_status") and result["like_status"] != "disabled":
+        print(f"点赞：{result['like_status']}")
+        if result.get("like_error"):
+            print(f"  {result['like_error']}")
+    if result.get("comment_status") and result["comment_status"] != "disabled":
+        print(f"评论：{result['comment_status']}")
+        if result.get("comment_error"):
+            print(f"  {result['comment_error']}")
+        if result.get("comment"):
+            print(str(result["comment"]))
     if result.get("warning"):
         print(f"WARN {result['warning']}")
     return 0

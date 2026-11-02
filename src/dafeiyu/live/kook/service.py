@@ -568,6 +568,8 @@ class KookService:
                     "cached": bool(learned.get("cached")),
                     "learned": bool(learned.get("learned")),
                     "chars": len(str(learned.get("memory") or "")),
+                    "like": str(learned.get("like_status") or ""),
+                    "comment": str(learned.get("comment_status") or ""),
                     "warning": str(learned.get("warning") or "")[:200],
                 })
         try:
@@ -701,9 +703,13 @@ class KookService:
             self._log_usage(result, note=note, msg=msg)
 
         try:
+            cfg = LiveConfig.load()
+        except Exception:
+            cfg = self.cfg
+        try:
             return learn_shared_video(
-                self.cfg, caption,
-                persona=self.cfg.kook_persona or "companion",
+                cfg, caption,
+                persona=cfg.kook_persona or "companion",
                 llm=self.llm, on_slow=on_slow, on_usage=on_usage)
         except Exception as exc:  # noqa: BLE001 - 一条坏链接不能带崩聊天
             return {"ok": False, "kind": "exception",
