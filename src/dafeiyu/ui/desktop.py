@@ -882,7 +882,7 @@ def blend_pet_sprites(old: Image.Image, new: Image.Image, k: float) -> Image.Ima
     """两张朝向精灵交叉淡化；按底边中心对齐（三视图宽度/镜像都不一样）。
 
     不能把两张都乘 alpha 再 alpha_composite：半透明叠半透明只有 75% 不透明度，
-    转圈时会整只鱼发灰。这里先把两张各自贴到同尺寸透明画布；重叠区做颜色混合，
+    换向时会整只鱼发灰。这里先把两张各自贴到同尺寸透明画布；重叠区做颜色混合，
     只有一张存在的区域保留原色，而 alpha 仍按 k 线性淡入淡出——否则新朝向的
     轮廓会在 k=0 就整块出现，看起来像有一帧「超前」的画面。
     """
@@ -1110,48 +1110,6 @@ class PetIdle:
         return math.sin(p * math.pi * 3.0) * (1.0 - p) * 3.0 * float(scale or 1.0)
 
 
-class PetSpin:
-    """左键轻点的转圈：侧左 → 背面 → 侧右 → 正面。
-
-    只切朝向，交叉淡入由 ``PetMotion.face_to`` + ``render_pet`` 负责。
-    四段每段 0.24s，整体不到 1 秒；转圈用比拖拽稍短的 0.08s 叠化，
-    旧图退得快一点，不会在「朝左」时还挂着一整张朝前的脸。
-    """
-
-    SEQUENCE = (("side", False), ("back", False),
-                ("side", True), ("front", False))
-    STEP = 0.24
-    BLEND = 0.08
-
-    def __init__(self) -> None:
-        self.started = 0.0
-        self.until = 0.0
-        self._index = -1
-
-    def start(self, now: float) -> None:
-        self.started = float(now)
-        self.until = self.started + self.STEP * len(self.SEQUENCE)
-        self._index = -1
-
-    def cancel(self) -> None:
-        self.started = self.until = 0.0
-        self._index = -1
-
-    def active(self, now: float) -> bool:
-        return bool(self.started and now < self.until)
-
-    def tick(self, now: float) -> tuple[str, bool] | None:
-        """到下一段时返回 ``(facing, face_right)``；同一段只返回一次。"""
-        if not self.active(now):
-            return None
-        index = min(len(self.SEQUENCE) - 1,
-                    int(max(0.0, now - self.started) / self.STEP))
-        if index <= self._index:
-            return None
-        self._index = index
-        return self.SEQUENCE[index]
-
-
 def blink_pet_sprite(sprite: Image.Image) -> Image.Image:
     """画一帧闭眼：盖住正面精灵的眼睛再补一条闭眼线。
 
@@ -1347,11 +1305,7 @@ def render_pet(text: str, mode: str, scale: float, now: float, pet) -> Image.Ima
         prev_face = None
     if prev_face and prev_face != (facing, face_right):
         mix_at = float(getattr(pet, "pet_face_mix_at", -1.0) or -1.0)
-        blend_span = PET_FACE_BLEND
-        spin = getattr(pet, "pet_spin", None)
-        if spin is not None and spin.active(now):
-            blend_span = spin.BLEND
-        mix = (now - mix_at) / blend_span if mix_at >= 0 else 1.0
+        mix = (now - mix_at) / PET_FACE_BLEND if mix_at >= 0 else 1.0
         if 0.0 <= mix < 1.0:
             smooth = mix * mix * (3.0 - 2.0 * mix)      # smoothstep：两头慢、中间快
             sprite = blend_pet_sprites(
@@ -3493,7 +3447,9 @@ class PetWindow(StreamerWindow):
         self.celebrate_start = 0.0
         self.celebrate_until = 0.0
         self.pet_idle = PetIdle()
-        self.pet_spin = PetSpin()
+        # 左键轻点 → 后台 LLM 回复；同一时间只跑一条，避免连点刷 API。
+        self._pet_chat_busy = False
+        self._pet_chat_lock = threading.Lock()
         self._drag_until = 0.0
         self._release_at = 0.0
         # 原生 HTCAPTION 拖动会让系统模态移动循环卡住本线程的主循环，
@@ -3676,8 +3632,6 @@ class PetWindow(StreamerWindow):
         if (self._dragging or self.motion.active(now)
                 or now < self._drag_until or now < self.talk_until
                 or now < self.celebrate_until
-                or (getattr(self, "pet_spin", None) is not None
-                    and self.pet_spin.active(now))
                 or (getattr(self, "pet_idle", None) is not None
                     and self.pet_idle.active(now))):
             return 1.0 / PET_DRAG_FPS
@@ -3705,7 +3659,6 @@ class PetWindow(StreamerWindow):
             rect = wintypes.RECT()
             user32.GetWindowRect(hwnd, ctypes.byref(rect))
             self._dragging = True
-            self.pet_spin.cancel()
             self._drag_anchor = (pt.x, pt.y)
             self._drag_origin = (rect.left, rect.top)
             self._drag_last_cursor = (pt.x, pt.y)
@@ -3763,14 +3716,60 @@ class PetWindow(StreamerWindow):
             self._on_tap(now)
 
     def _on_tap(self, now: float | None = None) -> None:
-        """轻点鱼身：朝左 → 后 → 右 → 正转一圈，全程交叉淡入。"""
+        """轻点鱼身：不播朝向动画，后台问一次 LLM，回一句气泡台词。"""
         now = time.perf_counter() if now is None else float(now)
-        self.pet_spin.start(now)
-        # 不要等下一次 frame() 才切第一张：否则 30fps 排程下会先多留一帧正面。
-        phase = self.pet_spin.tick(now)
-        if phase:
-            self.motion.face_to(phase[0], phase[1], now)
         self.pet_idle.reset(now)
+        self.dirty = True
+        self._request_pet_reply()
+
+    def _request_pet_reply(self) -> None:
+        """只允许一条点击回复在跑；连点不会叠出几次 API 请求。"""
+        lock = getattr(self, "_pet_chat_lock", None)
+        if lock is None:
+            lock = self._pet_chat_lock = threading.Lock()
+        with lock:
+            if self._pet_chat_busy:
+                return
+            self._pet_chat_busy = True
+        try:
+            threading.Thread(target=self._pet_reply_worker,
+                             name="dafeiyu-pet-click", daemon=True).start()
+        except Exception as exc:  # noqa: BLE001 - 线程起不来也不能卡住点击
+            with lock:
+                self._pet_chat_busy = False
+            print(f"桌宠点击回复启动失败：{exc}", flush=True)
+
+    def _pet_reply_worker(self) -> None:
+        """后台线程：LLM 请求 → 主线程能读的 push；不要在 UI 线程等网络。"""
+        result = {"ok": False, "text": "", "error": "未执行"}
+        try:
+            from ..live.pet_chat import click_reply, fallback_line
+
+            result = click_reply()
+        except Exception as exc:  # noqa: BLE001 - 模型/配置/人设任何异常都只算失败
+            print(f"桌宠点击回复失败：{type(exc).__name__}: {exc}", flush=True)
+            fallback_line = None
+
+        if not isinstance(result, dict):
+            result = {"ok": False, "text": "", "error": "回复格式无效"}
+        text = str(result.get("text") or "") if result.get("ok") else ""
+        if not text:
+            print(f"桌宠点击回复失败：{result.get('error') or '空回复'}", flush=True)
+            try:
+                if fallback_line is None:
+                    from ..live.pet_chat import fallback_line as _fallback
+                    fallback_line = _fallback
+                text = fallback_line()
+            except Exception:
+                text = "唔…你戳我干嘛。"
+
+        if getattr(self, "running", True) and text:
+            try:
+                self.push("", text)
+            except Exception as exc:  # noqa: BLE001 - 窗口关闭/音频失败不拖垮线程
+                print(f"桌宠点击回复显示失败：{exc}", flush=True)
+        with getattr(self, "_pet_chat_lock", threading.Lock()):
+            self._pet_chat_busy = False
         self.dirty = True
 
     @staticmethod
@@ -3789,9 +3788,8 @@ class PetWindow(StreamerWindow):
             elif now > self._drag_until:
                 self.motion.relax()      # 按着不动：形变慢慢收回，朝向不变
             return
-        if (not self.pet_spin.active(now)
-                and now > self._drag_until and now > self._release_at + 0.45):
-            # 松开 0.45s 后转回正面；转圈动画期间交给 PetSpin，别抢朝向。
+        if now > self._drag_until and now > self._release_at + 0.45:
+            # 松开 0.45s 后转回正面。
             self.motion.face_to("front", False, now)
 
     def _hot_zone_point(self, px: int, py: int, rect, scale: float) -> bool:
@@ -3846,17 +3844,17 @@ class PetWindow(StreamerWindow):
     def frame(self) -> Image.Image:
         now = time.perf_counter()
         self._track_drag(now)
-        phase = self.pet_spin.tick(now)
-        if phase:
-            self.motion.face_to(phase[0], phase[1], now)
         self.motion.tick(now)
         self._sync_motion()
         mode = self.tick_presence()
+        if mode == "idle" and getattr(self, "_pet_chat_busy", False):
+            # 点击后等模型这一两秒，先用「思考ing」占住气泡；回复到了 push 会切 speaking。
+            mode = "thinking"
         if self.presence.dirty:
             self.presence.dirty = False
-        if mode == "idle" and not self.pet_spin.active(now):
+        if mode == "idle":
             self.pet_idle.tick(now)
-        elif mode != "idle" and self.pet_idle.action:
+        elif self.pet_idle.action:
             # 说话/思考时把待机动作收掉；下一次 idle 再重新排。
             self.pet_idle.reset(now)
         return render_pet(self.display_text(mode), mode, self.scale, now, self)
@@ -3905,7 +3903,7 @@ class PetWindow(StreamerWindow):
 
     def _run_hint(self) -> str:
         return ("桌宠已启动：左键拖（左右/上下换朝向，带倾斜和速度线）· "
-                "左键轻点转一圈（左→后→右→前）· 滚轮/右下角=缩放 · 右键设置 · 穿透时鼠标贴鱼身 · "
+                "左键轻点让她回一句 LLM 台词 · 滚轮/右下角=缩放 · 右键设置 · 穿透时鼠标贴鱼身 · "
                 "Ctrl+Alt+D 穿透 · Ctrl+Alt+S 声音 · Ctrl+Alt+H 隐藏 · Ctrl+Alt+Q 退出")
 
 

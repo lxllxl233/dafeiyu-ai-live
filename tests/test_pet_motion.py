@@ -130,10 +130,6 @@ def test_frame_rate_idle_vs_drag():
     win.motion.energy = 0.0
     win._dragging = True
     assert win._frame_interval(10.0) == pytest.approx(1 / desktop.PET_DRAG_FPS)
-    win._dragging = False
-    win.pet_spin = desktop.PetSpin()
-    win.pet_spin.start(10.0)
-    assert win._frame_interval(10.1) == pytest.approx(1 / desktop.PET_DRAG_FPS)
 
 
 def _alpha_canvas(sprite, size):
@@ -162,19 +158,6 @@ def test_crossfade_midpoint_keeps_body_opaque():
     side = desktop.load_pet_sprite("side", 300)
     mid = desktop.blend_pet_sprites(front, side, 0.5)
     assert mid.getpixel((mid.width // 2, int(mid.height * 0.6)))[3] == 255
-
-
-def test_spin_crossfade_is_shorter_than_drag_crossfade():
-    now = time.perf_counter()
-    spin = desktop.PetSpin()
-    spin.start(now)
-    pet = _pet(pet_facing="side", pet_face_prev=("front", False),
-               pet_face_mix_at=now - spin.BLEND / 2, pet_spin=spin)
-    fading = desktop.render_pet("", "idle", 1.0, now, pet)
-    pet.pet_face_mix_at = now - spin.BLEND - 0.001
-    done = desktop.render_pet("", "idle", 1.0, now, pet)
-    assert spin.BLEND < desktop.PET_FACE_BLEND
-    assert fading.tobytes() != done.tobytes()
 
 
 def test_render_pet_crossfades_between_facings():
@@ -225,22 +208,7 @@ def test_render_pet_blinks_without_mutating_sprite():
     assert desktop.load_pet_sprite("front", 300).tobytes() == before
 
 
-def test_pet_spin_plays_four_facings_in_order():
-    spin = desktop.PetSpin()
-    spin.start(10.0)
-    assert spin.tick(10.0) == ("side", False)
-    assert spin.tick(10.1) is None, "同一段不能重复切"
-    assert spin.tick(10.25) == ("back", False)
-    assert spin.tick(10.49) == ("side", True)
-    assert spin.tick(10.73) == ("front", False)
-    assert spin.active(10.95) is True
-    assert spin.active(10.96) is False
-    spin.start(20.0)
-    spin.cancel()
-    assert spin.active(20.0) is False
-
-
-def test_pointer_up_only_spins_when_short_and_still(monkeypatch):
+def test_pointer_up_only_requests_reply_when_short_and_still(monkeypatch):
     monkeypatch.setattr(desktop.user32, "ReleaseCapture", lambda: 0)
     win = desktop.PetWindow.__new__(desktop.PetWindow)
     win.motion = _motion()
@@ -250,21 +218,19 @@ def test_pointer_up_only_spins_when_short_and_still(monkeypatch):
     win._drag_moved = 0.0
     win._save_pos = lambda: None
     win.pet_idle = desktop.PetIdle(seed=3)
-    win.pet_spin = desktop.PetSpin()
     win.dirty = False
+    calls = []
+    win._request_pet_reply = lambda: calls.append(1)
 
     win._end_drag(10.2)
-    assert win.pet_spin.active(10.2), "短按不动应该开始转圈"
-    assert win.motion.facing == "side", "第一张要立即切到朝左，不能等下一帧"
-    assert win.motion.face_mix_at == pytest.approx(10.2)
-    assert win.pet_spin.tick(10.2) is None, "第一段已经在点击时消费掉了"
+    assert calls == [1], "短按不动应该请求一次 LLM 回复"
+    assert win.motion.facing == "front", "点击不再切朝向"
 
-    win.pet_spin.cancel()
     win._dragging = True
     win._drag_started_at = 11.0
     win._drag_moved = 12.0
     win._end_drag(11.2)
-    assert win.pet_spin.active(11.2) is False, "真的拖动过就不该转圈"
+    assert calls == [1], "真的拖动过就不该请求回复"
 
 
 def test_render_pet_does_not_mutate_cached_sprites():
