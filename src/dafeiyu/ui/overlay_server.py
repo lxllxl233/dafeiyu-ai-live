@@ -677,6 +677,44 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(500, json.dumps({"ok": False, "error": f"{type(exc).__name__}: {exc}"},
                                            ensure_ascii=False).encode("utf-8"),
                            "application/json; charset=utf-8")
+        elif path == "/api/llm/traces":
+            try:
+                from dafeiyu.live import llm_trace
+
+                qs = urllib.parse.parse_qs(
+                    self.path.split("?", 1)[1] if "?" in self.path else "")
+                page = (qs.get("page") or ["1"])[0]
+                per = (qs.get("per") or ["10"])[0]
+                source = (qs.get("source") or [""])[0]
+                body = json.dumps(
+                    llm_trace.page(page=page, per=per, source=source),
+                    ensure_ascii=False).encode("utf-8")
+                self._send(200, body, "application/json; charset=utf-8")
+            except Exception as exc:  # noqa: BLE001 - 轨迹坏了不能拖垮控制台
+                self._send(500, json.dumps(
+                    {"ok": False, "error": f"{type(exc).__name__}: {exc}"},
+                    ensure_ascii=False).encode("utf-8"),
+                    "application/json; charset=utf-8")
+        elif path.startswith("/api/llm/traces/"):
+            try:
+                from dafeiyu.live import llm_trace
+
+                trace_id = urllib.parse.unquote(path[len("/api/llm/traces/"):])
+                row = llm_trace.get(trace_id)
+                if row is None:
+                    self._send(404, json.dumps(
+                        {"ok": False, "error": "这条轨迹不存在"},
+                        ensure_ascii=False).encode("utf-8"),
+                        "application/json; charset=utf-8")
+                else:
+                    self._send(200, json.dumps(
+                        {"ok": True, "trace": row}, ensure_ascii=False).encode("utf-8"),
+                        "application/json; charset=utf-8")
+            except Exception as exc:  # noqa: BLE001
+                self._send(500, json.dumps(
+                    {"ok": False, "error": f"{type(exc).__name__}: {exc}"},
+                    ensure_ascii=False).encode("utf-8"),
+                    "application/json; charset=utf-8")
         elif path == "/api/studio":
             try:
                 from dafeiyu.ui.studio import get_runtime

@@ -316,6 +316,39 @@
   .train-pager button:disabled{opacity:.35;cursor:not-allowed}
   .train-editor-grid{display:grid;grid-template-columns:2fr 1fr 2fr 1fr;gap:10px}
   .train-editor-grid input{width:100%}
+  /* 模型思考：每轮对话前实际拿到的上下文 + thought */
+  .thought-toolbar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:4px}
+  .thought-toolbar h2{margin:0}
+  .thought-tools{margin-left:auto;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .thought-tools select{background:var(--bg);color:var(--text);border:1px solid var(--line);
+    border-radius:7px;padding:5px 7px;font-size:11.5px}
+  .thought-list{display:flex;flex-direction:column;gap:10px;margin-top:10px}
+  .thought-row{border:1px solid var(--line);border-radius:12px;padding:11px 13px;
+    background:linear-gradient(180deg, rgba(255,255,255,.03), rgba(255,255,255,.01))}
+  .thought-row.hot{border-color:rgba(244,201,104,.30);background:rgba(244,201,104,.035)}
+  .thought-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:10.5px;
+    color:var(--muted)}
+  .thought-source{color:var(--gold);border:1px solid rgba(244,201,104,.35);
+    background:rgba(244,201,104,.08);border-radius:999px;padding:1px 8px;font-size:10px}
+  .thought-ok{color:var(--ok)}.thought-bad{color:var(--bad)}
+  .thought-row .mini-label{display:block;margin:9px 0 2px}
+  .thought-text{font-size:12.4px;line-height:1.65;color:#dfe6f3;white-space:pre-wrap;
+    word-break:break-word}
+  .thought-text.think{color:#f4d692}
+  .thought-text.reply{color:#b9c7de}
+  .thought-empty{font-size:11.5px;line-height:1.6;color:var(--muted)}
+  .thought-detail-meta{font-size:11px;color:var(--muted);line-height:1.7;margin-bottom:10px;
+    word-break:break-word}
+  .thought-msg{border-top:1px dashed var(--line);padding:9px 0}
+  .thought-msg:first-of-type{border-top:0;padding-top:0}
+  .thought-msg-head{display:flex;gap:8px;align-items:center;font-size:10.5px;color:var(--muted);
+    margin-bottom:4px}
+  .thought-msg-head b{color:var(--gold);font-weight:600;letter-spacing:.4px}
+  .thought-msg pre,.thought-block pre{white-space:pre-wrap;word-break:break-word;margin:0;
+    font:11.5px/1.7 Consolas,"Cascadia Mono",monospace;color:#dbe2f2;max-height:360px;
+    overflow:auto;background:rgba(0,0,0,.16);border:1px solid var(--line);border-radius:8px;
+    padding:8px 10px}
+  .thought-block{margin-top:10px}
   @media (max-width:900px){.train-editor-grid{grid-template-columns:1fr 1fr}}
   @media (max-width:1100px){.run-grid,.game-hero{grid-template-columns:1fr}.hero-control{max-width:none}}
   @media (max-width:720px){.stat-grid,.play-settings,.rec-policy{grid-template-columns:repeat(2,minmax(0,1fr))}
@@ -379,6 +412,8 @@
         <i>◉</i><span>直播间</span><b id="navRoom">—</b></button>
       <button class="nav-item" type="button" data-view="interaction">
         <i>✉</i><span>互动</span><b id="navSaid">0</b></button>
+      <button class="nav-item" type="button" data-view="thoughts">
+        <i>☁</i><span>模型思考</span><b id="navThoughts">—</b></button>
       <button class="nav-item" type="button" data-view="agent">
         <i>⌁</i><span>Agent 流程</span><b id="navAgent">—</b></button>
       <button class="nav-item" type="button" data-view="telemetry">
@@ -803,6 +838,57 @@
       </div>
     </section>
 
+    <section class="view" data-view="thoughts" id="view-thoughts">
+      <div class="view-head">
+        <div>
+          <span class="eyebrow">MODEL TRACE / BEFORE REPLY</span>
+          <h2>模型思考</h2>
+          <p>每轮真正发给模型的上下文、她回复前写下的 thought 和最终回复，都只记在本机。
+            这里分页看，不会发给对方，也不会进聊天记录。</p>
+        </div>
+        <div class="head-actions">
+          <button class="btn ghost" id="thoughtRefresh" type="button">刷新</button>
+          <a href="#telemetry">看运行日志 →</a>
+        </div>
+      </div>
+      <div class="card">
+        <div class="thought-toolbar">
+          <h2>对话轨迹 <span id="thoughtTraceCount">—</span></h2>
+          <div class="thought-tools">
+            <label class="hint">来源
+              <select id="thoughtSource" onchange="thoughtFilter(this.value)">
+                <option value="">全部</option>
+              </select>
+            </label>
+            <label class="hint">每页
+              <select id="thoughtPer" onchange="thoughtPerPage(this.value)">
+                <option value="5">5 轮</option>
+                <option value="10" selected>10 轮</option>
+                <option value="20">20 轮</option>
+                <option value="30">30 轮</option>
+              </select>
+            </label>
+          </div>
+        </div>
+        <div class="hint" id="thoughtHint" style="line-height:1.75;color:var(--muted);margin-bottom:4px">
+          优先生成 thought；provider 返回 reasoning_content 时也会一起显示。聊天为了速度默认关着
+          thinking，所以没有 thought/reasoning 的轮次会如实写「本轮没留思考」，但完整上下文仍可展开。
+        </div>
+        <div class="thought-list" id="thoughtList">
+          <div class="empty">还没有模型对话。KOOK 收到消息后这里会出现第一轮。</div>
+        </div>
+        <div id="thoughtPager" class="train-pager"></div>
+        <span class="hint" id="thoughtState"></span>
+      </div>
+      <div class="card" id="thoughtDetailCard" style="display:none;margin-top:16px">
+        <h2>完整一轮 <span id="thoughtDetailMeta">—</span></h2>
+        <div id="thoughtDetail"></div>
+        <div class="row" style="margin-top:10px">
+          <button class="btn ghost" type="button" onclick="closeThoughtDetail()">收起</button>
+        </div>
+      </div>
+    </section>
+
     <section class="view" data-view="room" id="view-room">
       <div class="view-head">
         <div>
@@ -1197,6 +1283,192 @@ function renderTrainingPage(){
 function trainPage(delta){
   TRAIN_PAGE += Number(delta || 0);
   renderTrainingPage();
+}
+
+let THOUGHT_PAGE = 1;
+let THOUGHT_PER = 10;
+let THOUGHT_SOURCE = "";
+let THOUGHT_DATA = null;
+let THOUGHT_DETAIL_ID = "";
+let THOUGHT_BUSY = false;
+let CURRENT_VIEW = "basic";
+
+function thoughtTime(ts){
+  if(!ts) return "—";
+  return new Date(ts * 1000).toLocaleString("zh-CN", {hour12:false});
+}
+
+function renderThoughtSources(){
+  const sel = $("#thoughtSource");
+  if(!sel) return;
+  const current = THOUGHT_SOURCE;
+  const rows = THOUGHT_DATA?.sources || [];
+  sel.innerHTML = '<option value="">全部</option>' + rows.map(row =>
+    `<option value="${esc(row.source)}">${esc(row.source)} · ${Number(row.count || 0)}</option>`
+  ).join("");
+  sel.value = rows.some(row => row.source === current) ? current : "";
+  THOUGHT_SOURCE = sel.value;
+}
+
+function renderThoughts(){
+  const list = $("#thoughtList");
+  if(!list) return;
+  const data = THOUGHT_DATA || {};
+  const stats = data.stats || {};
+  const total = Number(stats.total || 0);
+  const count = $("#thoughtTraceCount");
+  if(count) count.textContent = total
+    ? `共 ${total} 轮 · thought ${Number(stats.thought || 0)} · 推理 ${Number(stats.reasoning || 0)}`
+    : "共 0 轮";
+  const nav = $("#navThoughts");
+  if(nav) nav.textContent = total ? String(total) : "—";
+  renderThoughtSources();
+  const rows = data.items || [];
+  if(!rows.length){
+    const src = THOUGHT_SOURCE ? `「${esc(THOUGHT_SOURCE)}」` : "";
+    list.innerHTML = `<div class="hint" style="padding:10px 0">${src
+      ? `没有${src}的轨迹。` : "还没有模型对话。KOOK 收到消息后这里会出现第一轮。"}</div>`;
+    $("#thoughtPager").innerHTML = "";
+    return;
+  }
+  list.innerHTML = rows.map(row => {
+    const status = row.ok ? "" : '<span class="thought-bad">失败</span>';
+    const think = row.has_thought
+      ? `<div class="mini-label">回复前的 thought</div><div class="thought-text think">${esc(row.thought)}</div>`
+      : row.has_reasoning
+        ? `<div class="mini-label">模型推理 reasoning_content</div><div class="thought-text think">${esc(row.reasoning)}</div>`
+        : `<div class="mini-label">思考</div><div class="thought-empty">本轮没留思考；展开可看她实际拿到的人设、记忆和最近对话。</div>`;
+    const trigger = row.preview
+      ? `<div class="mini-label">这轮触发</div><div class="thought-text">${esc(row.preview)}</div>`
+      : "";
+    const reply = row.reply
+      ? `<div class="mini-label">最终回复</div><div class="thought-text reply">${esc(row.reply)}</div>`
+      : "";
+    const err = row.error
+      ? `<div class="mini-label">错误</div><div class="thought-text" style="color:#ff9b9b">${esc(row.error)}</div>`
+      : "";
+    return `<div class="thought-row ${row.has_thought || row.has_reasoning ? "hot" : ""}">
+      <div class="thought-head">
+        <span class="thought-source">${esc(row.source)}</span>
+        <span>${esc(thoughtTime(row.at))}</span>
+        <span>${esc(row.model || "—")}</span>
+        <span>${Number(row.total || 0)} tok</span>
+        <span>${Number(row.ms || 0)}ms</span>
+        <span>${Number(row.message_count || 0)} 条上下文</span>
+        ${status}
+        ${row.id ? `<button class="btn ghost sm" type="button" style="margin-left:auto"
+          onclick="openThought('${esc(row.id)}')">完整上下文</button>` : ""}
+      </div>
+      ${think}${trigger}${reply}${err}
+    </div>`;
+  }).join("");
+  $("#thoughtPager").innerHTML = `
+    <button type="button" ${Number(data.page || 1) <= 1 ? "disabled" : ""} onclick="thoughtGo(-1)">上一页</button>
+    <span>第 ${Number(data.page || 1)} / ${Number(data.pages || 1)} 页 · 共 ${Number(data.total || 0)} 轮</span>
+    <button type="button" ${Number(data.page || 1) >= Number(data.pages || 1) ? "disabled" : ""} onclick="thoughtGo(1)">下一页</button>`;
+}
+
+async function loadThoughts(page, quiet){
+  if(THOUGHT_BUSY && quiet) return;
+  THOUGHT_BUSY = true;
+  const state = $("#thoughtState");
+  if(state && !quiet) state.textContent = "读取中…";
+  const q = new URLSearchParams({
+    page: String(page || THOUGHT_PAGE || 1),
+    per: String(THOUGHT_PER),
+  });
+  if(THOUGHT_SOURCE) q.set("source", THOUGHT_SOURCE);
+  try{
+    const r = await fetch("/api/llm/traces?" + q.toString(), {cache:"no-store"});
+    if(!r.ok) throw new Error("HTTP " + r.status);
+    const data = await r.json();
+    if(!data.ok) throw new Error(data.error || "读取失败");
+    THOUGHT_DATA = data;
+    THOUGHT_PAGE = Number(data.page || 1);
+    renderThoughts();
+    if(state) state.textContent = `更新于 ${new Date().toLocaleTimeString("zh-CN", {hour12:false})}`;
+  }catch(e){
+    if(state) state.textContent = "读取失败：" + e.message;
+    toast("模型轨迹读取失败：" + e.message, true);
+  }finally{
+    THOUGHT_BUSY = false;
+  }
+}
+
+function thoughtFilter(value){
+  THOUGHT_SOURCE = String(value || "");
+  THOUGHT_PAGE = 1;
+  closeThoughtDetail();
+  loadThoughts(1);
+}
+
+function thoughtPerPage(value){
+  THOUGHT_PER = Number(value) || 10;
+  THOUGHT_PAGE = 1;
+  loadThoughts(1);
+}
+
+function thoughtGo(delta){
+  const next = THOUGHT_PAGE + Number(delta || 0);
+  if(next < 1) return;
+  loadThoughts(next);
+}
+
+function renderThoughtDetail(row){
+  const meta = $("#thoughtDetailMeta");
+  if(meta){
+    meta.textContent = `${row.source || "模型对话"} · ${thoughtTime(row.at)} · `
+      + `${row.model || "—"} · ${Number(row.total || 0)} tok · ${Number(row.ms || 0)}ms`
+      + (row.meta?.msg_id ? ` · ${row.meta.msg_id}` : "");
+  }
+  const parts = [];
+  if(row.thought){
+    parts.push(`<div class="thought-block"><div class="mini-label">回复前的 thought</div>
+      <pre>${esc(row.thought)}</pre></div>`);
+  }
+  if(row.reasoning){
+    parts.push(`<div class="thought-block"><div class="mini-label">模型推理 reasoning_content</div>
+      <pre>${esc(row.reasoning)}</pre></div>`);
+  }
+  const msgs = row.messages || [];
+  parts.push(`<div class="thought-block"><div class="mini-label">实际输入 · ${msgs.length} 条</div>`);
+  parts.push(msgs.map(m => `<div class="thought-msg">
+    <div class="thought-msg-head"><b>${esc(m.role || "?")}</b><span>${Number(m.chars || 0)} 字</span></div>
+    <pre>${esc(m.content || "")}</pre>
+  </div>`).join(""));
+  parts.push(`</div>`);
+  if(row.reply){
+    parts.push(`<div class="thought-block"><div class="mini-label">模型原始回复</div>
+      <pre>${esc(row.reply)}</pre></div>`);
+  }
+  if(row.error){
+    parts.push(`<div class="thought-block"><div class="mini-label">错误</div>
+      <pre style="color:#ff9b9b">${esc(row.error)}</pre></div>`);
+  }
+  $("#thoughtDetail").innerHTML = parts.join("");
+  $("#thoughtDetailCard").style.display = "block";
+}
+
+async function openThought(id){
+  if(!id) return;
+  try{
+    const r = await fetch("/api/llm/traces/" + encodeURIComponent(id), {cache:"no-store"});
+    const data = await r.json();
+    if(!r.ok || !data.ok) throw new Error(data.error || "读取失败");
+    THOUGHT_DETAIL_ID = id;
+    renderThoughtDetail(data.trace || {});
+    $("#thoughtDetailCard").scrollIntoView({behavior:"smooth", block:"start"});
+  }catch(e){
+    toast("读取这轮上下文失败：" + e.message, true);
+  }
+}
+
+function closeThoughtDetail(){
+  THOUGHT_DETAIL_ID = "";
+  const card = $("#thoughtDetailCard");
+  if(card) card.style.display = "none";
+  const body = $("#thoughtDetail");
+  if(body) body.innerHTML = "";
 }
 
 function trainPerPage(value){
@@ -2553,11 +2825,14 @@ async function biliControl(action, bvid){
 }
 
 const VIEW_ALIASES = {settings:"basic", basic:"basic", games:"games", persona:"persona",
-  training:"training", room:"room", interaction:"interaction", agent:"agent", telemetry:"telemetry"};
+  training:"training", room:"room", interaction:"interaction", thoughts:"thoughts",
+  agent:"agent", telemetry:"telemetry"};
 function setView(name, updateHash){
   const target = VIEW_ALIASES[name] || "basic";
+  CURRENT_VIEW = target;
   document.querySelectorAll(".view").forEach(v => v.classList.toggle("active", v.dataset.view === target));
   document.querySelectorAll(".nav-item").forEach(v => v.classList.toggle("active", v.dataset.view === target));
+  if(target === "thoughts") loadThoughts(THOUGHT_PAGE);
   if(target === "games" && !GAME_SEL){
     const cur = (DATA?.config || {}).game || "";
     if(cur) openGame(cur);      // 进游戏页先展开当前游戏的详情
@@ -2629,6 +2904,7 @@ $("#playPace").addEventListener("change", savePlaySettings);
 $("#playLlmModel").addEventListener("change", savePlaySettings);
 $("#roomSend").addEventListener("click", sendRoom);
 $("#roomRefresh").addEventListener("click", (e) => { e.preventDefault(); refresh(); });
+$("#thoughtRefresh").addEventListener("click", () => loadThoughts(THOUGHT_PAGE));
 $("#roomText").addEventListener("keydown", (e) => {
   if(e.key === "Enter" && !e.shiftKey){ e.preventDefault(); sendRoom(); }
 });
@@ -2644,6 +2920,10 @@ setCounter();
 refresh();
 loadPersona();
 setInterval(refresh, 3000);
+// 模型思考页打开且没展开详情时静默刷新，能边聊边看；翻页/筛选时不打断。
+setInterval(() => {
+  if(CURRENT_VIEW === "thoughts" && !THOUGHT_DETAIL_ID) loadThoughts(THOUGHT_PAGE, true);
+}, 6000);
 </script>
 </body>
 </html>

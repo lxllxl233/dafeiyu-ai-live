@@ -424,7 +424,10 @@ class KookService:
                             allow_voice=bool(self.cfg.kook_allow_voice))),
                 })
             model = chat_mod.pick_model(self.cfg, messages)
-            result = self._complete(messages, model)
+            result = self._complete(
+                messages, model, trace_note="KOOK 主动消息",
+                trace_meta={"target_id": target, "idle_minutes": idle_minutes,
+                            "attempt": attempt + 1})
             if result.get("usage"):
                 self._log_usage(result, note="KOOK 主动消息", msg=msg)
             if not result.get("ok"):
@@ -475,6 +478,7 @@ class KookService:
             ["sticker"] if sticker_ok else [])
         self._log({"kind": "proactive", "action": "+".join(actions),
                    "chars": len(text), "parts": len(texts),
+                   "thought": str(reply.get("thought") or "")[:200],
                    "target_id": target,
                    "ms": int((time.time() - started) * 1000)})
         return bool(sent)
@@ -582,7 +586,11 @@ class KookService:
             return {"ok": bool(sent), "action": "text", "reason": "image_error"}
         model = chat_mod.pick_model(self.cfg, messages)
         started = time.time()
-        result = self._complete(messages, model)
+        result = self._complete(
+            messages, model,
+            trace_meta={"msg_id": msg.message_id,
+                        "target_id": self._reply_target(msg),
+                        "channel_type": msg.channel_type})
         if result.get("usage"):
             self._log_usage(result, note="KOOK 聊天", msg=msg)
         if not result.get("ok"):
@@ -633,6 +641,7 @@ class KookService:
             ["sticker"] if sticker_ok else [])
         self._log({"kind": "reply", "action": "+".join(actions), "chars": len(text),
                    "parts": len(texts), "msg_id": msg.message_id,
+                   "thought": str(reply.get("thought") or "")[:200],
                    "ms": int((time.time() - started) * 1000)})
         return {"ok": bool(sent), "action": "+".join(actions), "reply": text,
                 "texts": texts, "voice": voice_ok, "sticker": sticker_ok}
@@ -791,20 +800,32 @@ class KookService:
         return messages
 
     # ---------------------------------------------------------------- 发送
-    def _complete(self, messages: list[dict], model: str) -> dict:
-        """优先用 JSON 模式；模型/网关不支持时退回普通补全。"""
+    def _trace_complete(self, messages: list[dict], *, trace_note: str,
+                        trace_meta: dict | None = None, **kwargs) -> dict:
+        """给真实 ChatLLM 带上控制台轨迹标签；假 LLM 不认新参数时自动退回。"""
         try:
-            result = self.llm.complete(messages, model=model, json_mode=True)
+            return self.llm.complete(messages, trace_note=trace_note,
+                                     trace_meta=trace_meta, **kwargs)
         except TypeError:
-            return self.llm.complete(messages, model=model)
+            try:
+                return self.llm.complete(messages, **kwargs)
+            except TypeError:
+                return self.llm.complete(messages)
+
+    def _complete(self, messages: list[dict], model: str, *,
+                  trace_note: str = "KOOK 聊天",
+                  trace_meta: dict | None = None) -> dict:
+        """优先用 JSON 模式；模型/网关不支持时退回普通补全。"""
+        result = self._trace_complete(
+            messages, model=model, json_mode=True,
+            trace_note=trace_note, trace_meta=trace_meta)
         if result.get("ok"):
             return result
         # 有些兼容网关开了 response_format 会返回空 content；重试一次普通模式，
         # 别让一条正常消息因为 JSON 模式不可用而丢掉。
-        try:
-            fallback = self.llm.complete(messages, model=model)
-        except TypeError:
-            return result
+        fallback = self._trace_complete(
+            messages, model=model,
+            trace_note=trace_note, trace_meta=trace_meta)
         return fallback if fallback.get("ok") else result
 
     def _limit_media(self, reply: dict, cue: str) -> dict:
@@ -1003,8 +1024,11 @@ class KookService:
         dialogue = self.memory.dialogue(16)
         if not dialogue.strip():
             return
-        result = self.llm.complete(chat_mod.extract_facts_prompt(
-            dialogue, existing=[row.get("text") or "" for row in self.memory.facts(30)]))
+        result = self._trace_complete(
+            chat_mod.extract_facts_prompt(
+                dialogue,
+                existing=[row.get("text") or "" for row in self.memory.facts(30)]),
+            trace_note="KOOK 记忆抽取")
         if result.get("usage"):
             self._log_usage(result, note="KOOK 记忆抽取")
         if not result.get("ok"):
@@ -1019,7 +1043,10 @@ class KookService:
         batch = self.memory.compression_batch(trigger=trigger, keep=8)
         if not batch:
             return
-        result = self.llm.complete(chat_mod.summarize_prompt(batch["turns"]))
+        result = self._trace_complete(
+            chat_mod.summarize_prompt(batch["turns"]),
+            trace_note="KOOK 记忆压缩",
+            trace_meta={"turns": batch.get("count") or len(batch.get("turns") or [])})
         if result.get("usage"):
             self._log_usage(result, note="KOOK 记忆压缩")
         if not result.get("ok"):

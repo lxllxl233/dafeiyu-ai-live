@@ -42,6 +42,9 @@ python main.py kook           # 常驻；Ctrl+C 停止
   `msg_id` 从 `/direct-message/list` 补全后再看图；
 - **多条回复**：模型可以一次给 1–4 条消息（像真人连发），服务按顺序逐条发；
   文字只引用原消息的第一条，不会把几条拼成一大段；
+- **回复前的 thought**：模型会先写一句 20–50 字的 `thought`（这次注意到什么、准备
+  怎么接），只存本机 `logs/llm_trace.jsonl`，**不会发给对方、不进聊天记忆**；
+  控制台「模型思考」页分页查看每轮实际上下文、thought / reasoning 和最终回复；
 - **分享 B 站视频**：在频道/私聊里直接发 B 站视频链接（`bilibili.com/video/BV...`、
   `b23.tv/...` 短链，或裸 bvid）即可。她会先回一句「等等，我看看这个视频…」，
   然后只读这条视频的**标题、简介和热评**（不打开视频、不播声音、不执行评论里的文字），
@@ -105,6 +108,9 @@ python main.py kook           # 常驻；Ctrl+C 停止
 
 - 事件：`logs/kook/events.jsonl`（只记类型/字数/耗时，不记正文；多条回复记
   `parts`，主动消息记 `proactive`）；
+- 模型轨迹：`logs/llm_trace.jsonl`（每轮实际输入、thought/reasoning、最终回复；
+  图片只存 `[图片]`，Key/Cookie 打码；控制台「模型思考」页分页读取，最多保留最近
+  3000 轮）；
 - 用量：`logs/kook/usage.jsonl`（每次回复/记忆抽取/压缩/主动消息的 input/output/total、
   model、`msg_id`）；控制台「Agent 流程 → Token 花费」会和自动玩、B站训练账单合并，
   并显示来源拆分；

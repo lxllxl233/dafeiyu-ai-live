@@ -31,6 +31,10 @@ REQUIRED = {
     "navRoom", "view-room", "roomState", "roomId", "roomCount", "roomLast",
     "roomKinds", "roomHint", "roomText", "roomSend", "roomSendHint",
     "roomFilters", "roomFeed", "roomSeq", "roomRefresh",
+    # 模型思考（分页）
+    "navThoughts", "view-thoughts", "thoughtTraceCount", "thoughtSource",
+    "thoughtPer", "thoughtRefresh", "thoughtList", "thoughtPager",
+    "thoughtState", "thoughtDetailCard", "thoughtDetail", "thoughtDetailMeta",
     # Agent / Token
     "tokApiTotal", "tokApiIO", "tokApiCalls", "tokApiLast", "tokSteps",
     "tokKinds", "tokApiHint",
@@ -127,6 +131,15 @@ def test_start_options_card_is_wired_to_backend():
     assert "startOptionsValues" in HTML
     assert "data-start-key" in HTML
     assert 'id="startOptionsSave"' in HTML
+
+
+def test_model_thought_page_is_wired_to_trace_api():
+    """模型思考页：分页读 /api/llm/traces，完整上下文单独取。"""
+    assert "/api/llm/traces" in HTML
+    assert "loadThoughts" in HTML and "openThought" in HTML
+    assert "thoughtFilter" in HTML and "thoughtPerPage" in HTML
+    assert "thoughtGo" in HTML
+    assert 'thoughts:"thoughts"' in HTML
 
 
 def test_token_card_is_wired_to_api_payload():

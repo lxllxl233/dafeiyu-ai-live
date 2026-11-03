@@ -488,23 +488,32 @@ def memory_messages(persona: str, info: VideoInfo, comments: list[dict],
             {"role": "user", "content": user}]
 
 
-def _complete_json(llm, messages: list[dict], cfg, *, max_tokens: int = 800) -> dict:
+def _complete_json(llm, messages: list[dict], cfg, *, max_tokens: int = 800,
+                   trace_meta: dict | None = None) -> dict:
     """优先 JSON 模式；兼容不支持 kwargs 的假 LLM/网关，失败退回普通补全。"""
-    model = getattr(cfg, "llm_model", None)
+
+    def call(**kwargs) -> dict:
+        try:
+            return llm.complete(messages, model=getattr(cfg, "llm_model", None),
+                                trace_note="B站视频学习", trace_meta=trace_meta,
+                                **kwargs)
+        except TypeError:
+            return llm.complete(messages, model=getattr(cfg, "llm_model", None),
+                                **kwargs)
+
     try:
-        result = llm.complete(messages, model=model, json_mode=True,
-                              max_tokens=max_tokens)
+        result = call(json_mode=True, max_tokens=max_tokens)
     except TypeError:
         try:
-            result = llm.complete(messages, model=model, max_tokens=max_tokens)
+            result = call(max_tokens=max_tokens)
         except TypeError:
-            result = llm.complete(messages, model=model)
+            result = call()
     if result.get("ok"):
         return result
     try:
-        fallback = llm.complete(messages, model=model, max_tokens=max_tokens)
+        fallback = call(max_tokens=max_tokens)
     except TypeError:
-        fallback = llm.complete(messages, model=model)
+        fallback = call()
     return fallback if fallback.get("ok") else result
 
 
@@ -809,7 +818,8 @@ def learn_shared_video(
     result = _complete_json(
         llm,
         memory_messages(persona, info, comments, comment_limit=comment_limit),
-        cfg, max_tokens=1200 if comment_limit else 800)
+        cfg, max_tokens=1200 if comment_limit else 800,
+        trace_meta={"bvid": info.bvid, "title": info.title[:80]})
     note = f"学习视频《{info.title[:36]}》"
     memory = ""
     model_comment = ""

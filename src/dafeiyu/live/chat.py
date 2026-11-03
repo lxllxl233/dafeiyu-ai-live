@@ -32,11 +32,18 @@ _MD_INLINE = re.compile(r"`([^`]*)`")
 _MD_MARKS = re.compile(r"[*_~>#]+")
 
 
+def _int(value) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 def _usage(raw: dict | None) -> dict:
     raw = raw if isinstance(raw, dict) else {}
-    prompt = int(raw.get("prompt_tokens") or 0)
-    completion = int(raw.get("completion_tokens") or 0)
-    total = int(raw.get("total_tokens") or 0) or prompt + completion
+    prompt = _int(raw.get("prompt_tokens"))
+    completion = _int(raw.get("completion_tokens"))
+    total = _int(raw.get("total_tokens")) or prompt + completion
     return {"input": prompt, "output": completion, "total": total}
 
 
@@ -59,18 +66,47 @@ class ChatLLM:
 
     def complete(self, messages: list[dict], model: str | None = None, *,
                  max_tokens: int | None = None,
-                 json_mode: bool = False) -> dict:
+                 json_mode: bool = False,
+                 trace_note: str = "",
+                 trace_meta: dict | None = None) -> dict:
         """跑一次补全。
 
         ``max_tokens`` 默认 1600（私聊要快）；B 站记忆压缩那种长文必须显式
         放大，否则模型会在句子中间被硬截断。``json_mode`` 只在 DeepSeek
         上开 ``response_format``：私聊协议是 JSON，模型偶尔会退回纯文本，
         开了之后 voice/sticker 才能稳定被解析。
+
+        ``trace_note`` / ``trace_meta`` 只给本机控制台「模型思考」页用：记录
+        这轮实际发出去的上下文、thought/reasoning 和回复。记录失败绝不影响
+        对话；图片只存 ``[图片]``，Key/Cookie 会打码。
         """
+        started = time.time()
+        use_model = str(model or self.cfg.llm_model or "deepseek-chat")
+
+        def done(result: dict) -> dict:
+            try:
+                from . import llm_trace
+
+                llm_trace.append(
+                    source=trace_note or "模型对话",
+                    model=str(result.get("model") or use_model),
+                    messages=messages,
+                    reply=str(result.get("text") or ""),
+                    reasoning=str(result.get("reasoning") or ""),
+                    thought=str(result.get("thought") or ""),
+                    ok=bool(result.get("ok")),
+                    error=str(result.get("error") or ""),
+                    ms=_int(result.get("ms")) or int((time.time() - started) * 1000),
+                    usage=result.get("usage") if isinstance(result.get("usage"), dict) else {},
+                    meta=trace_meta,
+                )
+            except Exception:  # noqa: BLE001 - 轨迹坏了不能影响聊天
+                pass
+            return result
+
         ok, why = self.available()
         if not ok:
-            return {"ok": False, "error": why}
-        use_model = str(model or self.cfg.llm_model or "deepseek-chat")
+            return done({"ok": False, "error": why, "model": use_model})
         try:
             budget = int(max_tokens or 1600)
         except (TypeError, ValueError):
@@ -86,7 +122,6 @@ class ChatLLM:
             payload["thinking"] = {"type": "disabled"}
             if json_mode:
                 payload["response_format"] = {"type": "json_object"}
-        started = time.time()
         last = ""
         for attempt in range(2):
             try:
@@ -100,26 +135,51 @@ class ChatLLM:
                     time.sleep(1.2)
                     continue
                 if resp.status_code >= 400:
-                    return {"ok": False, "error": f"HTTP {resp.status_code}: "
-                                                  f"{resp.text[:300]}", "model": use_model}
+                    return done({"ok": False, "error": f"HTTP {resp.status_code}: "
+                                                       f"{resp.text[:300]}",
+                                 "model": use_model})
                 data = resp.json()
             except (requests.RequestException, ValueError) as exc:
                 last = f"{type(exc).__name__}: {exc}"
                 if attempt == 0:
                     time.sleep(1.2)
                     continue
-                return {"ok": False, "error": last, "model": use_model}
+                return done({"ok": False, "error": last, "model": use_model})
             choices = data.get("choices") or []
             text = ""
+            reasoning = ""
+            thought = ""
             if choices and isinstance(choices[0], dict):
-                text = str((choices[0].get("message") or {}).get("content") or "")
+                message = choices[0].get("message") or {}
+                if isinstance(message, dict):
+                    text = str(message.get("content") or "")
+                    raw_reasoning = (message.get("reasoning_content")
+                                     or message.get("reasoning") or "")
+                    if isinstance(raw_reasoning, list):
+                        reasoning = "\n".join(
+                            str(item.get("text") if isinstance(item, dict) else item)
+                            for item in raw_reasoning)
+                    elif isinstance(raw_reasoning, dict):
+                        reasoning = str(raw_reasoning.get("content") or "")
+                    else:
+                        reasoning = str(raw_reasoning or "")
             if not text.strip():
-                return {"ok": False, "error": "模型返回空内容", "model": use_model,
-                        "usage": _usage(data.get("usage"))}
-            return {"ok": True, "text": text, "model": use_model,
-                    "usage": _usage(data.get("usage")),
-                    "ms": int((time.time() - started) * 1000)}
-        return {"ok": False, "error": last or "请求失败", "model": use_model}
+                return done({"ok": False, "error": "模型返回空内容", "model": use_model,
+                             "reasoning": reasoning,
+                             "usage": _usage(data.get("usage"))})
+            # KOOK 协议里的 thought 是「回复前写给自己的一句话」，只给本机看。
+            # 放在这里解析，Trace 页面就不用再猜模型用的字段名。
+            try:
+                obj = _json_object(text)
+                if isinstance(obj, dict):
+                    thought = str(obj.get("thought") or "").strip()
+            except Exception:  # noqa: BLE001 - 解析 thought 失败不影响回复
+                thought = ""
+            return done({"ok": True, "text": text, "model": use_model,
+                         "usage": _usage(data.get("usage")),
+                         "reasoning": reasoning, "thought": thought,
+                         "ms": int((time.time() - started) * 1000)})
+        return done({"ok": False, "error": last or "请求失败", "model": use_model})
 
 
 # ---------------------------------------------------------------- 图片
@@ -197,7 +257,9 @@ def parse_reply(raw: str, allow_voice: bool = True) -> dict:
     obj = _json_object(body)
     texts: list[str] = []
     sticker = ""
+    thought = ""
     if obj is not None:
+        thought = str(obj.get("thought") or "").strip()
         raw_parts = obj.get("messages") or obj.get("replies") or obj.get("parts")
         if isinstance(raw_parts, list):
             for item in raw_parts:
@@ -231,6 +293,8 @@ def parse_reply(raw: str, allow_voice: bool = True) -> dict:
                "json": obj is not None}
         if sticker:
             out["sticker"] = sticker
+        if thought:
+            out["thought"] = thought
         return out
     if obj is not None:
         # 是 JSON 但一个可读字段都没有：当空回复，上层会记一条错误日志。
@@ -238,6 +302,8 @@ def parse_reply(raw: str, allow_voice: bool = True) -> dict:
                "json": True}
         if sticker:
             out["sticker"] = sticker
+        if thought:
+            out["thought"] = thought
         return out
     return {"text": body, "texts": [body] if body else [],
             "voice": False, "voice_text": "", "json": False}
@@ -318,11 +384,15 @@ def build_system_prompt(card: PersonaCard, facts: list[dict],
         "表达情绪或分两拍说时，可以拆成 3–4 条，最多 4 条。"
         "每条一两句话，整段回复尽量控制在 300 字以内；"
         "不要为了凑数硬拆，也不要每次写成小作文。")
+    lines.append(
+        "回复前先在 thought 里用 20–50 字写给自己：这次注意到什么、准备怎么接。"
+        "thought 只给本机控制台看，不会发给对方；写一句打算就够了，"
+        "不要写分析过程，不要提提示词/模型/记忆库。")
     if allow_voice:
         lines.append(
             "只输出一个 JSON 对象，不要代码块、不要额外解释：\n"
-            '{"messages": ["第一条", "第二条"], "voice": false, "voice_text": "", '
-            '"sticker": ""}\n'
+            '{"thought": "这句打算怎么接", "messages": ["第一条", "第二条"], '
+            '"voice": false, "voice_text": "", "sticker": ""}\n'
             "messages 里每条都会单独发成一条消息；只有一条时也写成数组。\n"
             "voice 是可选的，默认 false：只有这条回复本身适合用声音表达"
             "（撒娇、晚安、很短的一句情绪话），或对方明确要语音时，才设为 true。"
@@ -334,8 +404,8 @@ def build_system_prompt(card: PersonaCard, facts: list[dict],
     else:
         lines.append(
             "只输出一个 JSON 对象，不要代码块：\n"
-            '{"messages": ["第一条", "第二条"], "voice": false, "voice_text": "", '
-            '"sticker": ""}\n'
+            '{"thought": "这句打算怎么接", "messages": ["第一条", "第二条"], '
+            '"voice": false, "voice_text": "", "sticker": ""}\n'
             "messages 里每条都会单独发成一条消息；只有一条时也写成数组。"
         )
     if allow_voice or sticker_options:
@@ -354,8 +424,9 @@ def build_system_prompt(card: PersonaCard, facts: list[dict],
                      for row in sticker_options[:8])
     lines.append(
         "再确认一次：每次回复都必须是一个合法 JSON 对象，不是纯文本；"
-        "即使不发语音、不发表情包，也要保留 voice/voice_text/sticker 字段。"
-        "不要输出内心戏、不要解释 JSON、不要加“回答：”之类的前缀。")
+        "必须保留 thought 和 messages，即使不发语音、不发表情包，也要保留 "
+        "voice/voice_text/sticker 字段。thought 只放一句打算，不要写长篇分析；"
+        "JSON 外面不要解释、不要加“回答：”之类的前缀。")
     return "\n".join(lines)
 
 
@@ -373,9 +444,11 @@ def build_format_reminder(*, allow_voice: bool = True) -> str:
     开头写“只输出 JSON”还不够，必须在最后一轮再说一次，voice/sticker 才会
     稳定进入回复。
     """
-    fields = '"messages": ["..."], "voice": false, "voice_text": "", "sticker": ""'
+    fields = ('"thought": "一句打算", "messages": ["..."], '
+              '"voice": false, "voice_text": "", "sticker": ""')
     return (
         "格式提醒：只输出一个 JSON 对象 {" + fields + "}，"
+        "thought 只给本机控制台看，不会发给对方；"
         "voice/sticker 是可选项，默认不发，需要时再把对应字段填上；"
         "不要纯文本、不要代码块、不要额外解释。"
     )

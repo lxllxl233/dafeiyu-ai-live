@@ -32,6 +32,14 @@ def test_parse_reply_keeps_sticker_id():
     assert "sticker" not in chat_mod.parse_reply("普通一句")
 
 
+def test_parse_reply_keeps_private_thought():
+    got = chat_mod.parse_reply(
+        '{"thought": "先接住再问", "messages": ["在"]}', allow_voice=False)
+    assert got["thought"] == "先接住再问"
+    assert got["texts"] == ["在"]
+    assert "thought" not in chat_mod.parse_reply('{"messages": ["在"]}')
+
+
 def test_parse_reply_supports_message_array():
     got = chat_mod.parse_reply(
         '{"messages": ["在", "刚看到一只猫"], "voice": false}')

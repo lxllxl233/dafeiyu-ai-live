@@ -225,6 +225,40 @@ def test_tts_failure_counts_without_writing_cache(tmp_path, monkeypatch):
     assert overlay_server._tts_stat["consec_fail"] == base_consec + 1
     assert list(tmp_path.iterdir()) == []
 
+def test_model_trace_endpoints_are_paginated_and_read_only(tmp_path, monkeypatch):
+    """控制台「模型思考」：列表分页、详情按 id 取，未知 id 回 404。"""
+    from dafeiyu.live import llm_trace
+
+    path = tmp_path / "llm_trace.jsonl"
+    monkeypatch.setattr(llm_trace, "TRACE_PATH", path)
+    row = llm_trace.append(
+        source="KOOK 聊天", model="deepseek-test",
+        messages=[{"role": "user", "content": "在吗"}],
+        reply='{"messages":["在"]}', thought="先接一句",
+        usage={"input": 1, "output": 2, "total": 3},
+        meta={"msg_id": "m1"}, path=path)
+
+    srv, port = _serve()
+    try:
+        with _get(port, "/api/llm/traces?page=1&per=5") as r:
+            page = json.loads(r.read())
+        assert page["ok"] is True and page["total"] == 1
+        assert page["items"][0]["thought"] == "先接一句"
+
+        with _get(port, "/api/llm/traces/" + row["id"]) as r:
+            detail = json.loads(r.read())
+        assert detail["ok"] is True
+        assert detail["trace"]["messages"][0]["content"] == "在吗"
+        try:
+            _get(port, "/api/llm/traces/nope")
+            raise AssertionError("未知轨迹应该 404")
+        except urllib.error.HTTPError as exc:
+            assert exc.code == 404
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
 def test_bound_port_reports_the_started_server_port():
     old = overlay_server._SERVER
     srv = overlay_server._make_server(0)

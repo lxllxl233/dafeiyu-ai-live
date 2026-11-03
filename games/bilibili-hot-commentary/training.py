@@ -422,10 +422,11 @@ class TrainingRunner:
                 "不要纯文本、不要代码块、不要额外解释。")},
             {"role": "user", "content": json.dumps(context, ensure_ascii=False)},
         ]
-        result = self._complete(messages, json_mode=True, max_tokens=1200)
         kind = "B站收藏夹" if source == "favorites" else "B站训练"
         note = (f"扫收藏夹《{detail.title[:36]}》" if source == "favorites"
                 else f"训练《{detail.title[:36]}》")
+        result = self._complete(messages, json_mode=True, max_tokens=1200,
+                                note=note)
         self._log_usage(detail, result, kind=kind, note=note)
         if not result.get("ok"):
             raise BiliError(f"总结失败：{result.get('error') or '模型无输出'}")
@@ -437,18 +438,20 @@ class TrainingRunner:
         return text, comment, comments
 
     def _complete(self, messages: list[dict], *, json_mode: bool = True,
-                  max_tokens: int = 1200) -> dict:
+                  max_tokens: int = 1200, note: str = "B站训练") -> dict:
         """训练模型调用：优先 JSON 模式；失败时退回普通模式。"""
         try:
             result = self.llm.complete(messages, model=self.cfg.llm_model,
-                                       json_mode=json_mode, max_tokens=max_tokens)
+                                       json_mode=json_mode, max_tokens=max_tokens,
+                                       trace_note=note)
         except TypeError:
             result = self.llm.complete(messages, model=self.cfg.llm_model)
         if result.get("ok"):
             return result
         try:
             fallback = self.llm.complete(
-                messages, model=self.cfg.llm_model, max_tokens=max_tokens)
+                messages, model=self.cfg.llm_model, max_tokens=max_tokens,
+                trace_note=note)
         except TypeError:
             fallback = self.llm.complete(messages, model=self.cfg.llm_model)
         return fallback if fallback.get("ok") else result
@@ -939,7 +942,8 @@ class CompressionRunner:
             # 默认 1600 tokens 装不下 1800–2200 字的中文画像，旧版会在
             # 最后一段中间硬截断；长文压缩必须单独放大预算。
             result = self.llm.complete(messages, model=self.cfg.llm_model,
-                                       max_tokens=4000)
+                                       max_tokens=4000,
+                                       trace_note="B站记忆压缩")
         except TypeError:
             result = self.llm.complete(messages, model=self.cfg.llm_model)
         self._log_usage(result, note=note)
