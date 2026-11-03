@@ -6,6 +6,7 @@ from collections import deque
 from types import SimpleNamespace
 
 import pytest
+from PIL import Image, ImageChops
 
 from dafeiyu.ui import desktop
 from dafeiyu.ui.desktop import PetMotion
@@ -135,11 +136,45 @@ def test_frame_rate_idle_vs_drag():
     assert win._frame_interval(10.1) == pytest.approx(1 / desktop.PET_DRAG_FPS)
 
 
+def _alpha_canvas(sprite, size):
+    canvas = Image.new("L", size, 0)
+    canvas.paste(sprite.getchannel("A"),
+                 ((size[0] - sprite.width) // 2, size[1] - sprite.height))
+    return canvas
+
+
+def test_crossfade_does_not_show_next_pose_before_it_starts():
+    front = desktop.load_pet_sprite("front", 300)
+    side = desktop.load_pet_sprite("side", 300)
+    size = (max(front.width, side.width), max(front.height, side.height))
+
+    start = desktop.blend_pet_sprites(front, side, 0.0)
+    assert ImageChops.difference(
+        start.getchannel("A"), _alpha_canvas(front, size)).getbbox() is None
+
+    end = desktop.blend_pet_sprites(front, side, 1.0)
+    assert ImageChops.difference(
+        end.getchannel("A"), _alpha_canvas(side, size)).getbbox() is None
+
+
 def test_crossfade_midpoint_keeps_body_opaque():
     front = desktop.load_pet_sprite("front", 300)
     side = desktop.load_pet_sprite("side", 300)
     mid = desktop.blend_pet_sprites(front, side, 0.5)
     assert mid.getpixel((mid.width // 2, int(mid.height * 0.6)))[3] == 255
+
+
+def test_spin_crossfade_is_shorter_than_drag_crossfade():
+    now = time.perf_counter()
+    spin = desktop.PetSpin()
+    spin.start(now)
+    pet = _pet(pet_facing="side", pet_face_prev=("front", False),
+               pet_face_mix_at=now - spin.BLEND / 2, pet_spin=spin)
+    fading = desktop.render_pet("", "idle", 1.0, now, pet)
+    pet.pet_face_mix_at = now - spin.BLEND - 0.001
+    done = desktop.render_pet("", "idle", 1.0, now, pet)
+    assert spin.BLEND < desktop.PET_FACE_BLEND
+    assert fading.tobytes() != done.tobytes()
 
 
 def test_render_pet_crossfades_between_facings():
@@ -220,7 +255,9 @@ def test_pointer_up_only_spins_when_short_and_still(monkeypatch):
 
     win._end_drag(10.2)
     assert win.pet_spin.active(10.2), "短按不动应该开始转圈"
-    assert win.pet_spin.tick(10.2) == ("side", False)
+    assert win.motion.facing == "side", "第一张要立即切到朝左，不能等下一帧"
+    assert win.motion.face_mix_at == pytest.approx(10.2)
+    assert win.pet_spin.tick(10.2) is None, "第一段已经在点击时消费掉了"
 
     win.pet_spin.cancel()
     win._dragging = True

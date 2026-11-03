@@ -882,8 +882,9 @@ def blend_pet_sprites(old: Image.Image, new: Image.Image, k: float) -> Image.Ima
     """两张朝向精灵交叉淡化；按底边中心对齐（三视图宽度/镜像都不一样）。
 
     不能把两张都乘 alpha 再 alpha_composite：半透明叠半透明只有 75% 不透明度，
-    转圈时会整只鱼发灰。这里先把两张各自贴到同尺寸透明画布；重叠区做线性混合，
-    只有一张存在的区域直接取那张并保留它的 alpha，轮廓不会整片变透明。
+    转圈时会整只鱼发灰。这里先把两张各自贴到同尺寸透明画布；重叠区做颜色混合，
+    只有一张存在的区域保留原色，而 alpha 仍按 k 线性淡入淡出——否则新朝向的
+    轮廓会在 k=0 就整块出现，看起来像有一帧「超前」的画面。
     """
     k = min(1.0, max(0.0, float(k)))
     w = max(old.width, new.width)
@@ -896,9 +897,10 @@ def blend_pet_sprites(old: Image.Image, new: Image.Image, k: float) -> Image.Ima
     a_new = after.getchannel("A")
     both = ImageChops.darker(a_old, a_new)          # 两张都不透明的重叠区
     out = Image.composite(Image.blend(before, after, k), before, both)
-    # 只有新图存在的地方直接取新图，避免「半透明叠半透明」把整只鱼冲淡。
+    # 只有新图存在的地方直接取新图，避免「半透明叠半透明」把整只鱼冲淡；
+    # 但 alpha 用线性插值，新轮廓要等 k 逐渐变大才淡入，不能一开局就整块出现。
     out = Image.composite(after, out, ImageChops.invert(a_old))
-    out.putalpha(ImageChops.lighter(a_old, a_new))
+    out.putalpha(Image.blend(a_old, a_new, k))
     return out
 
 
@@ -1111,14 +1113,15 @@ class PetIdle:
 class PetSpin:
     """左键轻点的转圈：侧左 → 背面 → 侧右 → 正面。
 
-    只切朝向，交叉淡入由 ``PetMotion.face_to`` + ``render_pet`` 的
-    ``PET_FACE_BLEND`` 负责。四段每段 0.24s，整体不到 1 秒；切换时
-    不是硬切图，而是上一张和下一张按底边中心叠化。
+    只切朝向，交叉淡入由 ``PetMotion.face_to`` + ``render_pet`` 负责。
+    四段每段 0.24s，整体不到 1 秒；转圈用比拖拽稍短的 0.08s 叠化，
+    旧图退得快一点，不会在「朝左」时还挂着一整张朝前的脸。
     """
 
     SEQUENCE = (("side", False), ("back", False),
                 ("side", True), ("front", False))
     STEP = 0.24
+    BLEND = 0.08
 
     def __init__(self) -> None:
         self.started = 0.0
@@ -1344,7 +1347,11 @@ def render_pet(text: str, mode: str, scale: float, now: float, pet) -> Image.Ima
         prev_face = None
     if prev_face and prev_face != (facing, face_right):
         mix_at = float(getattr(pet, "pet_face_mix_at", -1.0) or -1.0)
-        mix = (now - mix_at) / PET_FACE_BLEND if mix_at >= 0 else 1.0
+        blend_span = PET_FACE_BLEND
+        spin = getattr(pet, "pet_spin", None)
+        if spin is not None and spin.active(now):
+            blend_span = spin.BLEND
+        mix = (now - mix_at) / blend_span if mix_at >= 0 else 1.0
         if 0.0 <= mix < 1.0:
             smooth = mix * mix * (3.0 - 2.0 * mix)      # smoothstep：两头慢、中间快
             sprite = blend_pet_sprites(
@@ -3759,6 +3766,10 @@ class PetWindow(StreamerWindow):
         """轻点鱼身：朝左 → 后 → 右 → 正转一圈，全程交叉淡入。"""
         now = time.perf_counter() if now is None else float(now)
         self.pet_spin.start(now)
+        # 不要等下一次 frame() 才切第一张：否则 30fps 排程下会先多留一帧正面。
+        phase = self.pet_spin.tick(now)
+        if phase:
+            self.motion.face_to(phase[0], phase[1], now)
         self.pet_idle.reset(now)
         self.dirty = True
 
