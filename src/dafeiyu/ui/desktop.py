@@ -126,9 +126,6 @@ PET_TAP_MAX = 0.45                     # 按住超过这么久就不算轻点（
 # 眨眼时盖住眼睛的皮肤块 + 闭眼线（按 229×306 的正面精灵取比例）。
 PET_EYE_BOXES = ((0.301, 0.389, 0.441, 0.493),
                  (0.520, 0.389, 0.664, 0.493))
-PET_PAT_LINES = ("唔…再摸一下。", "嘿嘿，痒。", "摸头要收费的。",
-                 "今天也很乖。", "毛都要被摸乱了。")
-PET_DOUBLE_LINES = ("诶？转一圈！", "别晃啦，晕。", "好啦好啦，在呢。")
 
 # ---------------------------------------------------------------- 设计参数
 # 数值直接抄 overlay/index.html 的 CSS，改这里等于改「同款」的还原度。
@@ -881,25 +878,28 @@ def pet_sprite(facing: str, face_right: bool, height: int) -> Image.Image:
     return sprite
 
 
-def _fade_sprite(sprite: Image.Image, alpha: float) -> Image.Image:
-    """整张精灵乘一个透明度；Pillow 的 point 用 256 项查找表，不会逐像素跑 Python。"""
-    out = sprite.copy()
-    out.putalpha(out.getchannel("A").point(lambda v: int(v * alpha)))
-    return out
-
-
 def blend_pet_sprites(old: Image.Image, new: Image.Image, k: float) -> Image.Image:
-    """两张朝向精灵交叉淡化；按底边中心对齐（三视图宽度/镜像都不一样）。"""
+    """两张朝向精灵交叉淡化；按底边中心对齐（三视图宽度/镜像都不一样）。
+
+    不能把两张都乘 alpha 再 alpha_composite：半透明叠半透明只有 75% 不透明度，
+    转圈时会整只鱼发灰。这里先把两张各自贴到同尺寸透明画布；重叠区做线性混合，
+    只有一张存在的区域直接取那张并保留它的 alpha，轮廓不会整片变透明。
+    """
     k = min(1.0, max(0.0, float(k)))
     w = max(old.width, new.width)
     h = max(old.height, new.height)
-    canvas = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-    for sprite, weight in ((old, 1.0 - k), (new, k)):
-        if weight <= 0.004:
-            continue
-        part = sprite if weight >= 0.996 else _fade_sprite(sprite, weight)
-        canvas.alpha_composite(part, ((w - sprite.width) // 2, h - sprite.height))
-    return canvas
+    before = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    after = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    before.alpha_composite(old, ((w - old.width) // 2, h - old.height))
+    after.alpha_composite(new, ((w - new.width) // 2, h - new.height))
+    a_old = before.getchannel("A")
+    a_new = after.getchannel("A")
+    both = ImageChops.darker(a_old, a_new)          # 两张都不透明的重叠区
+    out = Image.composite(Image.blend(before, after, k), before, both)
+    # 只有新图存在的地方直接取新图，避免「半透明叠半透明」把整只鱼冲淡。
+    out = Image.composite(after, out, ImageChops.invert(a_old))
+    out.putalpha(ImageChops.lighter(a_old, a_new))
+    return out
 
 
 class PetMotion:
@@ -1108,6 +1108,47 @@ class PetIdle:
         return math.sin(p * math.pi * 3.0) * (1.0 - p) * 3.0 * float(scale or 1.0)
 
 
+class PetSpin:
+    """左键轻点的转圈：侧左 → 背面 → 侧右 → 正面。
+
+    只切朝向，交叉淡入由 ``PetMotion.face_to`` + ``render_pet`` 的
+    ``PET_FACE_BLEND`` 负责。四段每段 0.24s，整体不到 1 秒；切换时
+    不是硬切图，而是上一张和下一张按底边中心叠化。
+    """
+
+    SEQUENCE = (("side", False), ("back", False),
+                ("side", True), ("front", False))
+    STEP = 0.24
+
+    def __init__(self) -> None:
+        self.started = 0.0
+        self.until = 0.0
+        self._index = -1
+
+    def start(self, now: float) -> None:
+        self.started = float(now)
+        self.until = self.started + self.STEP * len(self.SEQUENCE)
+        self._index = -1
+
+    def cancel(self) -> None:
+        self.started = self.until = 0.0
+        self._index = -1
+
+    def active(self, now: float) -> bool:
+        return bool(self.started and now < self.until)
+
+    def tick(self, now: float) -> tuple[str, bool] | None:
+        """到下一段时返回 ``(facing, face_right)``；同一段只返回一次。"""
+        if not self.active(now):
+            return None
+        index = min(len(self.SEQUENCE) - 1,
+                    int(max(0.0, now - self.started) / self.STEP))
+        if index <= self._index:
+            return None
+        self._index = index
+        return self.SEQUENCE[index]
+
+
 def blink_pet_sprite(sprite: Image.Image) -> Image.Image:
     """画一帧闭眼：盖住正面精灵的眼睛再补一条闭眼线。
 
@@ -1276,50 +1317,6 @@ def _draw_room_bubbles(canvas: Image.Image, pet, now: float, scale: float,
         top = by + bh + int(5 * scale)
 
 
-def _draw_pet_reaction(canvas: Image.Image, pet, now: float, scale: float,
-                       x: int, y: int, sprite: Image.Image) -> None:
-    """摸摸头/双击之后：脸红 + 爱心往上飘；只负责画，状态在 PetWindow。"""
-    started = float(getattr(pet, "pet_react_start", 0.0) or 0.0)
-    until = float(getattr(pet, "pet_react_until", 0.0) or 0.0)
-    if not started or now >= until:
-        return
-    progress = min(1.0, max(0.0, (now - started) / max(0.001, until - started)))
-    fade = min(1.0, (now - started) / 0.10, max(0.0, (until - now) / 0.35))
-    if fade <= 0.02:
-        return
-    d = ImageDraw.Draw(canvas)
-    # 两团腮红：画在鱼脸上，透明爱心不会被误认成血条。背面没有脸，只飘爱心。
-    if str(getattr(pet, "pet_facing", "front") or "front") != "back":
-        for fx in (0.27, 0.73):
-            cx = x + int(sprite.width * fx)
-            cy = y + int(sprite.height * 0.54)
-            rw = max(4, int(sprite.width * 0.075))
-            rh = max(2, int(sprite.height * 0.022))
-            d.ellipse([cx - rw, cy - rh, cx + rw, cy + rh],
-                      fill=(255, 138, 168, int(105 * fade)))
-    double = str(getattr(pet, "pet_react_kind", "") or "") == "double"
-    count = 9 if double else 5
-    for k in range(count):
-        phase = k * 1.7
-        hx = (x + int(sprite.width * 0.5)
-              + math.sin(phase + progress * 3.2) * sprite.width * (0.20 + 0.035 * k))
-        hy = (y + int(sprite.height * 0.42)
-              - progress * (26 + 7 * k) * scale - k * 2.5 * scale)
-        r = max(2, int((4.2 if double else 3.4) * scale))
-        _draw_heart(d, int(hx), int(hy), r,
-                    (255, 122, 158, int(235 * fade)))
-    if double:
-        # 双击多一圈小螺旋，表示「转一圈」。
-        cx = x + sprite.width // 2
-        cy = y + int(sprite.height * 0.18)
-        rx = int(sprite.width * 0.34)
-        ry = int(sprite.height * 0.12)
-        d.arc([cx - rx, cy - ry, cx + rx, cy + ry],
-              int(progress * 300), int(progress * 300) + 220,
-              fill=(244, 201, 104, int(180 * fade)),
-              width=max(1, int(2 * scale)))
-
-
 def render_pet(text: str, mode: str, scale: float, now: float, pet) -> Image.Image:
     """桌宠一帧：精灵 + 气泡。
 
@@ -1393,21 +1390,13 @@ def render_pet(text: str, mode: str, scale: float, now: float, pet) -> Image.Ima
     if abs(lean) > 0.2:
         sprite = sprite.rotate(lean, resample=Image.BICUBIC, expand=True)
 
-    # 摸摸头/双击的轻跳：和待机小动作分开，互动时幅度更大一点。
-    react_start = float(getattr(pet, "pet_react_start", 0.0) or 0.0)
-    react_until = float(getattr(pet, "pet_react_until", 0.0) or 0.0)
-    react_hop = 0.0
-    if react_start and now < react_until:
-        progress = min(1.0, max(0.0, (now - react_start) / max(0.001, react_until - react_start)))
-        react_hop = -math.sin(progress * math.pi) * 7.0 * scale
-
     # 待机漂浮：两个不同频率的正弦叠起来，像慢慢呼吸/随水漂，而不是左右硬挪。
     # 用 round 而不是 int：sin 过零时 int 会截断成「多停一帧」，30fps 下能看出顿挫。
     sway = (2.4 * math.sin(now * 1.25) + 0.8 * math.sin(now * 0.57 + 1.7)) * scale
     bob = (0.9 * math.sin(now * 1.25 + 1.1) + 0.4 * math.sin(now * 0.43)) * scale
     x = (W - sprite.width) // 2 + int(round(sway + orbit_x + idle_sway))
     y = H - sprite.height - int(10 * scale) + int(round(
-        bounce + orbit_y + bob + idle_hop + react_hop))
+        bounce + orbit_y + bob + idle_hop))
 
     # 金色轨迹 + 小星星，让「礼物绕圈」在桌面上真的看得见。
     if celebrating:
@@ -1438,7 +1427,6 @@ def render_pet(text: str, mode: str, scale: float, now: float, pet) -> Image.Ima
             d.line([(x0, y0), (x0 - dirn * ln, y0)],
                    fill=(255, 255, 255, int(80 * energy)), width=max(1, int(2 * scale)))
     canvas.alpha_composite(sprite, (x, y))
-    _draw_pet_reaction(canvas, pet, now, scale, x, y, sprite)
     # 观众互动气泡画在侧面（和头顶的说话气泡分开）
     _draw_room_bubbles(canvas, pet, now, scale, x, y, sprite, W)
 
@@ -3498,11 +3486,7 @@ class PetWindow(StreamerWindow):
         self.celebrate_start = 0.0
         self.celebrate_until = 0.0
         self.pet_idle = PetIdle()
-        self.pet_react_start = 0.0
-        self.pet_react_until = 0.0
-        self.pet_react_kind = ""
-        self.pet_react_text = ""
-        self._last_tap_at = 0.0
+        self.pet_spin = PetSpin()
         self._drag_until = 0.0
         self._release_at = 0.0
         # 原生 HTCAPTION 拖动会让系统模态移动循环卡住本线程的主循环，
@@ -3668,9 +3652,6 @@ class PetWindow(StreamerWindow):
             return THINKING_TEXT
         if mode == "speaking":
             return self.text or self._idle_text()
-        if (self.pet_react_text
-                and time.perf_counter() < float(self.pet_react_until or 0.0)):
-            return self.pet_react_text
         return self._idle_text()
 
     def _idle_text(self) -> str:
@@ -3688,7 +3669,8 @@ class PetWindow(StreamerWindow):
         if (self._dragging or self.motion.active(now)
                 or now < self._drag_until or now < self.talk_until
                 or now < self.celebrate_until
-                or now < float(getattr(self, "pet_react_until", 0.0) or 0.0)
+                or (getattr(self, "pet_spin", None) is not None
+                    and self.pet_spin.active(now))
                 or (getattr(self, "pet_idle", None) is not None
                     and self.pet_idle.active(now))):
             return 1.0 / PET_DRAG_FPS
@@ -3716,6 +3698,7 @@ class PetWindow(StreamerWindow):
             rect = wintypes.RECT()
             user32.GetWindowRect(hwnd, ctypes.byref(rect))
             self._dragging = True
+            self.pet_spin.cancel()
             self._drag_anchor = (pt.x, pt.y)
             self._drag_origin = (rect.left, rect.top)
             self._drag_last_cursor = (pt.x, pt.y)
@@ -3773,19 +3756,9 @@ class PetWindow(StreamerWindow):
             self._on_tap(now)
 
     def _on_tap(self, now: float | None = None) -> None:
-        """轻点鱼身：摸摸头；350ms 内再点一下升级成「转一圈」。"""
+        """轻点鱼身：朝左 → 后 → 右 → 正转一圈，全程交叉淡入。"""
         now = time.perf_counter() if now is None else float(now)
-        double = bool(self._last_tap_at and now - self._last_tap_at <= 0.35)
-        self._last_tap_at = 0.0 if double else now
-        self._react("double" if double else "pat", now)
-
-    def _react(self, kind: str, now: float) -> None:
-        double = kind == "double"
-        self.pet_react_kind = "double" if double else "pat"
-        self.pet_react_start = now
-        self.pet_react_until = now + (2.8 if double else 2.1)
-        self.pet_react_text = random.choice(
-            PET_DOUBLE_LINES if double else PET_PAT_LINES)
+        self.pet_spin.start(now)
         self.pet_idle.reset(now)
         self.dirty = True
 
@@ -3805,8 +3778,9 @@ class PetWindow(StreamerWindow):
             elif now > self._drag_until:
                 self.motion.relax()      # 按着不动：形变慢慢收回，朝向不变
             return
-        if now > self._drag_until and now > self._release_at + 0.45:
-            # 松开 0.45s 后转回正面；走 face_to 才有交叉淡入，而不是硬切。
+        if (not self.pet_spin.active(now)
+                and now > self._drag_until and now > self._release_at + 0.45):
+            # 松开 0.45s 后转回正面；转圈动画期间交给 PetSpin，别抢朝向。
             self.motion.face_to("front", False, now)
 
     def _hot_zone_point(self, px: int, py: int, rect, scale: float) -> bool:
@@ -3861,12 +3835,15 @@ class PetWindow(StreamerWindow):
     def frame(self) -> Image.Image:
         now = time.perf_counter()
         self._track_drag(now)
+        phase = self.pet_spin.tick(now)
+        if phase:
+            self.motion.face_to(phase[0], phase[1], now)
         self.motion.tick(now)
         self._sync_motion()
         mode = self.tick_presence()
         if self.presence.dirty:
             self.presence.dirty = False
-        if mode == "idle" and now >= float(self.pet_react_until or 0.0):
+        if mode == "idle" and not self.pet_spin.active(now):
             self.pet_idle.tick(now)
         elif mode != "idle" and self.pet_idle.action:
             # 说话/思考时把待机动作收掉；下一次 idle 再重新排。
@@ -3916,8 +3893,8 @@ class PetWindow(StreamerWindow):
         self.dirty = True
 
     def _run_hint(self) -> str:
-        return ("桌宠已启动：左键拖（左右/上下换朝向，带倾斜和速度线）· 点一下摸摸头 · "
-                "双击转圈 · 滚轮/右下角=缩放 · 右键设置 · 穿透时鼠标贴鱼身 · "
+        return ("桌宠已启动：左键拖（左右/上下换朝向，带倾斜和速度线）· "
+                "左键轻点转一圈（左→后→右→前）· 滚轮/右下角=缩放 · 右键设置 · 穿透时鼠标贴鱼身 · "
                 "Ctrl+Alt+D 穿透 · Ctrl+Alt+S 声音 · Ctrl+Alt+H 隐藏 · Ctrl+Alt+Q 退出")
 
 
