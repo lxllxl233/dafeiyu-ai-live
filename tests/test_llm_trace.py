@@ -117,3 +117,38 @@ def test_chat_llm_logs_thought_and_reasoning(tmp_path, monkeypatch):
     assert item["has_thought"] is True and item["has_reasoning"] is True
     assert item["msg_id"] == "m1"
     assert item["preview"] == "在吗"
+
+
+def test_chat_llm_retries_empty_json_reply(tmp_path, monkeypatch):
+    path = tmp_path / "trace.jsonl"
+    monkeypatch.setattr(llm_trace, "TRACE_PATH", path)
+    calls: list[int] = []
+
+    class Response:
+        status_code = 200
+
+        def __init__(self, content: str):
+            self._content = content
+
+        def json(self):
+            return {
+                "choices": [{"message": {"content": self._content}}],
+                "usage": {"prompt_tokens": 20, "completion_tokens": 6,
+                          "total_tokens": 26},
+            }
+
+    def post(*args, **kwargs):
+        calls.append(1)
+        content = "" if len(calls) == 1 else json.dumps(
+            {"thought": "重试后接住", "messages": ["在"]}, ensure_ascii=False)
+        return Response(content)
+
+    monkeypatch.setattr("dafeiyu.live.chat.requests.post", post)
+    monkeypatch.setattr("dafeiyu.live.chat.time.sleep", lambda *_: None)
+    cfg = LiveConfig(llm_base_url="https://api.deepseek.com/v1",
+                     llm_api_key="test-key", llm_model="deepseek-flash")
+    result = ChatLLM(cfg).complete(
+        [{"role": "user", "content": "在吗"}], json_mode=True)
+    assert result["ok"] is True
+    assert result["thought"] == "重试后接住"
+    assert len(calls) == 2

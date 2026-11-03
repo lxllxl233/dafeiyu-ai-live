@@ -164,8 +164,20 @@ class ChatLLM:
                     else:
                         reasoning = str(raw_reasoning or "")
             if not text.strip():
-                return done({"ok": False, "error": "模型返回空内容", "model": use_model,
-                             "reasoning": reasoning,
+                # JSON 模式偶尔会只回空白（网关/模型抖动），直接退纯文本会把
+                # thought 和 voice/sticker 一起丢掉；先原样重试一次。
+                if attempt == 0:
+                    last = "模型返回空内容"
+                    time.sleep(0.4)
+                    continue
+                finish = ""
+                try:
+                    finish = str(choices[0].get("finish_reason") or "")
+                except Exception:  # noqa: BLE001
+                    pass
+                return done({"ok": False,
+                             "error": "模型返回空内容" + (f"（finish={finish}）" if finish else ""),
+                             "model": use_model, "reasoning": reasoning,
                              "usage": _usage(data.get("usage"))})
             # KOOK 协议里的 thought 是「回复前写给自己的一句话」，只给本机看。
             # 放在这里解析，Trace 页面就不用再猜模型用的字段名。

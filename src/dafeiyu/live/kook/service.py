@@ -1079,9 +1079,29 @@ class KookService:
             messages, model=model, json_mode=True,
             trace_note=trace_note, trace_meta=trace_meta)
         if result.get("ok"):
+            parsed = chat_mod.parse_reply(
+                str(result.get("text") or ""),
+                allow_voice=bool(self.cfg.kook_allow_voice))
+            if parsed.get("json"):
+                return result
+            # 模型偶尔无视 response_format 直接说人话；再要一次 JSON，
+            # 否则 thought 会丢。还是要不到就保留第一次的纯文本，别吞回复。
+            self._log({"kind": "llm_json_retry",
+                       "msg_id": str((trace_meta or {}).get("msg_id") or "")})
+            retry = self._trace_complete(
+                messages, model=model, json_mode=True,
+                trace_note=trace_note, trace_meta=trace_meta)
+            if retry.get("ok") and chat_mod.parse_reply(
+                    str(retry.get("text") or ""),
+                    allow_voice=bool(self.cfg.kook_allow_voice)).get("json"):
+                return retry
             return result
         # 有些兼容网关开了 response_format 会返回空 content；重试一次普通模式，
-        # 别让一条正常消息因为 JSON 模式不可用而丢掉。
+        # 别让一条正常消息因为 JSON 模式不可用而丢掉。纯文本兜底会没有 thought，
+        # 所以先记一笔，方便控制台看出这轮为什么“没思考”。
+        self._log({"kind": "llm_json_fallback",
+                   "error": str(result.get("error") or "")[:200],
+                   "msg_id": str((trace_meta or {}).get("msg_id") or "")})
         fallback = self._trace_complete(
             messages, model=model,
             trace_note=trace_note, trace_meta=trace_meta)
