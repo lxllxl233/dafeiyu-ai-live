@@ -148,6 +148,98 @@ def test_render_pet_crossfades_between_facings():
     assert done.tobytes() == plain.tobytes(), "淡入结束后必须回到纯当前朝向"
 
 
+def test_pet_idle_actions_are_bounded_and_decay():
+    idle = desktop.PetIdle(seed=1)
+    idle.start("blink", 10.0)
+    assert idle.active(10.0) is True
+    assert idle.blink_amount(10.08) == pytest.approx(1.0, abs=0.01)
+    assert idle.blink_amount(10.16) == pytest.approx(0.0, abs=0.01)
+
+    idle.start("hop", 20.0)
+    assert idle.hop_offset(20.275, 1.0) == pytest.approx(-10.0, abs=0.05)
+    assert idle.until == pytest.approx(20.55)
+
+    idle.start("tilt", 30.0)
+    assert abs(idle.tilt_angle(30.45)) == pytest.approx(2.4, abs=0.05)
+
+    idle.start("wiggle", 40.0)
+    assert abs(idle.sway_offset(40.09, 1.0)) > 1.0
+    assert idle.active(40.55) is False
+
+
+def test_render_pet_blinks_without_mutating_sprite():
+    before = desktop.load_pet_sprite("front", 300).tobytes()
+    now = time.perf_counter()
+    idle = desktop.PetIdle(seed=1)
+    idle.start("blink", now - 0.08)       # 正中间：眼睛闭合
+    blinked = desktop.render_pet("", "idle", 1.0, now, _pet(pet_idle=idle))
+    plain = desktop.render_pet("", "idle", 1.0, now, _pet())
+    diff = sum(1 for a, b in zip(blinked.tobytes(), plain.tobytes()) if a != b)
+    assert diff > 500, "眨眼没有改到眼睛区域"
+    assert desktop.load_pet_sprite("front", 300).tobytes() == before
+
+
+def test_tap_reaction_and_double_tap_upgrade():
+    win = desktop.PetWindow.__new__(desktop.PetWindow)
+    win.pet_idle = desktop.PetIdle(seed=2)
+    win.pet_react_start = 0.0
+    win.pet_react_until = 0.0
+    win.pet_react_kind = ""
+    win.pet_react_text = ""
+    win._last_tap_at = 0.0
+    win.dirty = False
+
+    win._on_tap(10.0)
+    assert win.pet_react_kind == "pat"
+    assert win.pet_react_text in desktop.PET_PAT_LINES
+    assert win.pet_react_until > 10.0 and win.dirty is True
+
+    win._on_tap(10.2)
+    assert win.pet_react_kind == "double"
+    assert win.pet_react_text in desktop.PET_DOUBLE_LINES
+
+    win._on_tap(11.0)
+    assert win.pet_react_kind == "pat"
+
+
+def test_pointer_up_only_taps_when_short_and_still(monkeypatch):
+    monkeypatch.setattr(desktop.user32, "ReleaseCapture", lambda: 0)
+    win = desktop.PetWindow.__new__(desktop.PetWindow)
+    win.motion = _motion()
+    win._dragging = True
+    win._release_at = 0.0
+    win._drag_started_at = 10.0
+    win._drag_moved = 0.0
+    win._save_pos = lambda: None
+    win.pet_idle = desktop.PetIdle(seed=3)
+    win.pet_react_start = win.pet_react_until = 0.0
+    win.pet_react_kind = win.pet_react_text = ""
+    win._last_tap_at = 0.0
+    win.dirty = False
+
+    win._end_drag(10.2)
+    assert win.pet_react_kind == "pat", "短按不动应该算摸摸头"
+
+    win._dragging = True
+    win._drag_started_at = 11.0
+    win._drag_moved = 12.0
+    win.pet_react_kind = ""
+    win._end_drag(11.2)
+    assert win.pet_react_kind == "", "真的拖动过就不该触发摸摸头"
+
+
+def test_reaction_text_only_wins_over_idle():
+    win = desktop.PetWindow.__new__(desktop.PetWindow)
+    win.status = {}
+    win.text = ""
+    win.pet_react_text = "唔…再摸一下。"
+    win.pet_react_until = time.perf_counter() + 5.0
+    assert win.display_text("idle") == "唔…再摸一下。"
+    assert win.display_text("thinking") == desktop.THINKING_TEXT
+    win.pet_react_until = 0.0
+    assert win.display_text("idle") == desktop.IDLE_TEXT
+
+
 def test_render_pet_does_not_mutate_cached_sprites():
     before = desktop.load_pet_sprite("side", 300).tobytes()
     now = time.perf_counter()

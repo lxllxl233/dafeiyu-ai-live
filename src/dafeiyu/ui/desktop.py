@@ -121,6 +121,14 @@ PET_FACING = {"front": "正面", "side": "侧面", "back": "背面"}
 PET_FACE_BLEND = 0.12                  # 朝向切换的交叉淡入时长（秒），避免硬切
 PET_IDLE_FPS = 30                      # 待机帧率；旧版 20fps 在 1080p 上能看出台阶
 PET_DRAG_FPS = 60                      # 拖拽/说话/回弹时拉满，窗口跟手、形变不跳帧
+PET_TAP_SLOP = 5.0                     # 左键位移不超过这么多像素才算「点一下」
+PET_TAP_MAX = 0.45                     # 按住超过这么久就不算轻点（避免长按误触）
+# 眨眼时盖住眼睛的皮肤块 + 闭眼线（按 229×306 的正面精灵取比例）。
+PET_EYE_BOXES = ((0.301, 0.389, 0.441, 0.493),
+                 (0.520, 0.389, 0.664, 0.493))
+PET_PAT_LINES = ("唔…再摸一下。", "嘿嘿，痒。", "摸头要收费的。",
+                 "今天也很乖。", "毛都要被摸乱了。")
+PET_DOUBLE_LINES = ("诶？转一圈！", "别晃啦，晕。", "好啦好啦，在呢。")
 
 # ---------------------------------------------------------------- 设计参数
 # 数值直接抄 overlay/index.html 的 CSS，改这里等于改「同款」的还原度。
@@ -1026,6 +1034,102 @@ class PetMotion:
         )
 
 
+class PetIdle:
+    """待机小动作调度：眨眼、轻跳、歪头、摆一下。
+
+    没有逐帧素材，动作全部由 render_pet 现画。这里只记「什么时候做什么」，
+    不碰 Win32、不画图，时间由调用方传入，方便单测。待机时每隔 4–9 秒挑一个，
+    说话/思考时由 PetWindow 暂停，避免讲到一半突然眨眼或蹦起来。
+    """
+
+    DURATION = {"blink": 0.16, "hop": 0.55, "tilt": 0.90, "wiggle": 0.55}
+    CHOICES = ("blink", "blink", "hop", "tilt", "wiggle")
+
+    def __init__(self, seed: int | None = None) -> None:
+        self.rng = random.Random(seed)
+        self.action = ""
+        self.started = 0.0
+        self.until = 0.0
+        self._sign = 1.0
+        self._next_at = 0.0
+
+    def tick(self, now: float) -> None:
+        if self._next_at <= 0.0:
+            self._next_at = now + self.rng.uniform(2.0, 5.0)
+        if self.action and now >= self.until:
+            self.action = ""
+        if not self.action and now >= self._next_at:
+            self.start(self.rng.choice(self.CHOICES), now)
+
+    def start(self, action: str, now: float) -> None:
+        """立刻做一个动作；给单测和「点一下」打断待机用。"""
+        action = action if action in self.DURATION else "blink"
+        self.action = action
+        self.started = float(now)
+        self.until = float(now) + self.DURATION[action]
+        self._sign = -1.0 if self.rng.random() < 0.5 else 1.0
+        self._next_at = float(now) + self.rng.uniform(4.0, 9.0)
+
+    def reset(self, now: float | None = None) -> None:
+        """暂停待机并重新排下一次；说话/思考/摸头时用。"""
+        self.action = ""
+        self.started = self.until = 0.0
+        at = time.perf_counter() if now is None else float(now)
+        self._next_at = at + self.rng.uniform(2.0, 5.0)
+
+    def active(self, now: float) -> bool:
+        return bool(self.action and now < self.until)
+
+    def _progress(self, now: float) -> float:
+        if not self.action or now < self.started:
+            return 0.0
+        span = max(0.001, self.until - self.started)
+        return min(1.0, max(0.0, (now - self.started) / span))
+
+    def blink_amount(self, now: float) -> float:
+        if self.action != "blink":
+            return 0.0
+        return math.sin(self._progress(now) * math.pi)
+
+    def hop_offset(self, now: float, scale: float = 1.0) -> float:
+        if self.action != "hop":
+            return 0.0
+        return -math.sin(self._progress(now) * math.pi) * 10.0 * float(scale or 1.0)
+
+    def tilt_angle(self, now: float) -> float:
+        if self.action != "tilt":
+            return 0.0
+        return math.sin(self._progress(now) * math.pi) * 2.4 * self._sign
+
+    def sway_offset(self, now: float, scale: float = 1.0) -> float:
+        if self.action != "wiggle":
+            return 0.0
+        p = self._progress(now)
+        return math.sin(p * math.pi * 3.0) * (1.0 - p) * 3.0 * float(scale or 1.0)
+
+
+def blink_pet_sprite(sprite: Image.Image) -> Image.Image:
+    """画一帧闭眼：盖住正面精灵的眼睛再补一条闭眼线。
+
+    只给正面用；侧面/背面没有可靠的瞳孔坐标，宁可不眨也不画歪。返回新图，
+    绝不动 ``load_pet_sprite`` 的缓存。
+    """
+    if sprite.width < 20 or sprite.height < 20:
+        return sprite
+    out = sprite.copy()
+    d = ImageDraw.Draw(out)
+    for fx0, fy0, fx1, fy1 in PET_EYE_BOXES:
+        box = (int(out.width * fx0), int(out.height * fy0),
+               int(out.width * fx1), int(out.height * fy1))
+        if box[2] <= box[0] or box[3] <= box[1]:
+            continue
+        radius = max(2, int((box[2] - box[0]) * 0.42))
+        d.rounded_rectangle(box, radius=radius, fill=(249, 239, 235, 255))
+        d.arc((box[0] + 2, box[1] + 5, box[2] - 2, box[3] + 9), 200, 340,
+              fill=(52, 38, 42, 255), width=max(1, round(out.width / 120)))
+    return out
+
+
 # ---------------------------------------------------------------- 直播间互动气泡
 # 桌宠侧面那串小气泡：点赞=爱心、礼物=大米饭、弹幕=内容、进场=欢迎+名字。
 # 这条通道和头顶的「主播气泡」分开：头顶是她在说话，侧面是观众在互动。
@@ -1172,6 +1276,50 @@ def _draw_room_bubbles(canvas: Image.Image, pet, now: float, scale: float,
         top = by + bh + int(5 * scale)
 
 
+def _draw_pet_reaction(canvas: Image.Image, pet, now: float, scale: float,
+                       x: int, y: int, sprite: Image.Image) -> None:
+    """摸摸头/双击之后：脸红 + 爱心往上飘；只负责画，状态在 PetWindow。"""
+    started = float(getattr(pet, "pet_react_start", 0.0) or 0.0)
+    until = float(getattr(pet, "pet_react_until", 0.0) or 0.0)
+    if not started or now >= until:
+        return
+    progress = min(1.0, max(0.0, (now - started) / max(0.001, until - started)))
+    fade = min(1.0, (now - started) / 0.10, max(0.0, (until - now) / 0.35))
+    if fade <= 0.02:
+        return
+    d = ImageDraw.Draw(canvas)
+    # 两团腮红：画在鱼脸上，透明爱心不会被误认成血条。背面没有脸，只飘爱心。
+    if str(getattr(pet, "pet_facing", "front") or "front") != "back":
+        for fx in (0.27, 0.73):
+            cx = x + int(sprite.width * fx)
+            cy = y + int(sprite.height * 0.54)
+            rw = max(4, int(sprite.width * 0.075))
+            rh = max(2, int(sprite.height * 0.022))
+            d.ellipse([cx - rw, cy - rh, cx + rw, cy + rh],
+                      fill=(255, 138, 168, int(105 * fade)))
+    double = str(getattr(pet, "pet_react_kind", "") or "") == "double"
+    count = 9 if double else 5
+    for k in range(count):
+        phase = k * 1.7
+        hx = (x + int(sprite.width * 0.5)
+              + math.sin(phase + progress * 3.2) * sprite.width * (0.20 + 0.035 * k))
+        hy = (y + int(sprite.height * 0.42)
+              - progress * (26 + 7 * k) * scale - k * 2.5 * scale)
+        r = max(2, int((4.2 if double else 3.4) * scale))
+        _draw_heart(d, int(hx), int(hy), r,
+                    (255, 122, 158, int(235 * fade)))
+    if double:
+        # 双击多一圈小螺旋，表示「转一圈」。
+        cx = x + sprite.width // 2
+        cy = y + int(sprite.height * 0.18)
+        rx = int(sprite.width * 0.34)
+        ry = int(sprite.height * 0.12)
+        d.arc([cx - rx, cy - ry, cx + rx, cy + ry],
+              int(progress * 300), int(progress * 300) + 220,
+              fill=(244, 201, 104, int(180 * fade)),
+              width=max(1, int(2 * scale)))
+
+
 def render_pet(text: str, mode: str, scale: float, now: float, pet) -> Image.Image:
     """桌宠一帧：精灵 + 气泡。
 
@@ -1205,6 +1353,17 @@ def render_pet(text: str, mode: str, scale: float, now: float, pet) -> Image.Ima
             sprite = blend_pet_sprites(
                 pet_sprite(prev_face[0], prev_face[1], fish_h), sprite, smooth)
 
+    # 待机小动作：眨眼/轻跳/歪头/摆一下。PetIdle 只在真正 idle 时推进；
+    # 说话和思考时它会被暂停，不会讲到一半突然眨眼。
+    pet_idle = getattr(pet, "pet_idle", None)
+    idle_blink = pet_idle.blink_amount(now) if pet_idle else 0.0
+    idle_hop = pet_idle.hop_offset(now, scale) if pet_idle else 0.0
+    idle_tilt = pet_idle.tilt_angle(now) if pet_idle else 0.0
+    idle_sway = pet_idle.sway_offset(now, scale) if pet_idle else 0.0
+    if idle_blink > 0.42 and facing == "front":
+        sprite = blink_pet_sprite(sprite)
+    lean += idle_tilt
+
     # 呼吸 + 说话弹跳（脚底固定，向上长）
     breathe = 1.0 + 0.013 * math.sin(now * 2.05)
     talk = 0.0
@@ -1234,12 +1393,21 @@ def render_pet(text: str, mode: str, scale: float, now: float, pet) -> Image.Ima
     if abs(lean) > 0.2:
         sprite = sprite.rotate(lean, resample=Image.BICUBIC, expand=True)
 
+    # 摸摸头/双击的轻跳：和待机小动作分开，互动时幅度更大一点。
+    react_start = float(getattr(pet, "pet_react_start", 0.0) or 0.0)
+    react_until = float(getattr(pet, "pet_react_until", 0.0) or 0.0)
+    react_hop = 0.0
+    if react_start and now < react_until:
+        progress = min(1.0, max(0.0, (now - react_start) / max(0.001, react_until - react_start)))
+        react_hop = -math.sin(progress * math.pi) * 7.0 * scale
+
     # 待机漂浮：两个不同频率的正弦叠起来，像慢慢呼吸/随水漂，而不是左右硬挪。
     # 用 round 而不是 int：sin 过零时 int 会截断成「多停一帧」，30fps 下能看出顿挫。
     sway = (2.4 * math.sin(now * 1.25) + 0.8 * math.sin(now * 0.57 + 1.7)) * scale
     bob = (0.9 * math.sin(now * 1.25 + 1.1) + 0.4 * math.sin(now * 0.43)) * scale
-    x = (W - sprite.width) // 2 + int(round(sway + orbit_x))
-    y = H - sprite.height - int(10 * scale) + int(round(bounce + orbit_y + bob))
+    x = (W - sprite.width) // 2 + int(round(sway + orbit_x + idle_sway))
+    y = H - sprite.height - int(10 * scale) + int(round(
+        bounce + orbit_y + bob + idle_hop + react_hop))
 
     # 金色轨迹 + 小星星，让「礼物绕圈」在桌面上真的看得见。
     if celebrating:
@@ -1270,6 +1438,7 @@ def render_pet(text: str, mode: str, scale: float, now: float, pet) -> Image.Ima
             d.line([(x0, y0), (x0 - dirn * ln, y0)],
                    fill=(255, 255, 255, int(80 * energy)), width=max(1, int(2 * scale)))
     canvas.alpha_composite(sprite, (x, y))
+    _draw_pet_reaction(canvas, pet, now, scale, x, y, sprite)
     # 观众互动气泡画在侧面（和头顶的说话气泡分开）
     _draw_room_bubbles(canvas, pet, now, scale, x, y, sprite, W)
 
@@ -3328,6 +3497,12 @@ class PetWindow(StreamerWindow):
         self.bubble_until = 0.0
         self.celebrate_start = 0.0
         self.celebrate_until = 0.0
+        self.pet_idle = PetIdle()
+        self.pet_react_start = 0.0
+        self.pet_react_until = 0.0
+        self.pet_react_kind = ""
+        self.pet_react_text = ""
+        self._last_tap_at = 0.0
         self._drag_until = 0.0
         self._release_at = 0.0
         # 原生 HTCAPTION 拖动会让系统模态移动循环卡住本线程的主循环，
@@ -3336,6 +3511,8 @@ class PetWindow(StreamerWindow):
         self._drag_anchor = (0, 0)
         self._drag_origin = (0, 0)
         self._drag_last_cursor = (0, 0)
+        self._drag_started_at = 0.0
+        self._drag_moved = 0.0
         self._sync_motion()
         super().__init__(*args, **kwargs)
         # 初始按「鼠标在鱼身上」算：先保证可交互，第一帧轮询再把空白区域设成穿透
@@ -3491,6 +3668,9 @@ class PetWindow(StreamerWindow):
             return THINKING_TEXT
         if mode == "speaking":
             return self.text or self._idle_text()
+        if (self.pet_react_text
+                and time.perf_counter() < float(self.pet_react_until or 0.0)):
+            return self.pet_react_text
         return self._idle_text()
 
     def _idle_text(self) -> str:
@@ -3507,7 +3687,10 @@ class PetWindow(StreamerWindow):
         # 主循环按「下一帧时刻」睡，不会把画图耗时再叠到间隔上。
         if (self._dragging or self.motion.active(now)
                 or now < self._drag_until or now < self.talk_until
-                or now < self.celebrate_until):
+                or now < self.celebrate_until
+                or now < float(getattr(self, "pet_react_until", 0.0) or 0.0)
+                or (getattr(self, "pet_idle", None) is not None
+                    and self.pet_idle.active(now))):
             return 1.0 / PET_DRAG_FPS
         return 1.0 / PET_IDLE_FPS
 
@@ -3536,6 +3719,8 @@ class PetWindow(StreamerWindow):
             self._drag_anchor = (pt.x, pt.y)
             self._drag_origin = (rect.left, rect.top)
             self._drag_last_cursor = (pt.x, pt.y)
+            self._drag_started_at = time.perf_counter()
+            self._drag_moved = 0.0
             user32.SetCapture(hwnd)
             return 0
         if msg == WM_MOUSEMOVE and self._dragging:
@@ -3558,6 +3743,7 @@ class PetWindow(StreamerWindow):
         sx = pt.x - self._drag_last_cursor[0]
         sy = pt.y - self._drag_last_cursor[1]
         self._drag_last_cursor = (pt.x, pt.y)
+        self._drag_moved += abs(sx) + abs(sy)
         if abs(sx) + abs(sy) >= 1:
             now = time.perf_counter()
             # 只记目标；倾斜/形变在 frame() 里按弹簧追过去，鼠标回报再快也不抖。
@@ -3565,10 +3751,14 @@ class PetWindow(StreamerWindow):
             self._drag_until = now + 0.18
             self.dirty = True
 
-    def _end_drag(self, now: float) -> None:
-        """松手（或捕获丢失）：恢复鼠标、落盘位置，形变交给弹簧回正。"""
+    def _end_drag(self, now: float | None = None) -> None:
+        """松手（或捕获丢失）：恢复鼠标、落盘位置，形变交给弹簧回正。
+
+        短按且几乎没位移算「摸一下」，不是拖拽；超过阈值才保留窗口移动。
+        """
         if not self._dragging:
             return
+        now = time.perf_counter() if now is None else float(now)
         self._dragging = False
         self._release_at = now
         self.motion.on_release(now)
@@ -3577,6 +3767,27 @@ class PetWindow(StreamerWindow):
         except Exception:
             pass
         self._save_pos()
+        held = now - float(getattr(self, "_drag_started_at", 0.0) or now)
+        moved = float(getattr(self, "_drag_moved", 0.0) or 0.0)
+        if moved <= PET_TAP_SLOP and held <= PET_TAP_MAX:
+            self._on_tap(now)
+
+    def _on_tap(self, now: float | None = None) -> None:
+        """轻点鱼身：摸摸头；350ms 内再点一下升级成「转一圈」。"""
+        now = time.perf_counter() if now is None else float(now)
+        double = bool(self._last_tap_at and now - self._last_tap_at <= 0.35)
+        self._last_tap_at = 0.0 if double else now
+        self._react("double" if double else "pat", now)
+
+    def _react(self, kind: str, now: float) -> None:
+        double = kind == "double"
+        self.pet_react_kind = "double" if double else "pat"
+        self.pet_react_start = now
+        self.pet_react_until = now + (2.8 if double else 2.1)
+        self.pet_react_text = random.choice(
+            PET_DOUBLE_LINES if double else PET_PAT_LINES)
+        self.pet_idle.reset(now)
+        self.dirty = True
 
     @staticmethod
     def _lbutton_down() -> bool:
@@ -3655,6 +3866,11 @@ class PetWindow(StreamerWindow):
         mode = self.tick_presence()
         if self.presence.dirty:
             self.presence.dirty = False
+        if mode == "idle" and now >= float(self.pet_react_until or 0.0):
+            self.pet_idle.tick(now)
+        elif mode != "idle" and self.pet_idle.action:
+            # 说话/思考时把待机动作收掉；下一次 idle 再重新排。
+            self.pet_idle.reset(now)
         return render_pet(self.display_text(mode), mode, self.scale, now, self)
 
     def start_talking(self, duration: float, text: str = ""):
@@ -3700,9 +3916,9 @@ class PetWindow(StreamerWindow):
         self.dirty = True
 
     def _run_hint(self) -> str:
-        return ("桌宠已启动：左键拖（左右/上下换朝向，带倾斜和速度线）· 滚轮/右下角=缩放 · "
-                "右键设置 · 穿透时鼠标贴鱼身 · Ctrl+Alt+D 穿透 · Ctrl+Alt+S 声音 · "
-                "Ctrl+Alt+H 隐藏 · Ctrl+Alt+Q 退出")
+        return ("桌宠已启动：左键拖（左右/上下换朝向，带倾斜和速度线）· 点一下摸摸头 · "
+                "双击转圈 · 滚轮/右下角=缩放 · 右键设置 · 穿透时鼠标贴鱼身 · "
+                "Ctrl+Alt+D 穿透 · Ctrl+Alt+S 声音 · Ctrl+Alt+H 隐藏 · Ctrl+Alt+Q 退出")
 
 
 # ---------------------------------------------------------------- 数据
