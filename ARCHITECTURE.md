@@ -309,7 +309,7 @@ observe ──► plan ──► validate ──► execute ──► reflect
   控制台「Agent 流程」展示；不依赖 LangSmith。
 - `langgraph` 是可选依赖（`pip install -e .[agent]`）；不装时桌宠、语音、游戏启动照常。
 
-## 6.6 性格层与 KOOK 记忆
+## 6.6 性格层与 KOOK 记忆 / 陪伴状态
 
 性格按「个人 → 摸鱼记忆 → 直播 → 游戏」拼接，由 `src/dafeiyu/persona/layers.py` 统一装配：
 
@@ -357,6 +357,16 @@ KOOK 聊天的长期记忆在 `src/dafeiyu/live/chat_memory.py`：
 - Token：聊天进程每次回复/记忆抽取/压缩/主动消息写 `logs/kook/usage.jsonl`（带 `msg_id`），
   控制台把该文件、`logs/autoplay.jsonl` 和 `logs/bili_training/usage.jsonl` 合并成一张账单，
   自动玩、聊天和 B 站训练各占一个来源。
+
+KOOK 的「陪伴状态」在 `src/dafeiyu/live/companion.py`，和长期记忆分开：
+
+- `logs/kook/companion.json` 存心情/精力/亲近度、每个人让你怎么称呼 ta、未完话头和
+  重要日期；写入走临时文件 + `os.replace`，读写都在 `Companion` 的锁内。
+- 提示词只拿标签（「有点累」「聊得来的熟人」「对方说过：明天面试」），不拿数值；
+  状态块由 `KookService._build_messages()` 注入，关掉 `kook_companion` 就整层跳过。
+- 主动消息先由 `Companion.candidate()` 给出带分数/理由的候选，服务只负责免打扰、
+  道别后不打扰、每日上限和发送；候选理由进 `proactive` 日志的 `reason`。
+- 回复节奏（连发合并、分条停顿、道别沉默）都在 `KookService`，不依赖模型。
 
 ## 7. 扩展点
 

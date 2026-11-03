@@ -94,6 +94,9 @@ def test_save_new_chat_and_desktop_fields(cfg_file):
                          "kook_stickers": False, "kook_proactive": False,
                          "kook_proactive_minutes": 30,
                          "kook_share_video": False,
+                         "kook_companion": False, "kook_typing_pace": False,
+                         "kook_merge_seconds": 3,
+                         "kook_quiet_hours": "01:00-08:00",
                          "persona_live": False,
                          "pet_status_bar": True})
     cfg = res["config"]
@@ -105,6 +108,11 @@ def test_save_new_chat_and_desktop_fields(cfg_file):
     assert cfg["kook_proactive"] is False
     assert cfg["kook_proactive_minutes"] == 30
     assert cfg["kook_share_video"] is False
+    assert cfg["kook_companion"] is False
+    assert cfg["kook_typing_pace"] is False
+    assert cfg["kook_merge_seconds"] == 3
+    assert cfg["kook_quiet_hours"] == "01:00-08:00"
+    assert cfg["companion"]["available"] is False
     assert cfg["persona_live"] is False
     assert cfg["pet_status_bar"] is True
 
@@ -154,6 +162,9 @@ def test_save_writes_config_and_points_at_restart_fields(cfg_file):
     ({"llm_base_url": "ftp://example"}, "接口地址"),
     ({"llm_model": "  "}, "模型名"),
     ({"game": "not-a-game"}, "未知游戏"),
+    ({"kook_quiet_hours": "晚上"}, "00:30"),
+    ({"kook_quiet_hours": "25:00-07:00"}, "23:59"),
+    ({"kook_merge_seconds": 20}, "连发合并"),
 ])
 def test_save_rejects_bad_values(cfg_file, patch, message):
     with pytest.raises(ValueError) as exc:
@@ -257,6 +268,9 @@ def test_settings_page_and_api_routes(cfg_file, monkeypatch):
         assert "最短安静时间" in page
         assert 'data-k="kook_proactive_minutes"' in page
         assert 'data-k="kook_share_video"' in page
+        assert 'data-k="kook_companion"' in page
+        assert 'data-k="kook_quiet_hours"' in page
+        assert 'id="companionNote"' in page
 
         with _get(port, "/api/settings") as resp:
             payload = json.loads(resp.read())

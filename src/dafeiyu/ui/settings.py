@@ -50,6 +50,8 @@ _BOOL_FIELDS = (
     "kook_stickers",
     "kook_proactive",
     "kook_share_video",
+    "kook_companion",
+    "kook_typing_pace",
     "persona_live",
     "bili_training_like",
     "bili_training_comment",
@@ -225,6 +227,20 @@ def memory_state() -> dict:
         return {"available": False, "error": f"{type(exc).__name__}: {exc}"}
 
 
+def companion_state() -> dict:
+    """KOOK 陪伴状态快照（只读；还没有聊过就返回 available=False）。"""
+    try:
+        from ..live.companion import Companion
+
+        path = paths.LOGS / "kook" / "companion.json"
+        if not path.is_file():
+            return {"available": False, "path": paths.rel(path)}
+        state = Companion(path)
+        return {"available": True, "path": paths.rel(path), **state.stats()}
+    except Exception as exc:  # noqa: BLE001 - 读不到状态不能拖垮设置页
+        return {"available": False, "error": f"{type(exc).__name__}: {exc}"}
+
+
 def _training_state() -> dict:
     try:
         from ..live import bili_training
@@ -327,6 +343,8 @@ def payload() -> dict:
     data["bili_training_compress"] = _compress_state()
     data["stickers"] = sticker_state()
     data["memory"] = {**memory_state(), "enabled": bool(cfg.kook_memory)} if cfg.kook_memory else {
+        "available": False, "enabled": False}
+    data["companion"] = companion_state() if cfg.kook_companion else {
         "available": False, "enabled": False}
     data["autostart"] = autostart_state()
     # 显示真实端口：CLI --port / 环境变量可能覆盖 config.json，重启后要跳到
@@ -456,10 +474,21 @@ def save(body: dict) -> dict:
     if "bilibili_room_id" in body:
         patch["bilibili_room_id"] = int(_number(
             body["bilibili_room_id"], "B 站房间号", 0, 10 ** 12))
+    if "kook_quiet_hours" in body:
+        text = _clean_text(body["kook_quiet_hours"], "免打扰时段", 20)
+        if text:
+            from ..live.companion import parse_quiet_hours
+
+            try:
+                parse_quiet_hours(text)
+            except ValueError as exc:
+                raise ValueError(str(exc)) from None
+        patch["kook_quiet_hours"] = text
     for field, (label, low, high) in {
         "kook_context_turns": ("聊天上下文条数", 4, 40),
         "kook_summary_trigger": ("记忆压缩阈值", 8, 80),
         "kook_proactive_minutes": ("最短安静时间", 10, 720),
+        "kook_merge_seconds": ("连发合并秒数", 0, 10),
         "bili_training_comment_chars": ("训练评论字数", 40, 300),
         "bili_training_max_minutes": ("训练视频最大时长", 2, 180),
         "bili_training_min_views": ("训练视频最低播放量", 0, 1_000_000_000),

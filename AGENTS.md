@@ -81,6 +81,11 @@ not the product version.
 - KOOK memory keeps all turns in SQLite; context is recent turns + summaries.
   When pending turns exceed `kook_summary_trigger`, compress the oldest batch and
   advance `meta.summary_upto`; keep the raw turns. Do not silently drop history.
+- KOOK companionship state (mood/energy/closeness, unfinished threads, important
+  dates) lives only in `logs/kook/companion.json` via
+  `src/dafeiyu/live/companion.py::Companion`; the service reads state and proactive
+  candidates from it. Do not keep a second store, and never put raw numbers into
+  the prompt — render labels and let the model decide the wording.
 - KOOK monitoring is a separate process; when `kook_enabled` is true the pet
   starts/stops it via `live/kook/supervisor.py` and `logs/kook/service.lock`
   prevents a manual launch from creating a second connection. Keep that lock

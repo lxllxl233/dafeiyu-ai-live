@@ -553,7 +553,7 @@ def test_proactive_sends_after_idle(tmp_path):
 
     cfg = LiveConfig(kook_memory=False, kook_allow_voice=False,
                      kook_stickers=False, kook_proactive=True,
-                     kook_proactive_minutes=10)
+                     kook_proactive_minutes=10, kook_quiet_hours="")
     client = Client()
     service = KookService(cfg, None, client, llm=LLM(),
                           work_dir=tmp_path, log_path=tmp_path / "events.jsonl")
@@ -601,7 +601,7 @@ def test_proactive_daily_cap_and_decline_rearms(tmp_path):
             raise AssertionError("不应该发送")
 
     cfg = LiveConfig(kook_memory=False, kook_proactive=True,
-                     kook_proactive_minutes=10)
+                     kook_proactive_minutes=10, kook_quiet_hours="")
     service = KookService(cfg, None, Client(), work_dir=tmp_path,
                           log_path=tmp_path / "events.jsonl")
     service._last_target = "c1"

@@ -616,6 +616,27 @@
       </section>
 
       <section class="card">
+        <h3>陪伴状态 <em id="companionState">—</em></h3>
+        <div class="row">
+          <div><span class="t">情感与生活状态</span><small>她会记着心情、精力、和你熟到什么程度，也会记住你说过「明天面试」这类还没结果的事；这些只影响语气，不会每句汇报。数据只写本机 <code>logs/kook/companion.json</code>。</small></div>
+          <label class="sw"><input type="checkbox" data-k="kook_companion"><span></span></label>
+        </div>
+        <div class="row">
+          <div><span class="t">免打扰时段</span><small>这段时间不主动开口（跨零点也认，留空 = 不限制）。道别之后当晚也不再打扰。</small></div>
+          <div class="ctl"><input class="w-input" type="text" data-k="kook_quiet_hours" spellcheck="false" placeholder="00:30-07:30"></div>
+        </div>
+        <div class="row">
+          <div><span class="t">连发合并</span><small>对方一句话拆成几条发时，先等你打完再一起回，避免抢答或重复回复；0 = 不合并。</small></div>
+          <div class="ctl"><input class="w-num" type="number" min="0" max="10" step="1" data-k="kook_merge_seconds"><span class="badge">秒</span></div>
+        </div>
+        <div class="row">
+          <div><span class="t">分条打字停顿</span><small>一次回几条时，第 2 条之后停一下再发，像真人在打字；只影响第 2 条及以后。</small></div>
+          <label class="sw"><input type="checkbox" data-k="kook_typing_pace"><span></span></label>
+        </div>
+        <div class="hint-line" id="companionNote">—</div>
+      </section>
+
+      <section class="card">
         <h3>聊天记忆 <em id="memoryState">—</em></h3>
         <div class="row">
           <div><span class="t">最近原文条数</span><small>每次请求带上的最近对话条数；越少越省 token，越多越连贯。</small></div>
@@ -1034,6 +1055,31 @@
         memNote.textContent = `待压缩 ${mem.pending || 0} 条 · 长期事实 ${mem.facts || 0} 条 · 本机 ${path || "logs/kook/memory.db"}`;
       } else {
         memNote.textContent = "记忆库打不开；检查 logs/kook/memory.db 权限，或先关掉长期记忆。";
+      }
+    }
+
+    const comp = cfg.companion || {};
+    const compState = $("#companionState");
+    const compNote = $("#companionNote");
+    if (compState) {
+      compState.textContent = !cfg.kook_companion
+        ? "已关闭"
+        : (comp.available ? `${comp.mood_label || "—"} · ${comp.energy_label || "—"}` : "还没有记录");
+    }
+    if (compNote) {
+      if (!cfg.kook_companion) {
+        compNote.textContent = "关着：不维护心情/精力/亲近度，也不会按未完话头主动关心。";
+      } else if (!comp.available) {
+        compNote.textContent = "还没有聊天记录；聊几句后这里会显示她的状态、记着的事和快到的日子。";
+      } else {
+        const peer = (comp.peers || [])[0];
+        const bits = [];
+        if (peer) {
+          bits.push(`和 ${peer.name || "对方"}：${peer.label}（认识 ${peer.days} 天，聊过 ${peer.turns} 次）`);
+        }
+        if ((comp.threads || []).length) bits.push(`记着 ${comp.threads.length} 件还没结果的事`);
+        if ((comp.dates || []).length) bits.push(`${comp.dates.length} 个快到的日子`);
+        compNote.textContent = bits.join(" · ") || "暂时没有要跟进的约定。";
       }
     }
 

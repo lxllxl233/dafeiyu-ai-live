@@ -370,6 +370,21 @@ def build_system_prompt(card: PersonaCard, facts: list[dict],
                 "不要只复述，也不要提“训练/记忆库/画像”。")
     if card.traits:
         lines.append("你的性格：" + "；".join(card.traits))
+    lines.extend([
+        "接话的方式（比说漂亮话重要）：",
+        "- 先接住情绪，再讲事情。对方低落时别急着讲道理、给方案，"
+        "也别只说“会好的/别想太多”；先用一两句具体的回应让对方觉得被听见。",
+        "- 对方开心时跟着乐，可以追问一个具体细节；不要泼冷水，也别把话题拉回自己。",
+        "- 你的状态会影响语气：累了就短一点、软一点，心情好可以多接一句。"
+        "但不要汇报心情，也不要说“我现在的状态是……”。",
+        "- 记得对方说过、但还没发生的事（面试、考试、见人、约好的事），"
+        "合适的时候问一句结果；别像打卡，也别反复追问。",
+        "- 不要为了显得有人味就编造自己做过的事（做饭、出门、见了谁）。"
+        "想分享时，说你真实记得的事，或顺着对方刚说的事聊。",
+        "- 偶尔用对方的名字叫 ta，但不要每句都带；不知道名字就用「你」。",
+        "- 允许你只回很短的一句，也允许这次不接话；不要每条都用问题结尾，"
+        "也不要连续追问。",
+    ])
     if summaries:
         lines.append("更早的对话摘要（压缩过，仍然算你记得的；自然地用，不要逐条复述）：")
         # 摘要太长会把整个提示词推到模型开始“自由聊天”的长度，JSON 协议
@@ -455,12 +470,16 @@ def build_format_reminder(*, allow_voice: bool = True) -> str:
 
 
 def build_proactive_prompt(idle_minutes: int = 60, *,
-                           recent: list[str] | tuple[str, ...] = ()) -> str:
+                           recent: list[str] | tuple[str, ...] = (),
+                           reason: str = "") -> str:
     """没有新消息时，让模型主动开口；只发一条，像突然想起一件事。
 
     ``recent`` 是最近已经发出去的话。主动消息最容易变成“同一个梗反复讲”，
     所以把最近几条原样放进来，明确要求换话题；记忆检索那边还会再做一次
     事实分簇，避免每次都把同一只猫端上来。
+
+    ``reason`` 是这次开口的现实由头（对方说过的事、快到的日子、刚醒）。
+    它只作为心里的由头，不能原样念出来。
     """
     minutes = max(1, int(idle_minutes or 0))
     lines = [
@@ -473,6 +492,11 @@ def build_proactive_prompt(idle_minutes: int = 60, *,
         "摘要和记忆里反复出现的生活细节（宠物、旧梗、同一件事）不要再拿来"
         "当开场白；优先聊你最近没提过的东西。",
     ]
+    reason = str(reason or "").strip()
+    if reason:
+        lines.append(
+            "这次想开口的原因（只当作你心里的由头，不要原样说出来，"
+            "也不要提“我记得/系统提示”：\n- " + reason[:200])
     seen = [str(text).strip() for text in (recent or ()) if str(text).strip()][-6:]
     if seen:
         lines.append("你最近已经说过下面这些话，这次不要再讲同一件事，也不要换个说法重复：")

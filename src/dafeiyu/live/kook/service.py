@@ -27,6 +27,9 @@ from ...persona.layers import PersonaStack
 from .. import chat as chat_mod
 from ..bili_video import extract_video_links, learn_shared_video, shared_video_context
 from ..chat_memory import Memory
+from ..companion import (
+    Companion, goodnight_block_active, in_quiet, is_goodbye, quiet_end,
+)
 from .client import KookClient, KookError
 from .usage import append_usage
 
@@ -194,10 +197,12 @@ class KookService:
         self._poll_primed: set[str] = set()
         self._poll_thread = threading.Thread(
             target=self._poll_loop, name="kook-image-poll", daemon=True)
-        # 安静一阵后偶尔主动找最近聊过的人/频道；只记在内存里，重启后等新消息。
+        # 安静一阵后偶尔主动找最近聊过的人/频道；最近联系人记在
+        # companion.json 的 meta 里，重启后不用等对方先开口。
         self._proactive_thread = threading.Thread(
             target=self._proactive_loop, name="kook-proactive", daemon=True)
         self._last_target = ""
+        self._last_peer_id = ""
         self._last_channel_type = ""
         self._last_active_at = time.time()
         self._last_proactive_at = 0.0
@@ -209,6 +214,15 @@ class KookService:
         self._seen_ids: set[str] = set()
         self._seen_lock = threading.Lock()
         self._media_history: list[tuple[bool, bool]] = []
+        # 陪伴状态（心情/精力/亲近度/未完话头）懒加载；关掉或打不开就退回纯聊天。
+        self._companion: Companion | None = None
+        self._companion_failed = False
+        # 主动开口被作息/道别挡住时，每天只记一条，避免日志刷屏。
+        self._proactive_blocked_key = ""
+        self._goodnight_at = 0.0
+        # 测试可以替换成假的 sleep；正常就是真的等。
+        self._sleep = time.sleep
+        self._restore_contact()
 
     # ---------------------------------------------------------------- 生命周期
     def start(self) -> "KookService":
@@ -316,11 +330,165 @@ class KookService:
             if msg is None:
                 break
             try:
-                self.handle(msg)
+                self.handle(self._merge_followups(msg))
             except Exception as exc:  # noqa: BLE001 - 一条消息不能带崩常驻
                 self._log({"kind": "error", "error": f"{type(exc).__name__}: {exc}"})
             finally:
                 self._queue.task_done()
+
+    def _merge_followups(self, first: Inbound) -> Inbound:
+        """一句话拆成几条发时，等对方打完再一起回，别抢答。
+
+        只合并同一发送者、同一目标、前后都是纯文字的消息；图片/不同人/系统
+        消息一律不合并，直接放回队列。窗口受 ``kook_merge_seconds`` 控制，
+        0 = 关闭。合并后的原文只回一次，被并进来的 msg_id 照样记进已读，
+        避免平台重投时再回一遍。
+        """
+        try:
+            window = float(getattr(self.cfg, "kook_merge_seconds", 0) or 0)
+        except (TypeError, ValueError):
+            window = 0.0
+        window = min(max(window, 0.0), 8.0)
+        if (window <= 0 or not first.text or first.image_url
+                or first.msg_type not in (1, 9)):
+            return first
+        started = time.monotonic()
+        deadline = started + window
+        hard_deadline = started + window * 3
+        parts = [first.text]
+        while True:
+            left = min(deadline, hard_deadline) - time.monotonic()
+            if left <= 0:
+                break
+            try:
+                nxt = self._queue.get(timeout=left)
+            except queue.Empty:
+                break
+            self._queue.task_done()
+            if nxt is None:
+                try:
+                    self._queue.put_nowait(None)
+                except queue.Full:
+                    pass
+                break
+            same = (nxt.text and not nxt.image_url and nxt.msg_type in (1, 9)
+                    and nxt.author_id == first.author_id
+                    and nxt.target_id == first.target_id
+                    and nxt.channel_type == first.channel_type)
+            if not same:
+                self._requeue(nxt)
+                break
+            if nxt.message_id:
+                with self._seen_lock:
+                    if nxt.message_id in self._seen_ids:
+                        continue          # 平台重投的同一条，不再拼一遍
+                    self._seen_ids.add(nxt.message_id)
+                if self.memory and not self.memory.first_seen(nxt.message_id):
+                    continue
+            parts.append(nxt.text)
+            deadline = time.monotonic() + window
+        if len(parts) > 1:
+            first.text = " ".join(parts)
+            self._log({"kind": "merged", "parts": len(parts),
+                       "chars": len(first.text)})
+        return first
+
+    def _requeue(self, msg: Inbound) -> None:
+        try:
+            self._queue.put_nowait(msg)
+        except queue.Full:
+            self._log({"kind": "drop", "reason": "队列已满"})
+
+    # ---------------------------------------------------------------- 陪伴状态
+    def _state(self) -> Companion | None:
+        """懒加载陪伴状态；没开或文件坏了都只是关掉这一层，不影响聊天。"""
+        if not bool(getattr(self.cfg, "kook_companion", True)) or self._companion_failed:
+            return None
+        if self._companion is None:
+            try:
+                self._companion = Companion(self.work_dir / "companion.json")
+            except Exception as exc:  # noqa: BLE001
+                self._companion_failed = True
+                self._log({"kind": "companion_error",
+                           "error": f"{type(exc).__name__}: {exc}"})
+                return None
+        return self._companion
+
+    @staticmethod
+    def _peer_of(msg: Inbound) -> str:
+        return str(msg.author_id or msg.target_id or "")
+
+    def _restore_contact(self) -> None:
+        """重启后接着找最近聊过的人，而不是退回「从没聊过」。"""
+        state = self._state()
+        if not state:
+            return
+        try:
+            saved = state.last_contact()
+        except Exception:  # noqa: BLE001 - 读不到就按新会话处理
+            return
+        target = str(saved.get("target_id") or "")
+        if not target:
+            return
+        self._last_target = target
+        self._last_channel_type = str(saved.get("channel_type") or "")
+        self._last_peer_id = str(saved.get("peer_id") or "")
+        try:
+            seen = float(saved.get("at") or 0.0)
+        except (TypeError, ValueError):
+            seen = 0.0
+        fresh = bool(seen) and time.time() - seen <= 72 * 3600
+        if fresh:
+            self._last_active_at = min(time.time(), seen)
+        # 最近 3 天聊过 = 可以主动开口；太久没联系就等对方先说一句，
+        # 别让一次重启把几个月前的联系人突然叫起来。
+        self._proactive_armed = fresh
+
+    def _note_user_state(self, msg: Inbound) -> None:
+        """把这条消息记进心情/话头；失败只记日志，绝不影响回复。"""
+        state = self._state()
+        peer = self._peer_of(msg)
+        if not state or not peer:
+            return
+        try:
+            state.touch(peer, msg.author_name)
+            state.remember_contact(peer, self._last_target, msg.channel_type)
+            note = state.note_user(peer, msg.text)
+        except Exception as exc:  # noqa: BLE001
+            self._log({"kind": "companion_error",
+                       "error": f"{type(exc).__name__}: {exc}"})
+            return
+        if note.get("goodnight"):
+            self._goodnight_at = time.time()
+        else:
+            self._goodnight_at = 0.0          # 对方回来了，晚安静默解除
+        if note.get("threads") or note.get("dates"):
+            self._log({"kind": "companion_notes", "threads": note.get("threads"),
+                       "dates": note.get("dates")})
+
+    def _said_goodbye(self) -> bool:
+        """上一句自己是不是已经道过别；用来看要不要再回一遍晚安。"""
+        if not self.memory:
+            return False
+        try:
+            turns = self.memory.recent(6)
+        except Exception:  # noqa: BLE001
+            return False
+        now = time.time()
+        for turn in reversed(turns):
+            if str(turn.get("role")) == "assistant":
+                # 只看最近几小时内的道别；隔了一天的“晚安”不算已经收过尾。
+                if now - float(turn.get("ts") or 0.0) > 6 * 3600:
+                    return False
+                return is_goodbye(str(turn.get("text") or ""))
+        return False
+
+    def _note_proactive_blocked(self, reason: str, now: float) -> None:
+        key = f"{reason}:{time.strftime('%Y-%m-%d', time.localtime(now))}"
+        if key == self._proactive_blocked_key:
+            return
+        self._proactive_blocked_key = key
+        self._log({"kind": "proactive_wait", "reason": reason})
 
     # ---------------------------------------------------------------- 主动消息
     def _proactive_loop(self) -> None:
@@ -342,12 +510,16 @@ class KookService:
             fresh = LiveConfig.load()
             self.cfg.kook_proactive = bool(fresh.kook_proactive)
             self.cfg.kook_proactive_minutes = int(fresh.kook_proactive_minutes or 20)
+            self.cfg.kook_companion = bool(fresh.kook_companion)
+            self.cfg.kook_quiet_hours = str(fresh.kook_quiet_hours or "")
+            self.cfg.kook_merge_seconds = int(fresh.kook_merge_seconds or 0)
+            self.cfg.kook_typing_pace = bool(fresh.kook_typing_pace)
         except Exception:
             pass
 
     def _maybe_proactive(self, now: float | None = None,
                          chance: float | None = None) -> bool:
-        """安静够久后按概率主动开口；只找最近聊过的地方，不连发。"""
+        """安静够久后按概率主动开口；先过作息/道别，再挑一个有由头的候选。"""
         if not bool(getattr(self.cfg, "kook_proactive", False)):
             return False
         target = str(self._last_target or "")
@@ -372,14 +544,40 @@ class KookService:
             return False
         if self._last_proactive_at and now - self._last_proactive_at < interval:
             return False
-        roll = random.random() if chance is None else float(chance)
-        if roll > 0.5:
+        # 对方刚道过晚安：夜里到第二天早上再考虑；白天小睡只静默 90 分钟。
+        if (self._goodnight_at
+                and goodnight_block_active(self._goodnight_at, now)):
+            self._note_proactive_blocked("after_goodnight", now)
+            self._proactive_retry_at = now + 2 * 3600
+            return False
+        quiet = str(getattr(self.cfg, "kook_quiet_hours", "") or "")
+        if quiet and in_quiet(now, quiet):
+            self._note_proactive_blocked("quiet_hours", now)
+            self._proactive_retry_at = quiet_end(now, quiet) + 300
             return False
         idle_minutes = max(1, int(idle / 60))
+        peer = str(self._last_peer_id or target)
+        candidate = None
+        state = self._state()
+        if state and peer:
+            try:
+                state.decay(now)
+                candidate = state.candidate(peer, now, idle_minutes)
+            except Exception as exc:  # noqa: BLE001 - 状态坏了照常走随机开口
+                self._log({"kind": "companion_error",
+                           "error": f"{type(exc).__name__}: {exc}"})
+        if candidate and candidate.get("blocked"):
+            self._note_proactive_blocked(str(candidate["blocked"]), now)
+            self._proactive_retry_at = now + 2 * 3600
+            return False
+        # 理由越实在，这次开口的意愿越高；闲得没事的候选还是常常放过。
+        roll = random.random() if chance is None else float(chance)
+        if roll > self._send_willingness(candidate):
+            return False
         self._last_proactive_at = now
         self._last_active_at = now
         self._proactive_armed = False
-        sent = self._send_proactive(idle_minutes)
+        sent = self._send_proactive(idle_minutes, candidate)
         if sent:
             self._proactive_sent_today += 1
         else:
@@ -389,11 +587,13 @@ class KookService:
             self._proactive_retry_at = now + 2 * 3600
         return sent
 
-    def _send_proactive(self, idle_minutes: int) -> bool:
+    def _send_proactive(self, idle_minutes: int,
+                        candidate: dict | None = None) -> bool:
         target = str(self._last_target or "")
         if not target:
             return False
         channel_type = self._last_channel_type or "GROUP"
+        peer = str(self._last_peer_id or target)
         # 私聊的 Inbound.target_id 只作展示/兜底；真正发给谁由 _reply_target 决定。
         # 主动消息没有入站作者，私聊时把 target 同时放进 author_id。
         msg = Inbound(target_id=target,
@@ -408,7 +608,8 @@ class KookService:
         for attempt in range(2):
             try:
                 messages = self._build_messages(
-                    "", proactive=True, idle_minutes=idle_minutes)
+                    "", proactive=True, idle_minutes=idle_minutes, peer_id=peer,
+                    proactive_reason=str((candidate or {}).get("reason") or ""))
             except Exception as exc:  # noqa: BLE001
                 self._log({"kind": "proactive_error",
                            "error": f"{type(exc).__name__}: {exc}"})
@@ -473,15 +674,46 @@ class KookService:
             for part in texts:
                 self.memory.add_turn("assistant", part, "", "")
             self._turns_since_facts += 1
+        if sent:
+            self._note_proactive_state(peer, texts, candidate)
         self._mirror_to_pet(" ".join(texts))
         actions = ["text"] + (["voice"] if voice_ok else []) + (
             ["sticker"] if sticker_ok else [])
         self._log({"kind": "proactive", "action": "+".join(actions),
                    "chars": len(text), "parts": len(texts),
                    "thought": str(reply.get("thought") or "")[:200],
+                   "reason": str((candidate or {}).get("kind") or ""),
+                   "score": round(float((candidate or {}).get("score") or 0.0), 2),
                    "target_id": target,
                    "ms": int((time.time() - started) * 1000)})
         return bool(sent)
+
+    @staticmethod
+    def _send_willingness(candidate: dict | None) -> float:
+        """带理由的候选更容易真的发出去；纯闲聊基本靠运气。"""
+        try:
+            score = float((candidate or {}).get("score") or 0.3)
+        except (TypeError, ValueError):
+            score = 0.3
+        return min(0.85, max(0.2, 0.25 + score * 0.6))
+
+    def _note_proactive_state(self, peer: str, texts: list[str],
+                              candidate: dict | None) -> None:
+        """主动开口后：收掉这条话头/把这个日子标成已问候，并记一笔精力消耗。"""
+        state = self._state()
+        if not state or not peer:
+            return
+        try:
+            state.note_reply(peer, texts)
+            kind = str((candidate or {}).get("kind") or "")
+            if kind == "thread":
+                state.mark_thread_asked((candidate or {}).get("thread_id"))
+            elif kind == "date":
+                state.mark_date_greeted(peer, int((candidate or {}).get("month") or 0),
+                                        int((candidate or {}).get("day") or 0))
+        except Exception as exc:  # noqa: BLE001
+            self._log({"kind": "companion_error",
+                       "error": f"{type(exc).__name__}: {exc}"})
 
     def _recent_own_texts(self, limit: int = 8) -> list[str]:
         if not self.memory:
@@ -546,12 +778,22 @@ class KookService:
 
         # 记住最近聊过的地方，给「偶尔主动发消息」用。
         self._last_target = self._reply_target(msg)
+        self._last_peer_id = self._peer_of(msg)
         self._last_channel_type = msg.channel_type
         self._last_active_at = time.time()
         self._proactive_armed = True
         self._proactive_retry_at = 0.0
+        self._note_user_state(msg)
 
         caption = msg.text
+        # 已经互道过晚安时，不再用模型回一遍“晚安”，避免来回死循环；
+        # 只把对方这句收进记忆，然后安静。
+        if caption and is_goodbye(caption) and self._said_goodbye():
+            if self.memory:
+                self.memory.add_turn("user", caption, msg.message_id, msg.image_url)
+            self._log({"kind": "silent_goodbye", "chars": len(caption)})
+            return {"ok": True, "action": "silence", "reason": "道别收尾"}
+
         video_context = ""
         if caption and extract_video_links(caption) and self._video_share_enabled():
             learned = self._learn_shared_video(msg, caption)
@@ -578,7 +820,8 @@ class KookService:
                 })
         try:
             messages = self._build_messages(
-                caption, msg.image_url, video_context=video_context)
+                caption, msg.image_url, video_context=video_context,
+                peer_id=self._last_peer_id)
         except KookError as exc:
             self._log({"kind": "image_error", "error": str(exc)})
             text = "这张图我这边没加载出来，再发一次？"
@@ -728,9 +971,20 @@ class KookService:
     def _build_messages(self, caption: str, image_url: str = "", *,
                         proactive: bool = False,
                         idle_minutes: int = 0,
-                        video_context: str = "") -> list[dict]:
+                        video_context: str = "",
+                        peer_id: str = "",
+                        proactive_reason: str = "") -> list[dict]:
         from ...persona import stickers
 
+        life_block = ""
+        state = self._state()
+        peer = str(peer_id or self._last_peer_id or "")
+        if state and peer:
+            try:
+                life_block = state.prompt_block(peer)
+            except Exception as exc:  # noqa: BLE001 - 状态坏了不能拖垮回复
+                self._log({"kind": "companion_error",
+                           "error": f"{type(exc).__name__}: {exc}"})
         facts = []
         context = {"summaries": [], "turns": []}
         recent_own: list[str] = []
@@ -774,6 +1028,10 @@ class KookService:
         media_hint = self._media_hint()
         if media_hint:
             messages.append({"role": "system", "content": media_hint})
+        if life_block.strip():
+            # 本轮状态放在历史之后、格式提醒之前：系统提示词的稳定前缀不变，
+            # 时间和心情这种每轮都变的东西不会把整段人设挤进缓存失效区。
+            messages.append({"role": "system", "content": life_block.strip()})
         if video_context:
             # 刚学的视频：公开文字 + 新写下的记忆。放在格式提醒之前，
             # 保证最后一条仍是 JSON 协议提醒。
@@ -793,7 +1051,8 @@ class KookService:
         elif proactive:
             messages.append({"role": "user",
                              "content": chat_mod.build_proactive_prompt(
-                                 idle_minutes, recent=recent_own)})
+                                 idle_minutes, recent=recent_own,
+                                 reason=proactive_reason)})
         else:
             messages.append({"role": "user",
                              "content": chat_mod.build_user_prompt(caption, False)})
@@ -873,14 +1132,21 @@ class KookService:
             "这次先判断有没有必要：普通接话就纯文字，别形成每条都带媒体的习惯。")
 
     def _send_texts(self, msg: Inbound, texts: list[str]) -> bool:
-        """逐条发送模型给的短消息；每条单独一个气泡，超长才切片。"""
+        """逐条发送模型给的短消息；每条单独一个气泡，超长才切片。
+
+        一次回多条时，第 2 条起按上一条的长度停一下再发（``kook_typing_pace``），
+        像真人在打字；第一句不额外拖，模型本身已经占了几秒。
+        """
         parts = [str(text).strip() for text in texts if str(text).strip()]
         if not parts:
             return False
         ok = True
         first = True
         target = self._reply_target(msg)
-        for body in parts:
+        pace = bool(getattr(self.cfg, "kook_typing_pace", True))
+        for index, body in enumerate(parts):
+            if index and pace:
+                self._sleep(self._typing_gap(parts[index - 1]))
             for chunk in chat_mod.split_message(body):
                 quote = msg.message_id if first else ""
                 try:
@@ -897,6 +1163,11 @@ class KookService:
 
     def _send_text(self, msg: Inbound, text: str) -> bool:
         return self._send_texts(msg, [text])
+
+    @staticmethod
+    def _typing_gap(previous: str) -> float:
+        """上一条越长，下一条前停得越久；封顶 0.9 秒，别让聊天变卡。"""
+        return min(0.9, 0.22 + len(str(previous or "")) * 0.012)
 
     @staticmethod
     def _wants_voice(text: str) -> bool:
@@ -988,10 +1259,19 @@ class KookService:
     # ---------------------------------------------------------------- 记忆
     def _record(self, msg: Inbound, user_text: str,
                 reply_text: str | list[str]) -> None:
+        parts = reply_text if isinstance(reply_text, (list, tuple)) else [reply_text]
+        # 陪伴状态不依赖长期记忆开关：记忆关掉时，精力/亲近度照样该变。
+        state = self._state()
+        peer = self._peer_of(msg)
+        if state and peer:
+            try:
+                state.note_reply(peer, [str(p or "") for p in parts])
+            except Exception as exc:  # noqa: BLE001
+                self._log({"kind": "companion_error",
+                           "error": f"{type(exc).__name__}: {exc}"})
         if not self.memory:
             return
         self.memory.add_turn("user", user_text, msg.message_id, msg.image_url)
-        parts = reply_text if isinstance(reply_text, (list, tuple)) else [reply_text]
         for part in parts:
             body = str(part or "").strip()
             if body:
@@ -1103,6 +1383,8 @@ def check(cfg: LiveConfig) -> int:
         proactive_minutes = 20
     print(f"主动消息：{'开' if cfg.kook_proactive else '关'}"
           f"（{proactive_minutes} 分钟）", flush=True)
+    print(f"陪伴状态：{'开' if cfg.kook_companion else '关'}"
+          f"（免打扰 {cfg.kook_quiet_hours or '不限'}）", flush=True)
     if cfg.kook_memory:
         memory = Memory()
         print(f"记忆库：{memory.path}（{memory.stats()}）", flush=True)
@@ -1158,11 +1440,14 @@ def _run_service(cfg: LiveConfig) -> int:
     service._log({"kind": "started", "persona": cfg.kook_persona,
                   "memory": bool(cfg.kook_memory),
                   "proactive": bool(cfg.kook_proactive),
-                  "proactive_minutes": proactive_minutes})
+                  "proactive_minutes": proactive_minutes,
+                  "companion": bool(cfg.kook_companion),
+                  "quiet_hours": str(cfg.kook_quiet_hours or "")})
     service.start()
     print(f"[kook] 聊天已启动：{cfg.kook_persona} · 记忆="
           f"{'开' if cfg.kook_memory else '关'} · 主动消息="
-          f"{'开' if cfg.kook_proactive else '关'}", flush=True)
+          f"{'开' if cfg.kook_proactive else '关'} · 陪伴状态="
+          f"{'开' if cfg.kook_companion else '关'}", flush=True)
     print(f"[kook] 事件日志：{event_log}", flush=True)
     print("[kook] Ctrl+C 退出。", flush=True)
 

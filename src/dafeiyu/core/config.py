@@ -49,6 +49,10 @@ _ENV_FIELDS = {
     "KOOK_STICKERS": "kook_stickers",
     "KOOK_PROACTIVE": "kook_proactive",
     "KOOK_PROACTIVE_MINUTES": "kook_proactive_minutes",
+    "KOOK_COMPANION": "kook_companion",
+    "KOOK_QUIET_HOURS": "kook_quiet_hours",
+    "KOOK_MERGE_SECONDS": "kook_merge_seconds",
+    "KOOK_TYPING_PACE": "kook_typing_pace",
     "KOOK_CONTEXT_TURNS": "kook_context_turns",
     "KOOK_SUMMARY_TRIGGER": "kook_summary_trigger",
     "PERSONA_LIVE": "persona_live",
@@ -177,6 +181,15 @@ class LiveConfig:
     # 安静一阵后，偶尔主动找最近聊过的人/频道说一句（不会连发）
     kook_proactive: bool = True
     kook_proactive_minutes: int = 20
+    # 陪伴状态：心情/精力/亲近度、未完话头和重要日期，只写 logs/kook/companion.json。
+    # 关掉后仍是原来的「只看对话」聊天，不会因为状态改变语气。
+    kook_companion: bool = True
+    # 这段时间里不主动开口（跨零点也认）；空字符串 = 不限制
+    kook_quiet_hours: str = "00:30-07:30"
+    # 对方一句话拆成几条发时，先等这么多秒再一起回（0 = 不合并）
+    kook_merge_seconds: int = 2
+    # 一次回多条时，第 2 条之后停一下再发，像真人在打字
+    kook_typing_pace: bool = True
     # 聊天里有人发 B 站视频链接时，读标题/简介/热评写成长期记忆再聊；
     # 关闭后链接只当普通文本，不额外花 token。
     kook_share_video: bool = True
