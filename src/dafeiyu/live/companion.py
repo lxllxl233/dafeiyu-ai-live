@@ -38,8 +38,9 @@ _MOOD_LABELS = (
 _ENERGY_LABELS = (
     (0.75, "精神很好"),
     (0.55, "还撑得住"),
-    (0.35, "有点累"),
-    (0.00, "快没电了"),
+    (0.30, "有点累"),
+    (0.12, "很累了"),
+    (0.00, "快睁不开眼了"),
 )
 _CLOSENESS_LABELS = (
     (70.0, "很亲近的人"),
@@ -54,17 +55,16 @@ _WEEKDAYS = ("星期一", "星期二", "星期三", "星期四", "星期五", "�
 _PUNCT = "，。！？、；：,.!?;:\"'“”‘’（）()【】[]{}<>《》 \t\n"
 
 # 语气词：只做很轻的判断，不做心理分析。
-_POSITIVE = (
-    "开心", "高兴", "好耶", "太好了", "太棒", "喜欢", "谢谢", "爱你", "顺利",
-    "过了", "成了", "成功", "哈哈", "嘿嘿", "舒服", "轻松", "惊喜", "中奖",
-    "录用", "通过", "搞定", "赢了",
-)
-_NEGATIVE = (
-    "累", "困", "烦", "难受", "难过", "哭", "生气", "吵架", "加班", "失眠",
-    "焦虑", "压力", "生病", "疼", "失恋", "委屈", "孤单", "害怕", "紧张",
-    "倒霉", "被骂", "没钱", "挂科", "崩溃", "绝望", "撑不住",
-)
+# 感受词要求第一人称/程度词，避免把「你困不困」「我不困」误判成她心情差。
+_POSITIVE_STRONG = ("太好了", "好耶", "太棒", "哈哈", "嘿嘿", "爱你", "谢谢")
+_POSITIVE_FEEL = ("开心", "高兴", "喜欢", "顺利", "舒服", "轻松", "惊喜",
+                  "中奖", "录用", "搞定", "赢了", "过了", "成了", "成功")
+_NEGATIVE_FEEL = ("累", "困", "烦", "难受", "难过", "哭", "生气", "疼",
+                  "委屈", "孤单", "害怕", "紧张", "倒霉")
+_NEGATIVE_EVENT = ("吵架", "加班", "失眠", "焦虑", "压力", "生病", "失恋",
+                   "被骂", "没钱", "挂科")
 _STRONG_NEGATIVE = ("崩溃", "绝望", "分手", "撑不住", "想哭", "难受死")
+_DEGREE = re.compile(r"(好|很|太|特别|超|真|有点|有些|挺|今天|最近|这几天)$")
 
 # 道别：短句、没有问句，且只在一来一回已经收过尾时才用来判断沉默。
 _GOODBYE = (
@@ -141,6 +141,23 @@ def energy_label(energy: float) -> str:
         if value >= floor:
             return label
     return _ENERGY_LABELS[-1][1]
+
+
+def day_energy_floor(ts: float) -> float:
+    """白天/傍晚的精力下限：人会在晚上累，但不该下午七点就喊困。"""
+    lt = time.localtime(ts)
+    hour = lt.tm_hour + lt.tm_min / 60.0
+    if 6.0 <= hour < 23.0:
+        return 0.55
+    if 23.0 <= hour or hour < 1.0:
+        return 0.40
+    return 0.22
+
+
+def energy_label_at(energy: float, ts: float) -> str:
+    """按“此刻该有的精神”出标签；只影响说法，不改存储的精力。"""
+    value = max(float(energy or 0.0), day_energy_floor(ts))
+    return energy_label(value)
 
 
 def closeness_label(value: float) -> str:
@@ -312,15 +329,42 @@ def _nickname(text: str) -> str:
     return value
 
 
+def _count_feel(body: str, words: tuple[str, ...], *,
+                need_self: bool) -> int:
+    """数语气词；跳过「不困」「你别累」和被问句带出来的假情绪。"""
+    total = 0
+    for word in words:
+        start = 0
+        while True:
+            index = body.find(word, start)
+            if index < 0:
+                break
+            start = index + len(word)
+            prefix = body[max(0, index - 6):index]
+            if any(neg in prefix[-2:] for neg in ("不", "没", "别", "无", "未")):
+                continue
+            if need_self:
+                if "你" in prefix[-2:]:
+                    continue
+                tail = body[index + len(word):index + len(word) + 1]
+                if not ("我" in prefix or _DEGREE.search(prefix) or tail in "死坏爆"):
+                    continue
+            total += 1
+    return total
+
+
 def _sentiment(text: str) -> tuple[float, str]:
     """返回 ``(目标心情, 一个短理由)``；没有明显语气就返回 ``(-1, "")``。"""
     body = _clean(text)
     if len(body) < 2:
         return -1.0, ""
-    if any(word in body for word in _STRONG_NEGATIVE):
+    strong = _count_feel(body, _STRONG_NEGATIVE, need_self=False)
+    if strong:
         return 0.15, "对方情绪很重"
-    positive = sum(1 for word in _POSITIVE if word in body)
-    negative = sum(1 for word in _NEGATIVE if word in body)
+    positive = (_count_feel(body, _POSITIVE_STRONG, need_self=False)
+                + _count_feel(body, _POSITIVE_FEEL, need_self=True))
+    negative = (_count_feel(body, _NEGATIVE_EVENT, need_self=False)
+                + _count_feel(body, _NEGATIVE_FEEL, need_self=True))
     if positive and negative:
         return 0.45, "对方又开心又累"
     if negative:
@@ -398,8 +442,8 @@ class Companion:
             sel = self._data["self"]
             last = float(sel.get("updated") or 0.0)
             hours = min(72.0, max(0.0, (now - last) / 3600.0)) if last else 0.0
-            if hours >= 0.5:
-                sel["energy"] = min(1.0, float(sel.get("energy") or 0.7) + 0.035 * hours)
+            if hours >= 0.25:
+                sel["energy"] = min(1.0, float(sel.get("energy") or 0.7) + 0.06 * hours)
                 mood = float(sel.get("mood") or 0.55)
                 sel["mood"] = mood + (0.55 - mood) * min(0.6, 0.04 * hours)
                 sel["updated"] = now
@@ -494,7 +538,7 @@ class Companion:
             if not isinstance(p, dict):
                 return
             count = max(1, len([t for t in (texts or ()) if str(t).strip()]))
-            cost = 0.02 + 0.008 * min(4, count)
+            cost = 0.008 + 0.004 * min(4, count)
             if int(time.localtime(now).tm_hour) in (0, 1, 2, 3, 4, 5):
                 cost += 0.03
             sel = self._data["self"]
@@ -649,10 +693,10 @@ class Companion:
             reason = str(sel.get("mood_reason") or "").strip()
             if reason:
                 mood_text += f"（{reason}）"
-            energy_text = energy_label(sel.get("energy") or 0.7)
+            energy_text = energy_label_at(sel.get("energy") or 0.7, now)
             extra = ""
-            if int(p.get("turns_today") or 0) >= 8:
-                extra = "，今天聊得有点久"
+            if int(p.get("turns_today") or 0) >= 20:
+                extra = "，今天聊了好多"
             lines.append(f"- 你的心情：{mood_text}；精力：{energy_text}{extra}。")
             name = str(p.get("name") or "").strip()
             nick = str(p.get("nickname") or "").strip()
@@ -866,8 +910,9 @@ class Companion:
                 "updated": float(sel.get("updated") or 0.0),
                 "mood": round(float(sel.get("mood") or 0.55), 2),
                 "mood_label": mood_label(sel.get("mood") or 0.55),
-                "energy": round(float(sel.get("energy") or 0.7), 2),
-                "energy_label": energy_label(sel.get("energy") or 0.7),
+                "energy": round(max(float(sel.get("energy") or 0.7),
+                                    day_energy_floor(now)), 2),
+                "energy_label": energy_label_at(sel.get("energy") or 0.7, now),
                 "peers": peers[:8],
                 "threads": threads[:8],
                 "dates": dates[:8],
@@ -875,7 +920,7 @@ class Companion:
 
 
 __all__ = [
-    "Companion", "SCHEMA_VERSION", "closeness_label", "energy_label",
-    "goodnight_block_active", "in_quiet", "is_goodbye", "mood_label",
-    "parse_quiet_hours", "quiet_end",
+    "Companion", "SCHEMA_VERSION", "closeness_label", "day_energy_floor",
+    "energy_label", "energy_label_at", "goodnight_block_active", "in_quiet",
+    "is_goodbye", "mood_label", "parse_quiet_hours", "quiet_end",
 ]

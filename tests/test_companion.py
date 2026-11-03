@@ -8,8 +8,8 @@ import time
 from dafeiyu.core.config import LiveConfig
 from dafeiyu.live.chat_memory import Memory
 from dafeiyu.live.companion import (
-    Companion, closeness_label, in_quiet, is_goodbye, parse_quiet_hours,
-    quiet_end,
+    Companion, closeness_label, day_energy_floor, energy_label_at, in_quiet,
+    is_goodbye, parse_quiet_hours, quiet_end,
 )
 from dafeiyu.live.kook.service import Inbound, KookService
 
@@ -64,6 +64,20 @@ def test_mood_follows_user_tone(tmp_path):
     assert abs(state._data["self"]["mood"] - before) < 0.02
 
 
+def test_mood_ignores_negation_and_questions_about_her(tmp_path):
+    state = Companion(tmp_path / "companion.json")
+    now = _ts(11, 3, 19, 0)
+    state.touch("u1", "小鱼", now=now)
+    # 这两句是在说她/否认，不是对方的情绪，不该把她的心情拖下去。
+    state.note_user("u1", "怎么下午就困了", now=now)
+    state.note_user("u1", "不困，才不到晚上 7 点", now=now + 10)
+    assert state._data["self"]["mood"] > 0.5
+
+    # 真正第一人称的负面情绪才生效。
+    state.note_user("u1", "我今天好累，烦死了", now=now + 20)
+    assert state._data["self"]["mood"] < 0.45
+
+
 def test_open_thread_becomes_proactive_reason(tmp_path):
     state = Companion(tmp_path / "companion.json")
     now = _ts(11, 3, 20, 0)
@@ -111,6 +125,31 @@ def test_birthday_and_prompt_block(tmp_path):
     state.mark_date_greeted("u1", 11, 8, now=_ts(11, 6, 20, 0))
     later = state.candidate("u1", _ts(11, 6, 22, 0), idle_minutes=60)
     assert later["kind"] != "date"
+
+
+def test_daytime_energy_does_not_read_as_sleepy(tmp_path):
+    state = Companion(tmp_path / "companion.json")
+    now = _ts(11, 3, 19, 0)
+    state.touch("u1", "小鱼", now=now)
+    state._data["self"].update({"energy": 0.2, "updated": now})
+    block = state.prompt_block("u1", now=now)
+    assert "还撑得住" in block
+    assert "很累了" not in block and "快睁不开" not in block
+
+    # 深夜才允许真的显累；白天/傍晚有下限。
+    assert day_energy_floor(_ts(11, 3, 19, 0)) == 0.55
+    assert energy_label_at(0.2, _ts(11, 3, 23, 30)) == "有点累"
+    assert energy_label_at(0.2, _ts(11, 4, 2, 0)) == "很累了"
+
+
+def test_energy_drains_slowly(tmp_path):
+    state = Companion(tmp_path / "companion.json")
+    now = _ts(11, 3, 19, 0)
+    state.touch("u1", "小鱼", now=now)
+    state._data["self"].update({"energy": 0.7, "updated": now})
+    for _ in range(10):
+        state.note_reply("u1", ["嗯"], now=now)
+    assert state._data["self"]["energy"] > 0.55
 
 
 def test_nickname_from_request(tmp_path):
