@@ -159,6 +159,17 @@ STS2 的决策引擎也已整体迁进游戏包：`ctx.py` / `act.py` / `advisor
 Python 只负责走位/选择，所以游戏可以在后台跑，不会抢焦点。实现参考了 MIT 的
 jev_vampire_survivors（Linux/Mono）和 Off the Clock 的 BepInEx 6 IL2CPP 模板。
 
+`games/minecraft/` 是第四个包，走「协议先行」：`mc-bridge/v1` 只规定
+`GET /state` / `POST /act` 和一组高层动作（`goto/mine/craft/smelt/place/attack/eat/
+equip/wait`），游戏侧可以是真机模组，也可以是内置仿真。规则参考实现在 `rules.py`
+（配方、工具等级、昼夜/饥饿/僵尸）；`bridge/sim.py` 是持久化的仿真世界，
+`engine.py` 直接在状态副本上复用 `rules.apply_step` 做验算，所以「验算通过」和
+「真跑能过」是同一套规则。`adapter.py` 只认 `source=http`，仿真状态不会让
+`python main.py games` 把包标成在线；桥没连上时同样不找窗口、不发键盘。
+真机侧已经有 `games/minecraft/compat/mod/McBridge/`（Fabric Loader 0.20.1 + 26.2 的
+客户端模组），按同一份协议读当前角色/世界并翻译成游戏自己的按键和交互，Python 端
+不换代码；合成/熔炼窗口还没接，会明确返回 `ok:false`（见 `games/minecraft/README.md`）。
+
 `games/catalog.py` 负责跨游戏的“身份”查询：默认游戏、别名、显示名和旧环境变量
 前缀都从 `games/registry.json` + `game.json` 读取。`LiveConfig.game` 为空时自动
 选默认游戏；录像目录、`replay --game` 和 `DAFEIYU_*` / 旧 `<ALIAS>_*` 环境变量

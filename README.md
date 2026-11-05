@@ -18,7 +18,7 @@
 │ 源码层      事件总线 · 会话编排 · 配置 · CLI · 录像                   │
 │ 性格层      大肥鱼人设卡 · 通用 meme · 台词 lint · 节奏 / 招牌冷却    │
 │ 语音层      动物语（内置合成） · 曼波语（本地 GPT-SoVITS）            │
-│ 游戏列表    slay-the-spire-2 / vampire-survivors / B站云观影 / ...    │
+│ 游戏列表    STS2 / 吸血鬼 / 我的世界 / B站云观影                     │
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -263,6 +263,7 @@ B站热门视频云观影是独立游戏包：独立 Chrome profile 的 app 窗�
 python main.py games
 # ○ 离线  杀戮尖塔 2             slay-the-spire-2          Steam · 2868840
 # ○ 离线  吸血鬼幸存者           vampire-survivors         Steam · 1794680
+# ○ 离线  我的世界               minecraft                 Java 版 · 本地桥
 # ● 在线  玩具决斗               toy-duel                  内置
 # ● 在线  B站热门视频云观影      bilibili-hot-commentary   B站 · 热门视频
 # ● 在线  演示信号源             demo                      内置
@@ -272,6 +273,7 @@ python main.py games
 |---|---|---|
 | `slay-the-spire-2` | 控制型 | 决策引擎 + 整局自动玩 + OBS 录像；目前正式实况的主游戏 |
 | `vampire-survivors` | 控制型 | BepInEx 6 IL2CPP 桥在 `127.0.0.1:8091` 暴露 `GET /state` / `POST /act`，不找窗口、不切前台、不发键盘；安装见 [README](games/vampire-survivors/README.md) |
+| `minecraft` | 控制型 | 协议先行的生存开荒：`mc-bridge/v1` + 内置仿真世界，没装真机桥也能离线验收；不找窗口、不发键盘。见 [README](games/minecraft/README.md) |
 | `bilibili-hot-commentary` | 观察型 | B站热门视频云观影，只读元数据 + 弹幕时间轴；细节见 [README](games/bilibili-hot-commentary/README.md) |
 | `toy-duel` | 控制型 | 第二个完整离线插件，验收非 STS2 的 observe/control/autoplay 链路；见 [README](games/toy-duel/README.md) |
 | `demo` | 观察型 | 内置演示信号源，不需要游戏 |
@@ -341,7 +343,10 @@ python main.py live --status   # 只看状态和候选模块
 6. 用 `python main.py games`、`game state --game <id>`、`play --game <id>` 验收。
 
 `toy-duel` 是按这几步接进来的最小完整例子；`vampire-survivors` 是实时动作类用本地 HTTP API
-（而不是窗口 / 键盘）接进来的例子。加它们都没有改任何 STS2 代码。
+（而不是窗口 / 键盘）接进来的例子；`minecraft` 是「协议先行 + 真机模组」的例子：
+`mc-bridge/v1` 只有 `GET /state` / `POST /act`，内置仿真世界负责离线验收，真机侧
+`games/minecraft/compat/mod/McBridge/` 是 26.2 的 Fabric 客户端模组，Python 端不用改。
+加它们都没有改任何 STS2 代码。
 
 ---
 
@@ -562,6 +567,7 @@ dafeiyu-ai-live/
 ├── games/                       # 游戏包
 │   ├── slay-the-spire-2/
 │   ├── vampire-survivors/
+│   ├── minecraft/
 │   ├── bilibili-hot-commentary/
 │   ├── toy-duel/
 │   └── registry.json

@@ -1,0 +1,72 @@
+{
+  "schema": 2,
+  "id": "minecraft",
+  "version": "0.1.0",
+  "name": "我的世界",
+  "name_en": "Minecraft",
+  "status": "ready",
+  "platform": "Java 版 · 本地桥 mc-bridge/v1",
+  "aliases": ["mc", "minecraft"],
+  "entry": "plugin.py:McPlugin",
+  "adapter": "adapter.py:McAdapter",
+  "capabilities": {
+    "observe": true,
+    "control": true,
+    "autoplay": true,
+    "replay": false,
+    "commentary": true,
+    "modes": ["local", "llm"],
+    "state_schema": "minecraft.state/v1",
+    "action_schema": "minecraft.action/v1",
+    "api": "http://127.0.0.1:8092",
+    "bridge": "mc-bridge/v1"
+  },
+  "launch": {
+    "type": "url",
+    "url": "minecraft://",
+    "note": "只拉起官方启动器；进世界/读存档仍由你点。桥没装时 game state 会显示离线，不会假装在线。"
+  },
+  "live": {
+    "enabled": true,
+    "label": "我的世界",
+    "weight": 1,
+    "role": "生存开荒：砍树、挖矿、搭第一间屋，节奏慢，适合边玩边聊"
+  },
+  "bridge": {
+    "protocol": "mc-bridge/v1",
+    "version": 1,
+    "default_mode": "auto",
+    "http": "http://127.0.0.1:8092",
+    "env_api": "MINECRAFT_API",
+    "env_mode": "MINECRAFT_BRIDGE",
+    "modes": ["auto", "http", "sim"],
+    "sim": "bridge/sim.py",
+    "server": "bridge/server.py",
+    "install": "README.md"
+  },
+  "start": {
+    "title": "开局设置",
+    "note": "只影响下一局（新建世界/重生）；已经开着的世界不会被改写。",
+    "options": [
+      {
+        "key": "difficulty",
+        "label": "难度",
+        "type": "choice",
+        "default": "normal",
+        "hint": "peaceful 夜里不刷怪；normal 适合第一次生存开荒；hard 挨打更疼",
+        "choices": [
+          {"value": "peaceful", "label": "和平", "en": "Peaceful"},
+          {"value": "normal", "label": "普通", "en": "Normal"},
+          {"value": "hard", "label": "困难", "en": "Hard"}
+        ]
+      }
+    ]
+  },
+  "obs": "game-skill/obs.json",
+  "recording": {
+    "enabled": true,
+    "split": "run"
+  },
+  "tags": ["沙盒", "生存", "建造", "Java"],
+  "notes": "只通过本地桥（GET /state、POST /act）观察和操作，不找窗口、不切前台、不发键盘。没有真机桥时用内置仿真世界（source=sim）跑通离线验收；真机请装游戏侧桥并把 MINECRAFT_BRIDGE 设成 http。"
+}

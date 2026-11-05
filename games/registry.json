@@ -22,6 +22,16 @@
       "notes": "BepInEx 6 IL2CPP 桥 + 本地 HTTP :8091；只走 API 走位/选择，不切前台、不发键盘。"
     },
     {
+      "id": "minecraft",
+      "name": "我的世界",
+      "platform": "Java 版 · 本地桥 mc-bridge/v1",
+      "status": "ready",
+      "pack": "minecraft",
+      "adapter": "adapter.py:McAdapter",
+      "tags": ["沙盒", "生存", "建造", "Java"],
+      "notes": "只走本地桥（GET /state、POST /act）：真机桥要自己装，没装时用内置仿真世界（source=sim）离线验收；不找窗口、不切前台、不发键盘。"
+    },
+    {
       "id": "toy-duel",
       "name": "玩具决斗",
       "platform": "内置",

@@ -19,8 +19,10 @@ and dry-run by default; keep that boundary unless the task asks for a new planne
   used to prove the core is not STS2-specific; keep it working when changing
   the plugin/host/tools contracts. `games/vampire-survivors/` is the third
   packet (BepInEx 6 IL2CPP bridge + local HTTP `:8091`; no window focus and no
-  keyboard injection) and `games/bilibili-hot-commentary/` is the non-game watch
-  mode.
+  keyboard injection), `games/minecraft/` is the fourth and protocol-first
+  (`mc-bridge/v1` + built-in `bridge/sim.py` for offline acceptance; `rules.py`
+  is the single source of recipes/day-night rules), and
+  `games/bilibili-hot-commentary/` is the non-game watch mode.
 
 ## Commands
 

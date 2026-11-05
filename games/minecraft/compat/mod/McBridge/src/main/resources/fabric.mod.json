@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "id": "mcbridge",
+  "version": "${version}",
+  "name": "McBridge",
+  "description": "本地 HTTP 桥：让大肥鱼直播姬通过 mc-bridge/v1 观察和操作本地 Java 版角色（只监听 127.0.0.1）。",
+  "authors": ["dafeiyu"],
+  "license": "MIT",
+  "environment": "client",
+  "entrypoints": {
+    "client": ["dev.dafeiyu.mcbridge.McBridgeClient"]
+  },
+  "depends": {
+    "fabricloader": ">=0.20.0",
+    "minecraft": "*"
+  }
+}

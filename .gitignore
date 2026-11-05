@@ -84,6 +84,14 @@ logs/bili_training/
 persona/training.json
 persona/training_digest.json
 
+# Minecraft McBridge Fabric 模组：本机构建产物（源码入库，jar 不入库）
+games/minecraft/compat/mod/McBridge/.gradle/
+games/minecraft/compat/mod/McBridge/run/
+games/minecraft/compat/mod/McBridge/build/
+
+# 本地测试临时目录（pytest basetemp / 临时服务端）
+.test-tmp/
+
 # generated video build artifacts
 build/
 

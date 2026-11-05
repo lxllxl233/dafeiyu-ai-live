@@ -1,0 +1,13 @@
+{
+  "scene": "Minecraft",
+  "game_source": "MC Game",
+  "window_source": "MC Window",
+  "monitor_source": "MC Monitor",
+  "audio_source": "MC Audio",
+  "overlay_source": "AI Commentary",
+  "ticker_source": "AI Ticker",
+  "ticker_text": "AI 实况 · 我的世界生存开荒",
+  "window_match": ["Minecraft"],
+  "window_fallback": "Minecraft:GLFW30:javaw.exe",
+  "capture_mode": "game"
+}

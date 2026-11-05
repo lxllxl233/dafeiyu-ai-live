@@ -70,10 +70,12 @@ python main.py               # 默认桌宠；加 --panel 回旧版横幅
 （HKCU Run，不需要管理员）；「语音」页的「关闭引擎」可以停掉曼波进程释放内存。
 「运行」页可以让她玩（本地算账 / LLM 规划）、停手、只启动游戏、开关 LLM 直播模式；
 游戏切换在「桌宠 → 当前游戏」（写入 `config.game`），只切配置，不重启游戏。
-「LLM 直播模式」让导演在 `games/` 的直播模块（刷B站 / 杀戮尖塔2 / 吸血鬼幸存者）之间自己切：
+「LLM 直播模式」让导演在 `games/` 的直播模块（刷B站 / 杀戮尖塔2 / 吸血鬼幸存者 / 我的世界）之间自己切：
 模型决定下一段播哪个、播多久、过渡说什么；没有 API Key 时会返回错误提示。
 吸血鬼幸存者需要先按 [games/vampire-survivors/README.md](games/vampire-survivors/README.md)
 装一次 BepInEx 6 IL2CPP 桥；装好后走本地 HTTP，不切前台、不抢键盘。
+我的世界不用装游戏也能跑：默认用内置仿真世界（状态里 `source=sim`）验收，
+真机要自己实现/安装 `mc-bridge/v1` 桥，见 [games/minecraft/README.md](games/minecraft/README.md)。
 
 `python main.py` 默认在后台顺带起 overlay 服务；端口被占用会复用，不想起服务加
 `--no-server`。
