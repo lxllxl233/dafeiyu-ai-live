@@ -184,8 +184,9 @@ class LiveConfig:
     # 陪伴状态：心情/精力/亲近度、未完话头和重要日期，只写 logs/kook/companion.json。
     # 关掉后仍是原来的「只看对话」聊天，不会因为状态改变语气。
     kook_companion: bool = True
-    # 这段时间里不主动开口（跨零点也认）；空字符串 = 不限制
-    kook_quiet_hours: str = "00:30-07:30"
+    # 默认不设免打扰：她不睡觉，半夜收到消息也照常回。
+    # 需要夜间安静时再填 00:30-07:30；空字符串 = 全天不限制。
+    kook_quiet_hours: str = ""
     # 对方一句话拆成几条发时，先等这么多秒再一起回（0 = 不合并）
     kook_merge_seconds: int = 2
     # 一次回多条时，第 2 条之后停一下再发，像真人在打字

@@ -521,6 +521,99 @@ def test_parse_reply_allows_four_messages_but_caps_at_four():
     assert reply["texts"] == ["一", "二", "三", "四"]
 
 
+def test_parse_reply_repairs_missing_comma_and_never_returns_raw_json():
+    from dafeiyu.live.chat import looks_like_json, parse_reply
+
+    # 真实走形：messages 数组收尾后多了一个引号、少了逗号。
+    raw = ('{"thought":"接一句","messages":["在","刚看到一只猫"]'
+           '"voice":false,"voice_text":"","sticker":""}')
+    reply = parse_reply(raw, allow_voice=True)
+    assert reply["texts"] == ["在", "刚看到一只猫"]
+    assert reply["voice"] is False and reply["json"] is True
+    assert not looks_like_json(reply["text"])
+
+    # 坏到修不回来：只能返回空文本让上层兜底，绝不能把协议原文发出去。
+    broken = '{"thought": "只有思考没有消息"'
+    reply = parse_reply(broken, allow_voice=True)
+    assert reply["texts"] == [] and reply["json"] is True
+
+
+def test_service_never_sends_json_protocol_to_kook(tmp_path):
+    class Client:
+        def __init__(self):
+            self.sent = []
+
+        def send_text(self, target_id, text, **kw):
+            self.sent.append(text)
+            return {"ok": True}
+
+    class LLM:
+        def complete(self, messages, model=None):
+            return {"ok": True, "text":
+                    '{"thought":"接一句","messages":["在","刚看到一只猫"]'
+                    '"voice":false}'}
+
+    cfg = LiveConfig(kook_memory=False, kook_allow_voice=False,
+                     kook_stickers=False)
+    client = Client()
+    service = KookService(cfg, None, client, llm=LLM(),
+                          work_dir=tmp_path, log_path=tmp_path / "events.jsonl")
+    out = service.handle(Inbound(message_id="m1", target_id="c1",
+                                 channel_type="GROUP", author_id="u1",
+                                 msg_type=1, text="在吗"))
+    assert out["ok"] is True
+    assert client.sent == ["在", "刚看到一只猫"]
+    assert not any(text.lstrip().startswith("{") for text in client.sent)
+
+
+def test_service_retries_once_when_bad_json_has_no_usable_text(tmp_path):
+    class Client:
+        def __init__(self):
+            self.sent = []
+
+        def send_text(self, target_id, text, **kw):
+            self.sent.append(text)
+            return {"ok": True}
+
+    class LLM:
+        def __init__(self):
+            self.calls = 0
+
+        def complete(self, messages, model=None):
+            self.calls += 1
+            if self.calls == 1:
+                return {"ok": True, "text": '{"thought": "只有思考"'}
+            return {"ok": True, "text": '{"messages":["这次接住了"]}'}
+
+    cfg = LiveConfig(kook_memory=False, kook_allow_voice=False,
+                     kook_stickers=False)
+    client, llm = Client(), LLM()
+    service = KookService(cfg, None, client, llm=llm,
+                          work_dir=tmp_path, log_path=tmp_path / "events.jsonl")
+    out = service.handle(Inbound(message_id="m1", target_id="c1",
+                                 channel_type="GROUP", author_id="u1",
+                                 msg_type=1, text="在吗"))
+    assert out["ok"] is True
+    assert llm.calls == 2
+    assert client.sent == ["这次接住了"]
+
+
+def test_kook_transient_errors_stay_connected_but_bad_token_is_fatal():
+    from dafeiyu.live.kook import service as kook
+
+    assert kook._fatal_kook_error(kook.KookError("40101: 无效的 token"))
+    assert not kook._fatal_kook_error(
+        kook.KookError("网络错误：SSLError: EOF occurred in violation of protocol"))
+    assert not kook._fatal_kook_error(kook.KookError("-1: HTTP 502"))
+    assert not kook._fatal_kook_error(kook.KookError("40107: session expired"))
+    assert kook._retry_delay(1) == 2 and kook._retry_delay(10) == 30
+
+
+def test_default_has_no_night_rest():
+    # 她默认不睡觉：免打扰留空，半夜也照常回消息。
+    assert LiveConfig().kook_quiet_hours == ""
+
+
 def test_media_limit_keeps_at_most_one_attachment(tmp_path):
     cfg = LiveConfig(kook_memory=False, kook_allow_voice=True, kook_stickers=True)
     service = KookService(cfg, None, None, work_dir=tmp_path)

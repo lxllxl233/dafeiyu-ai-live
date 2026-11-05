@@ -638,11 +638,9 @@ class KookService:
             reply = chat_mod.parse_reply(
                 result.get("text", ""), allow_voice=bool(self.cfg.kook_allow_voice))
             reply = self._limit_media(reply, "")
-            texts = [str(part).strip() for part in (reply.get("texts") or [])
-                     if str(part).strip()]
+            texts = self._usable_texts(reply.get("texts") or [])
             if not texts:
-                single = str(reply.get("text") or "").strip()
-                texts = [single] if single else []
+                texts = self._usable_texts([reply.get("text") or ""])
             if not texts:
                 # 人格可以主动选择这次不开口；不要把它当成错误重试。
                 self._log({"kind": "proactive_declined",
@@ -844,11 +842,9 @@ class KookService:
 
         reply = chat_mod.parse_reply(
             result.get("text", ""), allow_voice=bool(self.cfg.kook_allow_voice))
-        texts = [str(part).strip() for part in (reply.get("texts") or [])
-                 if str(part).strip()]
+        texts = self._usable_texts(reply.get("texts") or [])
         if not texts:
-            single = str(reply.get("text") or "").strip()
-            texts = [single] if single else []
+            texts = self._usable_texts([reply.get("text") or ""])
         if not texts:
             texts = ["我卡了一下，你再说一遍？"]
         text = "\n".join(texts)
@@ -1082,10 +1078,11 @@ class KookService:
             parsed = chat_mod.parse_reply(
                 str(result.get("text") or ""),
                 allow_voice=bool(self.cfg.kook_allow_voice))
-            if parsed.get("json"):
+            if parsed.get("json") and (parsed.get("texts") or not parsed.get("salvaged")):
                 return result
             # 模型偶尔无视 response_format 直接说人话；再要一次 JSON，
             # 否则 thought 会丢。还是要不到就保留第一次的纯文本，别吞回复。
+            # 坏 JSON 虽然抢救过、但一条消息都没抠出来时，也值得再要一次。
             self._log({"kind": "llm_json_retry",
                        "msg_id": str((trace_meta or {}).get("msg_id") or "")})
             retry = self._trace_complete(
@@ -1150,6 +1147,19 @@ class KookService:
         return (
             f"你最近 {len(rows)} 条回复里带过 {voice} 次语音、{sticker} 次表情包。"
             "这次先判断有没有必要：普通接话就纯文字，别形成每条都带媒体的习惯。")
+
+    def _usable_texts(self, values) -> list[str]:
+        """过滤空串和模型漏出来的 JSON 协议原文，绝不让它进聊天。"""
+        out: list[str] = []
+        for value in values or []:
+            body = str(value or "").strip()
+            if not body:
+                continue
+            if chat_mod.looks_like_json(body):
+                self._log({"kind": "json_leak_blocked", "chars": len(body)})
+                continue
+            out.append(body)
+        return out
 
     def _send_texts(self, msg: Inbound, texts: list[str]) -> bool:
         """逐条发送模型给的短消息；每条单独一个气泡，超长才切片。
@@ -1441,6 +1451,30 @@ def run(cfg: LiveConfig) -> int:
         release_service_lock()
 
 
+# 只有 token/权限这类「重连也没用」的错误才停；网络抖动、SSLError、
+# 40107 session 过期都必须继续重连，否则 KOOK 那边会一直显示离线。
+_FATAL_KOOK_CODES = frozenset({401, 403, 40100, 40101, 40102, 40300})
+_FATAL_HELLO_CODES = frozenset({40100, 40101, 40102})
+
+
+def _kook_code(exc: BaseException) -> int:
+    match = re.match(r"\s*(\d{3,5})", str(exc or ""))
+    if not match:
+        return 0
+    try:
+        return int(match.group(1))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _fatal_kook_error(exc: BaseException) -> bool:
+    return _kook_code(exc) in _FATAL_KOOK_CODES
+
+
+def _retry_delay(failures: int) -> float:
+    return float(min(30, 2 ** min(max(0, int(failures)), 5)))
+
+
 def _run_service(cfg: LiveConfig) -> int:
     if not str(cfg.kook_bot_token or "").strip():
         print("缺少 kook_bot_token；去 KOOK 开发者中心 → 机器人 → WebSocket 拿 Token，"
@@ -1488,14 +1522,23 @@ def _run_service(cfg: LiveConfig) -> int:
                             f"&session_id={session_id}")
                 with connect(url, open_timeout=12, close_timeout=5,
                              ping_interval=None, max_size=4 * 1024 * 1024) as ws:
-                    failures = 0
                     hello = json.loads(ws.recv(timeout=8))
                     if int(hello.get("s") or 0) != 1:
-                        raise KookError(f"握手失败：{hello}")
+                        session_id = ""
+                        last_sn = 0
+                        raise ConnectionError(f"握手失败：{hello}")
                     hd = hello.get("d") if isinstance(hello.get("d"), dict) else {}
-                    if int(hd.get("code") or 0) != 0:
-                        raise KookError(f"握手失败 code={hd.get('code')}")
+                    hello_code = int(hd.get("code") or 0)
+                    if hello_code != 0:
+                        service._log({"kind": "hello_failed", "code": hello_code})
+                        if hello_code in _FATAL_HELLO_CODES:
+                            raise KookError(f"握手失败 code={hello_code}")
+                        # 40103 token 过期 / 40107 session 过期：清掉 resume 重新握手。
+                        session_id = ""
+                        last_sn = 0
+                        raise ConnectionError(f"握手要求重连 code={hello_code}")
                     session_id = str(hd.get("session_id") or session_id)
+                    failures = 0
                     service._log({"kind": "connected", "session": bool(session_id)})
                     print("[kook] WebSocket 已连接", flush=True)
                     next_ping = time.monotonic() + 30
@@ -1526,6 +1569,13 @@ def _run_service(cfg: LiveConfig) -> int:
                         elif sig == 3:
                             pong_deadline = 0.0
                         elif sig == 5:
+                            detail = (packet.get("d")
+                                      if isinstance(packet.get("d"), dict) else {})
+                            service._log({"kind": "server_reconnect",
+                                          "code": int(detail.get("code") or 0)})
+                            # KOOK 明确要求清空 sn/session 后重新获取网关。
+                            session_id = ""
+                            last_sn = 0
                             raise ConnectionError(f"服务端要求重连：{packet.get('d')}")
                         elif sig == 6:
                             service._log({"kind": "resume_ok"})
@@ -1533,16 +1583,40 @@ def _run_service(cfg: LiveConfig) -> int:
                 break
             except (ConnectionClosed, OSError, TimeoutError, ConnectionError) as exc:
                 failures += 1
+                delay = _retry_delay(failures)
                 service._log({"kind": "disconnect",
                               "error": f"{type(exc).__name__}: {exc}",
-                              "failures": failures})
+                              "failures": failures, "retry_in": delay})
                 print(f"[kook] 连接中断：{type(exc).__name__}: {exc}；"
-                      f"{min(30, 2 ** min(failures, 5))} 秒后重连", flush=True)
-                time.sleep(min(30, 2 ** min(failures, 5)))
-            except (KookError, ValueError, json.JSONDecodeError) as exc:
-                service._log({"kind": "fatal", "error": f"{type(exc).__name__}: {exc}"})
-                print(f"[kook] 无法继续：{exc}", flush=True)
-                break
+                      f"{delay:.0f} 秒后重连", flush=True)
+                time.sleep(delay)
+            except KookError as exc:
+                if _fatal_kook_error(exc):
+                    service._log({"kind": "fatal",
+                                  "error": f"{type(exc).__name__}: {exc}"})
+                    print(f"[kook] 无法继续：{exc}", flush=True)
+                    break
+                # 网关 5xx / SSL / 限流：进程别退出，指数退避后重新取网关。
+                failures += 1
+                delay = _retry_delay(failures)
+                service._log({"kind": "gateway_retry",
+                              "error": f"{type(exc).__name__}: {exc}",
+                              "failures": failures, "retry_in": delay})
+                print(f"[kook] 网关暂时不可用：{exc}；{delay:.0f} 秒后重试",
+                      flush=True)
+                time.sleep(delay)
+            except (ValueError, json.JSONDecodeError) as exc:
+                # 网关回了坏包：清掉 resume，按断线重连，不退出常驻进程。
+                session_id = ""
+                last_sn = 0
+                failures += 1
+                delay = _retry_delay(failures)
+                service._log({"kind": "packet_error",
+                              "error": f"{type(exc).__name__}: {exc}",
+                              "failures": failures, "retry_in": delay})
+                print(f"[kook] 收到无法解析的包：{exc}；{delay:.0f} 秒后重连",
+                      flush=True)
+                time.sleep(delay)
     finally:
         service.stop()
         if memory:

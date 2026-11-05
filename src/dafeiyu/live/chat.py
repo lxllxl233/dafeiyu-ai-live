@@ -221,25 +221,156 @@ def pick_model(cfg: LiveConfig, messages: list[dict]) -> str:
 
 
 # ---------------------------------------------------------------- 回复协议
+def _strip_fence(text: str) -> str:
+    body = (text or "").strip()
+    if body.startswith("```"):
+        body = re.sub(r"^```(?:json)?\s*|\s*```$", "", body, flags=re.I | re.S).strip()
+    return body
+
+
+def _loads_object(text: str) -> dict | None:
+    try:
+        value = json.loads(text)
+    except (TypeError, ValueError):
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def _repair_json_text(text: str) -> str:
+    """修补模型最常见的两种 JSON 走形，解析失败后再用。
+
+    真实样本：``"messages":["a","b"]"voice":false`` —— 数组收尾后多了一个
+    引号、少了逗号。直接 json.loads 会失败，旧逻辑就把整段 JSON 当聊天发出去。
+    这里只做“几乎不可能合法”的替换，合法 JSON 原样返回。
+    """
+    fixed = str(text or "")
+    # ]"voice": / }"voice":  → ], "voice":
+    fixed = re.sub(r'(?<=[\]\}])\s*"(?=[A-Za-z_][\w-]*"\s*:)', ', "', fixed)
+    # "value" "next":  → "value", "next":
+    fixed = re.sub(
+        r'("(?:[^"\\]|\\.)*"|-?\d+(?:\.\d+)?|true|false|null)\s+'
+        r'("(?:[A-Za-z_][\w-]*)"\s*:)',
+        r"\1, \2", fixed)
+    # 尾逗号：, ] / , }
+    fixed = re.sub(r",\s*([\]}])", r"\1", fixed)
+    return fixed
+
+
 def _json_object(raw: str) -> dict | None:
-    text = (raw or "").strip()
-    if text.startswith("```"):
-        text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=re.I | re.S).strip()
-    for candidate in (text,):
-        try:
-            value = json.loads(candidate)
-            if isinstance(value, dict):
+    text = _strip_fence(raw)
+    for candidate in (text, _repair_json_text(text)):
+        value = _loads_object(candidate)
+        if value is not None:
+            return value
+    # 外面包了说明文字时，截取第一个 { 到最后一个 } 再试一次。
+    for candidate in (text, _repair_json_text(text)):
+        start, end = candidate.find("{"), candidate.rfind("}")
+        if 0 <= start < end:
+            value = _loads_object(candidate[start:end + 1])
+            if value is not None:
                 return value
-        except ValueError:
-            pass
-    start, end = text.find("{"), text.rfind("}")
-    if start >= 0 and end > start:
-        try:
-            value = json.loads(text[start:end + 1])
-            return value if isinstance(value, dict) else None
-        except ValueError:
-            return None
     return None
+
+
+def looks_like_json(text: str) -> bool:
+    """像不像模型没解析开的 JSON；用来兜底，绝不把协议原文发给聊天对象。"""
+    body = _strip_fence(text)
+    if not body or not body.startswith(("{", "[")):
+        return False
+    if body in ("{}", "[]"):
+        return True
+    return bool(re.search(r'"[A-Za-z_][\w-]*"\s*:', body))
+
+
+def _array_body(text: str, start: int) -> str:
+    """从 ``[`` 之后扫到配对 ``]``；字符串里的括号不算。"""
+    depth = 1
+    in_string = False
+    escaped = False
+    for index in range(start, len(text)):
+        char = text[index]
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+        elif char == "[":
+            depth += 1
+        elif char == "]":
+            depth -= 1
+            if depth == 0:
+                return text[start:index]
+    return text[start:]
+
+
+def _decode_string(raw: str) -> str:
+    try:
+        return str(json.loads('"' + raw + '"'))
+    except (TypeError, ValueError):
+        return str(raw)
+
+
+def _salvage_messages(text: str) -> list[str]:
+    """JSON 坏掉时，从 ``"messages": [...]`` 里把可读的短句抠出来。"""
+    match = re.search(r'"messages"\s*:\s*\[', text)
+    if not match:
+        return []
+    body = _array_body(text, match.end())
+    parts: list[str] = []
+    for item in re.finditer(r'"((?:[^"\\]|\\.)*)"', body):
+        rest = body[item.end():].lstrip()
+        if rest.startswith(":"):
+            continue                      # 对象里的键名，不是要说的话
+        value = _decode_string(item.group(1)).strip()
+        if value and value not in parts:
+            parts.append(value)
+        if len(parts) >= 4:
+            break
+    return parts
+
+
+def _string_field(text: str, keys: tuple[str, ...]) -> str:
+    for key in keys:
+        match = re.search(r'"' + re.escape(key) + r'"\s*:\s*"((?:[^"\\]|\\.)*)"', text)
+        if match:
+            value = _decode_string(match.group(1)).strip()
+            if value:
+                return value
+    return ""
+
+
+def _bool_field(text: str, key: str) -> bool:
+    match = re.search(r'"' + re.escape(key) + r'"\s*:\s*(true|false)', text, re.I)
+    return bool(match and match.group(1).lower() == "true")
+
+
+def _salvage_reply(text: str, allow_voice: bool) -> dict:
+    """坏 JSON 的最后一道兜底：保住消息内容，丢掉协议外壳。"""
+    texts = _salvage_messages(text)
+    if not texts:
+        single = _string_field(text, ("reply", "text", "content", "message", "answer"))
+        if single:
+            texts = [single]
+    texts = [part for part in texts if not looks_like_json(part)]
+    sticker = _string_field(text, ("sticker",))
+    thought = _string_field(text, ("thought",))
+    voice_text = _string_field(text, ("voice_text",))
+    voice = _bool_field(text, "voice") and allow_voice
+    if voice and not voice_text and texts:
+        voice_text = speech_text(" ".join(texts))
+    out = {"text": "\n".join(texts), "texts": texts, "voice": voice,
+           "voice_text": voice_text if voice else "", "json": True,
+           "salvaged": True}
+    if sticker:
+        out["sticker"] = sticker
+    if thought:
+        out["thought"] = thought
+    return out
 
 
 def parse_json_object(raw: str) -> dict | None:
@@ -270,6 +401,11 @@ def parse_reply(raw: str, allow_voice: bool = True) -> dict:
     texts: list[str] = []
     sticker = ""
     thought = ""
+    if obj is None and looks_like_json(body):
+        # 模型偶尔写出 ``]"voice"`` 这种差一个逗号的 JSON；旧逻辑会把整段
+        # 协议原文当消息发出去。这里先尽量抠字段，抠不到就当空回复，
+        # 让上层重试或回一句固定提示，绝不把 JSON 甩给对方。
+        return _salvage_reply(body, allow_voice)
     if obj is not None:
         thought = str(obj.get("thought") or "").strip()
         raw_parts = obj.get("messages") or obj.get("replies") or obj.get("parts")
@@ -287,8 +423,11 @@ def parse_reply(raw: str, allow_voice: bool = True) -> dict:
                     texts = [value.strip()]
                     break
         if not texts:
-            # 模型偶尔换个字段名，挑最长的字符串也比把 JSON 甩给对方强。
-            strings = [v for v in obj.values() if isinstance(v, str) and v.strip()]
+            # 模型偶尔换个字段名，挑最长的字符串也比把 JSON 甩给对方强；
+            # 但 thought/voice_text/sticker 是内部字段，不能当成要说的话。
+            strings = [v for key, v in obj.items()
+                       if isinstance(v, str) and v.strip()
+                       and key not in ("thought", "voice_text", "sticker")]
             if strings:
                 texts = [max(strings, key=len).strip()]
         sticker = str(obj.get("sticker") or "").strip()
@@ -607,7 +746,7 @@ def parse_summary(raw: str, limit: int = 800) -> str:
 __all__ = [
     "ChatLLM", "build_format_reminder", "build_proactive_prompt",
     "build_system_prompt", "build_user_prompt", "extract_facts_prompt",
-    "has_image", "image_message", "parse_facts", "parse_json_object",
-    "parse_reply", "parse_summary", "pick_model", "speech_text",
+    "has_image", "image_message", "looks_like_json", "parse_facts",
+    "parse_json_object", "parse_reply", "parse_summary", "pick_model", "speech_text",
     "split_message", "summarize_prompt",
 ]

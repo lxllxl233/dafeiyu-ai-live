@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+- **修复 KOOK 偶发把 JSON 协议原文当消息发出去**：模型写出
+  `"messages":["a","b"]"voice":false` 这类少逗号/多引号的坏 JSON 时，旧逻辑会退回
+  纯文本，把整段 `{"thought":...}` 发到聊天里。现在会先修补常见走形，再按
+  `messages` 字段抢救内容；实在解析不了就当空回复重试或回固定提示，绝不外发协议原文。
+- **KOOK 不再夜间掉线/“睡觉”**：WebSocket 遇到 SSLError、网关 5xx、`40107`
+  session 过期、服务端 reconnect 或坏包时，改为指数退避后继续重连；只有 token
+  无效这类重连也没用的错误才停。`kook_quiet_hours` 默认改为空（不设夜间免打扰，
+  半夜收到消息也照常回），需要夜间安静时再手动填时段。
 - **我的世界（第四个游戏包）**：新增 `games/minecraft/`，走「协议先行」：
   游戏侧桥只暴露 `GET /state` / `POST /act`（`mc-bridge/v1`），Python 端不找窗口、
   不切前台、不发键盘。没装真机桥时用内置仿真世界（`bridge/sim.py`）跑通
